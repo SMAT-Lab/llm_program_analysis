@@ -1,0 +1,214 @@
+{
+    "nodes": [
+        {
+            "id": "chunk_0_GlobalBlock_1",
+            "code": "import logging\nfrom contextlib import contextmanager\nfrom datetime import datetime\nfrom typing import TYPE_CHECKING\n\nfrom autogpt_libs.utils.synchronize import RedisKeyedMutex\nfrom redis.lock import Lock as RedisLock\n\nfrom backend.data import redis\nfrom backend.data.model import Credentials\nfrom backend.integrations.credentials_store import IntegrationCredentialsStore\nfrom backend.integrations.oauth import HANDLERS_BY_NAME\nfrom backend.util.exceptions import MissingConfigError\nfrom backend.util.settings import Settings\n\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_2",
+            "code": "if TYPE_CHECKING:\n    from backend.integrations.oauth import BaseOAuthHandler\n\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_3",
+            "code": "logger = logging.getLogger(__name__)\nsettings = Settings()\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_4",
+            "code": "\n\n\n"
+        },
+        {
+            "id": "chunk_1_IntegrationCredentialsManager_1",
+            "code": "class IntegrationCredentialsManager:\n    \"\"\"\n    Handles the lifecycle of integration credentials.\n    - Automatically refreshes requested credentials if needed.\n    - Uses locking mechanisms to ensure system-wide consistency and\n      prevent invalidation of in-use tokens.\n\n    ### \u26a0\ufe0f Gotcha\n    With `acquire(..)`, credentials can only be in use in one place at a time (e.g. one\n    block execution).\n\n    ### Locking mechanism\n    - Because *getting* credentials can result in a refresh (= *invalidation* +\n      *replacement*) of the stored credentials, *getting* is an operation that\n      potentially requires read/write access.\n    - Checking whether a token has to be refreshed is subject to an additional `refresh`\n      scoped lock to prevent unnecessary sequential refreshes when multiple executions\n      try to access the same credentials simultaneously.\n    - We MUST lock credentials while in use to prevent them from being invalidated while\n      they are in use, e.g. because they are being refreshed by a different part\n      of the system.\n    - The `!time_sensitive` lock in `acquire(..)` is part of a two-tier locking\n      mechanism in which *updating* gets priority over *getting* credentials.\n      This is to prevent a long queue of waiting *get* requests from blocking essential\n      credential refreshes or user-initiated updates.\n\n    It is possible to implement a reader/writer locking system where either multiple\n    readers or a single writer can have simultaneous access, but this would add a lot of\n    complexity to the mechanism. I don't expect the current (\"simple\") mechanism to\n    cause so much latency that it's worth implementing.\n    \"\"\"\n"
+        },
+        {
+            "id": "chunk_1_IntegrationCredentialsManager_2",
+            "code": "    def __init__(self):\n        redis_conn = redis.get_redis()\n        self._locks = RedisKeyedMutex(redis_conn)\n        self.store = IntegrationCredentialsStore()\n\n"
+        },
+        {
+            "id": "chunk_1_IntegrationCredentialsManager_3",
+            "code": "    def create(self, user_id: str, credentials: Credentials) -> None:\n        return self.store.add_creds(user_id, credentials)\n"
+        },
+        {
+            "id": "chunk_1_IntegrationCredentialsManager_4",
+            "code": "    def exists(self, user_id: str, credentials_id: str) -> bool:\n        return self.store.get_creds_by_id(user_id, credentials_id) is not None\n"
+        },
+        {
+            "id": "chunk_1_IntegrationCredentialsManager_5",
+            "code": "    def get(\n        self, user_id: str, credentials_id: str, lock: bool = True\n    ) -> Credentials | None:\n        credentials = self.store.get_creds_by_id(user_id, credentials_id)\n        if not credentials:\n            return None\n"
+        },
+        {
+            "id": "chunk_1_IntegrationCredentialsManager_6",
+            "code": "        # Refresh OAuth credentials if needed\n        if credentials.type == \"oauth2\" and credentials.access_token_expires_at:\n            logger.debug(\n                f\"Credentials #{credentials.id} expire at \"\n                f\"{datetime.fromtimestamp(credentials.access_token_expires_at)}; \"\n                f\"current time is {datetime.now()}\"\n            )\n"
+        },
+        {
+            "id": "chunk_1_IntegrationCredentialsManager_7",
+            "code": "            with self._locked(user_id, credentials_id, \"refresh\"):\n                oauth_handler = _get_provider_oauth_handler(credentials.provider)\n                if oauth_handler.needs_refresh(credentials):\n                    logger.debug(\n                        f\"Refreshing '{credentials.provider}' \"\n                        f\"credentials #{credentials.id}\"\n                    )\n                    _lock = None\n                    if lock:\n                        # Wait until the credentials are no longer in use anywhere\n                        _lock = self._acquire_lock(user_id, credentials_id)\n\n                    fresh_credentials = oauth_handler.refresh_tokens(credentials)\n                    self.store.update_creds(user_id, fresh_credentials)\n                    if _lock and _lock.locked():\n                        _lock.release()\n\n"
+        },
+        {
+            "id": "chunk_1_IntegrationCredentialsManager_8",
+            "code": "        else:\n            logger.debug(f\"Credentials #{credentials.id} never expire\")\n"
+        },
+        {
+            "id": "chunk_1_IntegrationCredentialsManager_9",
+            "code": "        return credentials\n"
+        },
+        {
+            "id": "chunk_1_IntegrationCredentialsManager_10",
+            "code": "    def acquire(\n        self, user_id: str, credentials_id: str\n    ) -> tuple[Credentials, RedisLock]:\n        \"\"\"\n        \u26a0\ufe0f WARNING: this locks credentials system-wide and blocks both acquiring\n        and updating them elsewhere until the lock is released.\n        See the class docstring for more info.\n        \"\"\"\n"
+        },
+        {
+            "id": "chunk_1_IntegrationCredentialsManager_11",
+            "code": "        # Use a low-priority (!time_sensitive) locking queue on top of the general lock\n        # to allow priority access for refreshing/updating the tokens.\n        with self._locked(user_id, credentials_id, \"!time_sensitive\"):\n            lock = self._acquire_lock(user_id, credentials_id)\n        credentials = self.get(user_id, credentials_id, lock=False)\n        if not credentials:\n            raise ValueError(\n                f\"Credentials #{credentials_id} for user #{user_id} not found\"\n            )\n        return credentials, lock\n"
+        },
+        {
+            "id": "chunk_1_IntegrationCredentialsManager_12",
+            "code": "    def update(self, user_id: str, updated: Credentials) -> None:\n        with self._locked(user_id, updated.id):\n            self.store.update_creds(user_id, updated)\n"
+        },
+        {
+            "id": "chunk_1_IntegrationCredentialsManager_13",
+            "code": "    def delete(self, user_id: str, credentials_id: str) -> None:\n        with self._locked(user_id, credentials_id):\n            self.store.delete_creds_by_id(user_id, credentials_id)\n"
+        },
+        {
+            "id": "chunk_1_IntegrationCredentialsManager_14",
+            "code": "    # -- Locking utilities -- #\n\n"
+        },
+        {
+            "id": "chunk_1_IntegrationCredentialsManager_15",
+            "code": "    def _acquire_lock(self, user_id: str, credentials_id: str, *args: str) -> RedisLock:\n        key = (\n            f\"user:{user_id}\",\n            f\"credentials:{credentials_id}\",\n            *args,\n        )\n        return self._locks.acquire(key)\n"
+        },
+        {
+            "id": "chunk_1_IntegrationCredentialsManager_16",
+            "code": "    @contextmanager\n    def _locked(self, user_id: str, credentials_id: str, *args: str):\n        lock = self._acquire_lock(user_id, credentials_id, *args)\n        try:\n            yield\n        finally:\n            if lock.locked():\n                lock.release()\n"
+        },
+        {
+            "id": "chunk_1_IntegrationCredentialsManager_17",
+            "code": "    def release_all_locks(self):\n        \"\"\"Call this on process termination to ensure all locks are released\"\"\"\n        self._locks.release_all_locks()\n        self.store.locks.release_all_locks()\n"
+        },
+        {
+            "id": "chunk_2__get_provider_oauth_handler_1",
+            "code": "def _get_provider_oauth_handler(provider_name: str) -> \"BaseOAuthHandler\":\n"
+        },
+        {
+            "id": "chunk_2__get_provider_oauth_handler_2",
+            "code": "    if provider_name not in HANDLERS_BY_NAME:\n        raise KeyError(f\"Unknown provider '{provider_name}'\")\n"
+        },
+        {
+            "id": "chunk_2__get_provider_oauth_handler_3",
+            "code": "    client_id = getattr(settings.secrets, f\"{provider_name}_client_id\")\n    client_secret = getattr(settings.secrets, f\"{provider_name}_client_secret\")\n"
+        },
+        {
+            "id": "chunk_2__get_provider_oauth_handler_4",
+            "code": "    if not (client_id and client_secret):\n        raise MissingConfigError(\n            f\"Integration with provider '{provider_name}' is not configured\",\n        )\n"
+        },
+        {
+            "id": "chunk_2__get_provider_oauth_handler_5",
+            "code": "    handler_class = HANDLERS_BY_NAME[provider_name]\n    frontend_base_url = (\n        settings.config.frontend_base_url or settings.config.platform_base_url\n    )\n"
+        },
+        {
+            "id": "chunk_2__get_provider_oauth_handler_6",
+            "code": "    return handler_class(\n        client_id=client_id,\n        client_secret=client_secret,\n        redirect_uri=f\"{frontend_base_url}/auth/integrations/oauth_callback\",\n    )\n"
+        }
+    ],
+    "edges": [
+        {
+            "from": "chunk_0_GlobalBlock_1",
+            "to": "chunk_0_GlobalBlock_2"
+        },
+        {
+            "from": "chunk_0_GlobalBlock_2",
+            "to": "chunk_0_GlobalBlock_3"
+        },
+        {
+            "from": "chunk_0_GlobalBlock_3",
+            "to": "chunk_0_GlobalBlock_4"
+        },
+        {
+            "from": "chunk_1_IntegrationCredentialsManager_1",
+            "to": "chunk_1_IntegrationCredentialsManager_2"
+        },
+        {
+            "from": "chunk_1_IntegrationCredentialsManager_2",
+            "to": "chunk_1_IntegrationCredentialsManager_3"
+        },
+        {
+            "from": "chunk_1_IntegrationCredentialsManager_2",
+            "to": "chunk_1_IntegrationCredentialsManager_4"
+        },
+        {
+            "from": "chunk_1_IntegrationCredentialsManager_2",
+            "to": "chunk_1_IntegrationCredentialsManager_5"
+        },
+        {
+            "from": "chunk_1_IntegrationCredentialsManager_2",
+            "to": "chunk_1_IntegrationCredentialsManager_10"
+        },
+        {
+            "from": "chunk_1_IntegrationCredentialsManager_2",
+            "to": "chunk_1_IntegrationCredentialsManager_12"
+        },
+        {
+            "from": "chunk_1_IntegrationCredentialsManager_2",
+            "to": "chunk_1_IntegrationCredentialsManager_13"
+        },
+        {
+            "from": "chunk_1_IntegrationCredentialsManager_2",
+            "to": "chunk_1_IntegrationCredentialsManager_14"
+        },
+        {
+            "from": "chunk_1_IntegrationCredentialsManager_5",
+            "to": "chunk_1_IntegrationCredentialsManager_6"
+        },
+        {
+            "from": "chunk_1_IntegrationCredentialsManager_5",
+            "to": "chunk_1_IntegrationCredentialsManager_8"
+        },
+        {
+            "from": "chunk_1_IntegrationCredentialsManager_6",
+            "to": "chunk_1_IntegrationCredentialsManager_7"
+        },
+        {
+            "from": "chunk_1_IntegrationCredentialsManager_7",
+            "to": "chunk_1_IntegrationCredentialsManager_9"
+        },
+        {
+            "from": "chunk_1_IntegrationCredentialsManager_8",
+            "to": "chunk_1_IntegrationCredentialsManager_9"
+        },
+        {
+            "from": "chunk_1_IntegrationCredentialsManager_10",
+            "to": "chunk_1_IntegrationCredentialsManager_11"
+        },
+        {
+            "from": "chunk_1_IntegrationCredentialsManager_14",
+            "to": "chunk_1_IntegrationCredentialsManager_15"
+        },
+        {
+            "from": "chunk_1_IntegrationCredentialsManager_14",
+            "to": "chunk_1_IntegrationCredentialsManager_16"
+        },
+        {
+            "from": "chunk_1_IntegrationCredentialsManager_14",
+            "to": "chunk_1_IntegrationCredentialsManager_17"
+        },
+        {
+            "from": "chunk_2__get_provider_oauth_handler_1",
+            "to": "chunk_2__get_provider_oauth_handler_2"
+        },
+        {
+            "from": "chunk_2__get_provider_oauth_handler_2",
+            "to": "chunk_2__get_provider_oauth_handler_3"
+        },
+        {
+            "from": "chunk_2__get_provider_oauth_handler_3",
+            "to": "chunk_2__get_provider_oauth_handler_4"
+        },
+        {
+            "from": "chunk_2__get_provider_oauth_handler_4",
+            "to": "chunk_2__get_provider_oauth_handler_5"
+        },
+        {
+            "from": "chunk_2__get_provider_oauth_handler_5",
+            "to": "chunk_2__get_provider_oauth_handler_6"
+        }
+    ]
+}

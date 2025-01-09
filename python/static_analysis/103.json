@@ -1,0 +1,782 @@
+{
+  "nodes": [
+    {
+      "id": "n0",
+      "type": "block",
+      "statements": [
+        "import secrets",
+        "from datetime import datetime, timedelta, timezone",
+        "from typing import TYPE_CHECKING",
+        "from pydantic import SecretStr",
+        "TYPE_CHECKING"
+      ],
+      "code": "import secrets\nfrom datetime import datetime, timedelta, timezone\nfrom typing import TYPE_CHECKING\nfrom pydantic import SecretStr\nTYPE_CHECKING"
+    },
+    {
+      "id": "n1",
+      "type": "block",
+      "statements": [
+        "from backend.executor.database import DatabaseManager"
+      ],
+      "code": "from backend.executor.database import DatabaseManager"
+    },
+    {
+      "id": "n2",
+      "type": "block",
+      "statements": [],
+      "code": ""
+    },
+    {
+      "id": "n3",
+      "type": "block",
+      "statements": [
+        "from autogpt_libs.utils.cache import thread_cached",
+        "from autogpt_libs.utils.synchronize import RedisKeyedMutex",
+        "from backend.data.model import APIKeyCredentials, Credentials, OAuth2Credentials, OAuthState, UserIntegrations",
+        "from backend.util.settings import Settings",
+        "settings = Settings()",
+        "revid_credentials = APIKeyCredentials(id='fdb7f412-f519-48d1-9b5f-d2f73d0e01fe', provider='revid', api_key=SecretStr(settings.secrets.revid_api_key), title='Use Credits for Revid', expires_at=None)",
+        "ideogram_credentials = APIKeyCredentials(id='760f84fc-b270-42de-91f6-08efe1b512d0', provider='ideogram', api_key=SecretStr(settings.secrets.ideogram_api_key), title='Use Credits for Ideogram', expires_at=None)",
+        "replicate_credentials = APIKeyCredentials(id='6b9fc200-4726-4973-86c9-cd526f5ce5db', provider='replicate', api_key=SecretStr(settings.secrets.replicate_api_key), title='Use Credits for Replicate', expires_at=None)",
+        "openai_credentials = APIKeyCredentials(id='53c25cb8-e3ee-465c-a4d1-e75a4c899c2a', provider='openai', api_key=SecretStr(settings.secrets.openai_api_key), title='Use Credits for OpenAI', expires_at=None)",
+        "anthropic_credentials = APIKeyCredentials(id='24e5d942-d9e3-4798-8151-90143ee55629', provider='anthropic', api_key=SecretStr(settings.secrets.anthropic_api_key), title='Use Credits for Anthropic', expires_at=None)",
+        "groq_credentials = APIKeyCredentials(id='4ec22295-8f97-4dd1-b42b-2c6957a02545', provider='groq', api_key=SecretStr(settings.secrets.groq_api_key), title='Use Credits for Groq', expires_at=None)",
+        "did_credentials = APIKeyCredentials(id='7f7b0654-c36b-4565-8fa7-9a52575dfae2', provider='d_id', api_key=SecretStr(settings.secrets.did_api_key), title='Use Credits for D-ID', expires_at=None)",
+        "jina_credentials = APIKeyCredentials(id='7f26de70-ba0d-494e-ba76-238e65e7b45f', provider='jina', api_key=SecretStr(settings.secrets.jina_api_key), title='Use Credits for Jina', expires_at=None)",
+        "unreal_credentials = APIKeyCredentials(id='66f20754-1b81-48e4-91d0-f4f0dd82145f', provider='unreal', api_key=SecretStr(settings.secrets.unreal_speech_api_key), title='Use Credits for Unreal', expires_at=None)",
+        "open_router_credentials = APIKeyCredentials(id='b5a0e27d-0c98-4df3-a4b9-10193e1f3c40', provider='open_router', api_key=SecretStr(settings.secrets.open_router_api_key), title='Use Credits for Open Router', expires_at=None)",
+        "DEFAULT_CREDENTIALS = [revid_credentials, ideogram_credentials, replicate_credentials, openai_credentials, anthropic_credentials, groq_credentials, did_credentials, jina_credentials, unreal_credentials, open_router_credentials]",
+        "class IntegrationCredentialsStore:\n\n    def __init__(self):\n        from backend.data.redis import get_redis\n        self.locks = RedisKeyedMutex(get_redis())\n\n    @property\n    @thread_cached\n    def db_manager(self) -> 'DatabaseManager':\n        from backend.executor.database import DatabaseManager\n        from backend.util.service import get_service_client\n        return get_service_client(DatabaseManager)\n\n    def add_creds(self, user_id: str, credentials: Credentials) -> None:\n        with self.locked_user_integrations(user_id):\n            if self.get_creds_by_id(user_id, credentials.id):\n                raise ValueError(f'Can not re-create existing credentials #{credentials.id} for user #{user_id}')\n            self._set_user_integration_creds(user_id, [*self.get_all_creds(user_id), credentials])\n\n    def get_all_creds(self, user_id: str) -> list[Credentials]:\n        users_credentials = self._get_user_integrations(user_id).credentials\n        all_credentials = users_credentials\n        if settings.secrets.revid_api_key:\n            all_credentials.append(revid_credentials)\n        if settings.secrets.ideogram_api_key:\n            all_credentials.append(ideogram_credentials)\n        if settings.secrets.groq_api_key:\n            all_credentials.append(groq_credentials)\n        if settings.secrets.replicate_api_key:\n            all_credentials.append(replicate_credentials)\n        if settings.secrets.openai_api_key:\n            all_credentials.append(openai_credentials)\n        if settings.secrets.anthropic_api_key:\n            all_credentials.append(anthropic_credentials)\n        if settings.secrets.did_api_key:\n            all_credentials.append(did_credentials)\n        if settings.secrets.jina_api_key:\n            all_credentials.append(jina_credentials)\n        if settings.secrets.unreal_speech_api_key:\n            all_credentials.append(unreal_credentials)\n        if settings.secrets.open_router_api_key:\n            all_credentials.append(open_router_credentials)\n        return all_credentials\n\n    def get_creds_by_id(self, user_id: str, credentials_id: str) -> Credentials | None:\n        all_credentials = self.get_all_creds(user_id)\n        return next((c for c in all_credentials if c.id == credentials_id), None)\n\n    def get_creds_by_provider(self, user_id: str, provider: str) -> list[Credentials]:\n        credentials = self.get_all_creds(user_id)\n        return [c for c in credentials if c.provider == provider]\n\n    def get_authorized_providers(self, user_id: str) -> list[str]:\n        credentials = self.get_all_creds(user_id)\n        return list(set((c.provider for c in credentials)))\n\n    def update_creds(self, user_id: str, updated: Credentials) -> None:\n        with self.locked_user_integrations(user_id):\n            current = self.get_creds_by_id(user_id, updated.id)\n            if not current:\n                raise ValueError(f'Credentials with ID {updated.id} for user with ID {user_id} not found')\n            if type(current) is not type(updated):\n                raise TypeError(f'Can not update credentials with ID {updated.id} from type {type(current)} to type {type(updated)}')\n            if isinstance(updated, OAuth2Credentials) and isinstance(current, OAuth2Credentials) and (not set(updated.scopes).issuperset(current.scopes)):\n                raise ValueError(f'Can not update credentials with ID {updated.id} and scopes {current.scopes} to more restrictive set of scopes {updated.scopes}')\n            updated_credentials_list = [updated if c.id == updated.id else c for c in self.get_all_creds(user_id)]\n            self._set_user_integration_creds(user_id, updated_credentials_list)\n\n    def delete_creds_by_id(self, user_id: str, credentials_id: str) -> None:\n        with self.locked_user_integrations(user_id):\n            filtered_credentials = [c for c in self.get_all_creds(user_id) if c.id != credentials_id]\n            self._set_user_integration_creds(user_id, filtered_credentials)\n\n    def store_state_token(self, user_id: str, provider: str, scopes: list[str]) -> str:\n        token = secrets.token_urlsafe(32)\n        expires_at = datetime.now(timezone.utc) + timedelta(minutes=10)\n        state = OAuthState(token=token, provider=provider, expires_at=int(expires_at.timestamp()), scopes=scopes)\n        with self.locked_user_integrations(user_id):\n            user_integrations = self._get_user_integrations(user_id)\n            oauth_states = user_integrations.oauth_states\n            oauth_states.append(state)\n            user_integrations.oauth_states = oauth_states\n            self.db_manager.update_user_integrations(user_id=user_id, data=user_integrations)\n        return token\n\n    def get_any_valid_scopes_from_state_token(self, user_id: str, token: str, provider: str) -> list[str]:\n        \"\"\"\n        Get the valid scopes from the OAuth state token. This will return any valid scopes\n        from any OAuth state token for the given provider. If no valid scopes are found,\n        an empty list is returned. DO NOT RELY ON THIS TOKEN TO AUTHENTICATE A USER, AS IT\n        IS TO CHECK IF THE USER HAS GIVEN PERMISSIONS TO THE APPLICATION BEFORE EXCHANGING\n        THE CODE FOR TOKENS.\n        \"\"\"\n        user_integrations = self._get_user_integrations(user_id)\n        oauth_states = user_integrations.oauth_states\n        now = datetime.now(timezone.utc)\n        valid_state = next((state for state in oauth_states if state.token == token and state.provider == provider and (state.expires_at > now.timestamp())), None)\n        if valid_state:\n            return valid_state.scopes\n        return []\n\n    def verify_state_token(self, user_id: str, token: str, provider: str) -> bool:\n        with self.locked_user_integrations(user_id):\n            user_integrations = self._get_user_integrations(user_id)\n            oauth_states = user_integrations.oauth_states\n            now = datetime.now(timezone.utc)\n            valid_state = next((state for state in oauth_states if state.token == token and state.provider == provider and (state.expires_at > now.timestamp())), None)\n            if valid_state:\n                oauth_states.remove(valid_state)\n                user_integrations.oauth_states = oauth_states\n                self.db_manager.update_user_integrations(user_id, user_integrations)\n                return True\n        return False\n\n    def _set_user_integration_creds(self, user_id: str, credentials: list[Credentials]) -> None:\n        integrations = self._get_user_integrations(user_id)\n        credentials = [c for c in credentials if c not in DEFAULT_CREDENTIALS]\n        integrations.credentials = credentials\n        self.db_manager.update_user_integrations(user_id, integrations)\n\n    def _get_user_integrations(self, user_id: str) -> UserIntegrations:\n        integrations: UserIntegrations = self.db_manager.get_user_integrations(user_id=user_id)\n        return integrations\n\n    def locked_user_integrations(self, user_id: str):\n        key = (f'user:{user_id}', 'integrations')\n        return self.locks.locked(key)",
+        "def __init__(self):\n    from backend.data.redis import get_redis\n    self.locks = RedisKeyedMutex(get_redis())",
+        "from backend.data.redis import get_redis",
+        "self.locks = RedisKeyedMutex(get_redis())",
+        "@property\n@thread_cached\ndef db_manager(self) -> 'DatabaseManager':\n    from backend.executor.database import DatabaseManager\n    from backend.util.service import get_service_client\n    return get_service_client(DatabaseManager)",
+        "from backend.executor.database import DatabaseManager",
+        "from backend.util.service import get_service_client",
+        "return get_service_client(DatabaseManager)"
+      ],
+      "code": "from autogpt_libs.utils.cache import thread_cached\nfrom autogpt_libs.utils.synchronize import RedisKeyedMutex\nfrom backend.data.model import APIKeyCredentials, Credentials, OAuth2Credentials, OAuthState, UserIntegrations\nfrom backend.util.settings import Settings\nsettings = Settings()\nrevid_credentials = APIKeyCredentials(id='fdb7f412-f519-48d1-9b5f-d2f73d0e01fe', provider='revid', api_key=SecretStr(settings.secrets.revid_api_key), title='Use Credits for Revid', expires_at=None)\nideogram_credentials = APIKeyCredentials(id='760f84fc-b270-42de-91f6-08efe1b512d0', provider='ideogram', api_key=SecretStr(settings.secrets.ideogram_api_key), title='Use Credits for Ideogram', expires_at=None)\nreplicate_credentials = APIKeyCredentials(id='6b9fc200-4726-4973-86c9-cd526f5ce5db', provider='replicate', api_key=SecretStr(settings.secrets.replicate_api_key), title='Use Credits for Replicate', expires_at=None)\nopenai_credentials = APIKeyCredentials(id='53c25cb8-e3ee-465c-a4d1-e75a4c899c2a', provider='openai', api_key=SecretStr(settings.secrets.openai_api_key), title='Use Credits for OpenAI', expires_at=None)\nanthropic_credentials = APIKeyCredentials(id='24e5d942-d9e3-4798-8151-90143ee55629', provider='anthropic', api_key=SecretStr(settings.secrets.anthropic_api_key), title='Use Credits for Anthropic', expires_at=None)\ngroq_credentials = APIKeyCredentials(id='4ec22295-8f97-4dd1-b42b-2c6957a02545', provider='groq', api_key=SecretStr(settings.secrets.groq_api_key), title='Use Credits for Groq', expires_at=None)\ndid_credentials = APIKeyCredentials(id='7f7b0654-c36b-4565-8fa7-9a52575dfae2', provider='d_id', api_key=SecretStr(settings.secrets.did_api_key), title='Use Credits for D-ID', expires_at=None)\njina_credentials = APIKeyCredentials(id='7f26de70-ba0d-494e-ba76-238e65e7b45f', provider='jina', api_key=SecretStr(settings.secrets.jina_api_key), title='Use Credits for Jina', expires_at=None)\nunreal_credentials = APIKeyCredentials(id='66f20754-1b81-48e4-91d0-f4f0dd82145f', provider='unreal', api_key=SecretStr(settings.secrets.unreal_speech_api_key), title='Use Credits for Unreal', expires_at=None)\nopen_router_credentials = APIKeyCredentials(id='b5a0e27d-0c98-4df3-a4b9-10193e1f3c40', provider='open_router', api_key=SecretStr(settings.secrets.open_router_api_key), title='Use Credits for Open Router', expires_at=None)\nDEFAULT_CREDENTIALS = [revid_credentials, ideogram_credentials, replicate_credentials, openai_credentials, anthropic_credentials, groq_credentials, did_credentials, jina_credentials, unreal_credentials, open_router_credentials]\nclass IntegrationCredentialsStore:\n\n    def __init__(self):\n        from backend.data.redis import get_redis\n        self.locks = RedisKeyedMutex(get_redis())\n\n    @property\n    @thread_cached\n    def db_manager(self) -> 'DatabaseManager':\n        from backend.executor.database import DatabaseManager\n        from backend.util.service import get_service_client\n        return get_service_client(DatabaseManager)\n\n    def add_creds(self, user_id: str, credentials: Credentials) -> None:\n        with self.locked_user_integrations(user_id):\n            if self.get_creds_by_id(user_id, credentials.id):\n                raise ValueError(f'Can not re-create existing credentials #{credentials.id} for user #{user_id}')\n            self._set_user_integration_creds(user_id, [*self.get_all_creds(user_id), credentials])\n\n    def get_all_creds(self, user_id: str) -> list[Credentials]:\n        users_credentials = self._get_user_integrations(user_id).credentials\n        all_credentials = users_credentials\n        if settings.secrets.revid_api_key:\n            all_credentials.append(revid_credentials)\n        if settings.secrets.ideogram_api_key:\n            all_credentials.append(ideogram_credentials)\n        if settings.secrets.groq_api_key:\n            all_credentials.append(groq_credentials)\n        if settings.secrets.replicate_api_key:\n            all_credentials.append(replicate_credentials)\n        if settings.secrets.openai_api_key:\n            all_credentials.append(openai_credentials)\n        if settings.secrets.anthropic_api_key:\n            all_credentials.append(anthropic_credentials)\n        if settings.secrets.did_api_key:\n            all_credentials.append(did_credentials)\n        if settings.secrets.jina_api_key:\n            all_credentials.append(jina_credentials)\n        if settings.secrets.unreal_speech_api_key:\n            all_credentials.append(unreal_credentials)\n        if settings.secrets.open_router_api_key:\n            all_credentials.append(open_router_credentials)\n        return all_credentials\n\n    def get_creds_by_id(self, user_id: str, credentials_id: str) -> Credentials | None:\n        all_credentials = self.get_all_creds(user_id)\n        return next((c for c in all_credentials if c.id == credentials_id), None)\n\n    def get_creds_by_provider(self, user_id: str, provider: str) -> list[Credentials]:\n        credentials = self.get_all_creds(user_id)\n        return [c for c in credentials if c.provider == provider]\n\n    def get_authorized_providers(self, user_id: str) -> list[str]:\n        credentials = self.get_all_creds(user_id)\n        return list(set((c.provider for c in credentials)))\n\n    def update_creds(self, user_id: str, updated: Credentials) -> None:\n        with self.locked_user_integrations(user_id):\n            current = self.get_creds_by_id(user_id, updated.id)\n            if not current:\n                raise ValueError(f'Credentials with ID {updated.id} for user with ID {user_id} not found')\n            if type(current) is not type(updated):\n                raise TypeError(f'Can not update credentials with ID {updated.id} from type {type(current)} to type {type(updated)}')\n            if isinstance(updated, OAuth2Credentials) and isinstance(current, OAuth2Credentials) and (not set(updated.scopes).issuperset(current.scopes)):\n                raise ValueError(f'Can not update credentials with ID {updated.id} and scopes {current.scopes} to more restrictive set of scopes {updated.scopes}')\n            updated_credentials_list = [updated if c.id == updated.id else c for c in self.get_all_creds(user_id)]\n            self._set_user_integration_creds(user_id, updated_credentials_list)\n\n    def delete_creds_by_id(self, user_id: str, credentials_id: str) -> None:\n        with self.locked_user_integrations(user_id):\n            filtered_credentials = [c for c in self.get_all_creds(user_id) if c.id != credentials_id]\n            self._set_user_integration_creds(user_id, filtered_credentials)\n\n    def store_state_token(self, user_id: str, provider: str, scopes: list[str]) -> str:\n        token = secrets.token_urlsafe(32)\n        expires_at = datetime.now(timezone.utc) + timedelta(minutes=10)\n        state = OAuthState(token=token, provider=provider, expires_at=int(expires_at.timestamp()), scopes=scopes)\n        with self.locked_user_integrations(user_id):\n            user_integrations = self._get_user_integrations(user_id)\n            oauth_states = user_integrations.oauth_states\n            oauth_states.append(state)\n            user_integrations.oauth_states = oauth_states\n            self.db_manager.update_user_integrations(user_id=user_id, data=user_integrations)\n        return token\n\n    def get_any_valid_scopes_from_state_token(self, user_id: str, token: str, provider: str) -> list[str]:\n        \"\"\"\n        Get the valid scopes from the OAuth state token. This will return any valid scopes\n        from any OAuth state token for the given provider. If no valid scopes are found,\n        an empty list is returned. DO NOT RELY ON THIS TOKEN TO AUTHENTICATE A USER, AS IT\n        IS TO CHECK IF THE USER HAS GIVEN PERMISSIONS TO THE APPLICATION BEFORE EXCHANGING\n        THE CODE FOR TOKENS.\n        \"\"\"\n        user_integrations = self._get_user_integrations(user_id)\n        oauth_states = user_integrations.oauth_states\n        now = datetime.now(timezone.utc)\n        valid_state = next((state for state in oauth_states if state.token == token and state.provider == provider and (state.expires_at > now.timestamp())), None)\n        if valid_state:\n            return valid_state.scopes\n        return []\n\n    def verify_state_token(self, user_id: str, token: str, provider: str) -> bool:\n        with self.locked_user_integrations(user_id):\n            user_integrations = self._get_user_integrations(user_id)\n            oauth_states = user_integrations.oauth_states\n            now = datetime.now(timezone.utc)\n            valid_state = next((state for state in oauth_states if state.token == token and state.provider == provider and (state.expires_at > now.timestamp())), None)\n            if valid_state:\n                oauth_states.remove(valid_state)\n                user_integrations.oauth_states = oauth_states\n                self.db_manager.update_user_integrations(user_id, user_integrations)\n                return True\n        return False\n\n    def _set_user_integration_creds(self, user_id: str, credentials: list[Credentials]) -> None:\n        integrations = self._get_user_integrations(user_id)\n        credentials = [c for c in credentials if c not in DEFAULT_CREDENTIALS]\n        integrations.credentials = credentials\n        self.db_manager.update_user_integrations(user_id, integrations)\n\n    def _get_user_integrations(self, user_id: str) -> UserIntegrations:\n        integrations: UserIntegrations = self.db_manager.get_user_integrations(user_id=user_id)\n        return integrations\n\n    def locked_user_integrations(self, user_id: str):\n        key = (f'user:{user_id}', 'integrations')\n        return self.locks.locked(key)\ndef __init__(self):\n    from backend.data.redis import get_redis\n    self.locks = RedisKeyedMutex(get_redis())\nfrom backend.data.redis import get_redis\nself.locks = RedisKeyedMutex(get_redis())\n@property\n@thread_cached\ndef db_manager(self) -> 'DatabaseManager':\n    from backend.executor.database import DatabaseManager\n    from backend.util.service import get_service_client\n    return get_service_client(DatabaseManager)\nfrom backend.executor.database import DatabaseManager\nfrom backend.util.service import get_service_client\nreturn get_service_client(DatabaseManager)"
+    },
+    {
+      "id": "n4",
+      "type": "block",
+      "statements": [
+        "def add_creds(self, user_id: str, credentials: Credentials) -> None:\n    with self.locked_user_integrations(user_id):\n        if self.get_creds_by_id(user_id, credentials.id):\n            raise ValueError(f'Can not re-create existing credentials #{credentials.id} for user #{user_id}')\n        self._set_user_integration_creds(user_id, [*self.get_all_creds(user_id), credentials])",
+        "with self.locked_user_integrations(user_id):\n    if self.get_creds_by_id(user_id, credentials.id):\n        raise ValueError(f'Can not re-create existing credentials #{credentials.id} for user #{user_id}')\n    self._set_user_integration_creds(user_id, [*self.get_all_creds(user_id), credentials])",
+        "self.get_creds_by_id(user_id, credentials.id)"
+      ],
+      "code": "def add_creds(self, user_id: str, credentials: Credentials) -> None:\n    with self.locked_user_integrations(user_id):\n        if self.get_creds_by_id(user_id, credentials.id):\n            raise ValueError(f'Can not re-create existing credentials #{credentials.id} for user #{user_id}')\n        self._set_user_integration_creds(user_id, [*self.get_all_creds(user_id), credentials])\nwith self.locked_user_integrations(user_id):\n    if self.get_creds_by_id(user_id, credentials.id):\n        raise ValueError(f'Can not re-create existing credentials #{credentials.id} for user #{user_id}')\n    self._set_user_integration_creds(user_id, [*self.get_all_creds(user_id), credentials])\nself.get_creds_by_id(user_id, credentials.id)"
+    },
+    {
+      "id": "n5",
+      "type": "block",
+      "statements": [
+        "raise ValueError(f'Can not re-create existing credentials #{credentials.id} for user #{user_id}')"
+      ],
+      "code": "raise ValueError(f'Can not re-create existing credentials #{credentials.id} for user #{user_id}')"
+    },
+    {
+      "id": "n6",
+      "type": "block",
+      "statements": [],
+      "code": ""
+    },
+    {
+      "id": "n7",
+      "type": "block",
+      "statements": [
+        "self._set_user_integration_creds(user_id, [*self.get_all_creds(user_id), credentials])",
+        "def get_all_creds(self, user_id: str) -> list[Credentials]:\n    users_credentials = self._get_user_integrations(user_id).credentials\n    all_credentials = users_credentials\n    if settings.secrets.revid_api_key:\n        all_credentials.append(revid_credentials)\n    if settings.secrets.ideogram_api_key:\n        all_credentials.append(ideogram_credentials)\n    if settings.secrets.groq_api_key:\n        all_credentials.append(groq_credentials)\n    if settings.secrets.replicate_api_key:\n        all_credentials.append(replicate_credentials)\n    if settings.secrets.openai_api_key:\n        all_credentials.append(openai_credentials)\n    if settings.secrets.anthropic_api_key:\n        all_credentials.append(anthropic_credentials)\n    if settings.secrets.did_api_key:\n        all_credentials.append(did_credentials)\n    if settings.secrets.jina_api_key:\n        all_credentials.append(jina_credentials)\n    if settings.secrets.unreal_speech_api_key:\n        all_credentials.append(unreal_credentials)\n    if settings.secrets.open_router_api_key:\n        all_credentials.append(open_router_credentials)\n    return all_credentials",
+        "users_credentials = self._get_user_integrations(user_id).credentials",
+        "all_credentials = users_credentials",
+        "settings.secrets.revid_api_key"
+      ],
+      "code": "self._set_user_integration_creds(user_id, [*self.get_all_creds(user_id), credentials])\ndef get_all_creds(self, user_id: str) -> list[Credentials]:\n    users_credentials = self._get_user_integrations(user_id).credentials\n    all_credentials = users_credentials\n    if settings.secrets.revid_api_key:\n        all_credentials.append(revid_credentials)\n    if settings.secrets.ideogram_api_key:\n        all_credentials.append(ideogram_credentials)\n    if settings.secrets.groq_api_key:\n        all_credentials.append(groq_credentials)\n    if settings.secrets.replicate_api_key:\n        all_credentials.append(replicate_credentials)\n    if settings.secrets.openai_api_key:\n        all_credentials.append(openai_credentials)\n    if settings.secrets.anthropic_api_key:\n        all_credentials.append(anthropic_credentials)\n    if settings.secrets.did_api_key:\n        all_credentials.append(did_credentials)\n    if settings.secrets.jina_api_key:\n        all_credentials.append(jina_credentials)\n    if settings.secrets.unreal_speech_api_key:\n        all_credentials.append(unreal_credentials)\n    if settings.secrets.open_router_api_key:\n        all_credentials.append(open_router_credentials)\n    return all_credentials\nusers_credentials = self._get_user_integrations(user_id).credentials\nall_credentials = users_credentials\nsettings.secrets.revid_api_key"
+    },
+    {
+      "id": "n8",
+      "type": "block",
+      "statements": [
+        "all_credentials.append(revid_credentials)"
+      ],
+      "code": "all_credentials.append(revid_credentials)"
+    },
+    {
+      "id": "n9",
+      "type": "block",
+      "statements": [],
+      "code": ""
+    },
+    {
+      "id": "n10",
+      "type": "block",
+      "statements": [
+        "settings.secrets.ideogram_api_key"
+      ],
+      "code": "settings.secrets.ideogram_api_key"
+    },
+    {
+      "id": "n11",
+      "type": "block",
+      "statements": [
+        "all_credentials.append(ideogram_credentials)"
+      ],
+      "code": "all_credentials.append(ideogram_credentials)"
+    },
+    {
+      "id": "n12",
+      "type": "block",
+      "statements": [],
+      "code": ""
+    },
+    {
+      "id": "n13",
+      "type": "block",
+      "statements": [
+        "settings.secrets.groq_api_key"
+      ],
+      "code": "settings.secrets.groq_api_key"
+    },
+    {
+      "id": "n14",
+      "type": "block",
+      "statements": [
+        "all_credentials.append(groq_credentials)"
+      ],
+      "code": "all_credentials.append(groq_credentials)"
+    },
+    {
+      "id": "n15",
+      "type": "block",
+      "statements": [],
+      "code": ""
+    },
+    {
+      "id": "n16",
+      "type": "block",
+      "statements": [
+        "settings.secrets.replicate_api_key"
+      ],
+      "code": "settings.secrets.replicate_api_key"
+    },
+    {
+      "id": "n17",
+      "type": "block",
+      "statements": [
+        "all_credentials.append(replicate_credentials)"
+      ],
+      "code": "all_credentials.append(replicate_credentials)"
+    },
+    {
+      "id": "n18",
+      "type": "block",
+      "statements": [],
+      "code": ""
+    },
+    {
+      "id": "n19",
+      "type": "block",
+      "statements": [
+        "settings.secrets.openai_api_key"
+      ],
+      "code": "settings.secrets.openai_api_key"
+    },
+    {
+      "id": "n20",
+      "type": "block",
+      "statements": [
+        "all_credentials.append(openai_credentials)"
+      ],
+      "code": "all_credentials.append(openai_credentials)"
+    },
+    {
+      "id": "n21",
+      "type": "block",
+      "statements": [],
+      "code": ""
+    },
+    {
+      "id": "n22",
+      "type": "block",
+      "statements": [
+        "settings.secrets.anthropic_api_key"
+      ],
+      "code": "settings.secrets.anthropic_api_key"
+    },
+    {
+      "id": "n23",
+      "type": "block",
+      "statements": [
+        "all_credentials.append(anthropic_credentials)"
+      ],
+      "code": "all_credentials.append(anthropic_credentials)"
+    },
+    {
+      "id": "n24",
+      "type": "block",
+      "statements": [],
+      "code": ""
+    },
+    {
+      "id": "n25",
+      "type": "block",
+      "statements": [
+        "settings.secrets.did_api_key"
+      ],
+      "code": "settings.secrets.did_api_key"
+    },
+    {
+      "id": "n26",
+      "type": "block",
+      "statements": [
+        "all_credentials.append(did_credentials)"
+      ],
+      "code": "all_credentials.append(did_credentials)"
+    },
+    {
+      "id": "n27",
+      "type": "block",
+      "statements": [],
+      "code": ""
+    },
+    {
+      "id": "n28",
+      "type": "block",
+      "statements": [
+        "settings.secrets.jina_api_key"
+      ],
+      "code": "settings.secrets.jina_api_key"
+    },
+    {
+      "id": "n29",
+      "type": "block",
+      "statements": [
+        "all_credentials.append(jina_credentials)"
+      ],
+      "code": "all_credentials.append(jina_credentials)"
+    },
+    {
+      "id": "n30",
+      "type": "block",
+      "statements": [],
+      "code": ""
+    },
+    {
+      "id": "n31",
+      "type": "block",
+      "statements": [
+        "settings.secrets.unreal_speech_api_key"
+      ],
+      "code": "settings.secrets.unreal_speech_api_key"
+    },
+    {
+      "id": "n32",
+      "type": "block",
+      "statements": [
+        "all_credentials.append(unreal_credentials)"
+      ],
+      "code": "all_credentials.append(unreal_credentials)"
+    },
+    {
+      "id": "n33",
+      "type": "block",
+      "statements": [],
+      "code": ""
+    },
+    {
+      "id": "n34",
+      "type": "block",
+      "statements": [
+        "settings.secrets.open_router_api_key"
+      ],
+      "code": "settings.secrets.open_router_api_key"
+    },
+    {
+      "id": "n35",
+      "type": "block",
+      "statements": [
+        "all_credentials.append(open_router_credentials)"
+      ],
+      "code": "all_credentials.append(open_router_credentials)"
+    },
+    {
+      "id": "n36",
+      "type": "block",
+      "statements": [],
+      "code": ""
+    },
+    {
+      "id": "n37",
+      "type": "block",
+      "statements": [
+        "return all_credentials"
+      ],
+      "code": "return all_credentials"
+    },
+    {
+      "id": "n38",
+      "type": "block",
+      "statements": [
+        "def get_creds_by_id(self, user_id: str, credentials_id: str) -> Credentials | None:\n    all_credentials = self.get_all_creds(user_id)\n    return next((c for c in all_credentials if c.id == credentials_id), None)",
+        "all_credentials = self.get_all_creds(user_id)",
+        "return next((c for c in all_credentials if c.id == credentials_id), None)"
+      ],
+      "code": "def get_creds_by_id(self, user_id: str, credentials_id: str) -> Credentials | None:\n    all_credentials = self.get_all_creds(user_id)\n    return next((c for c in all_credentials if c.id == credentials_id), None)\nall_credentials = self.get_all_creds(user_id)\nreturn next((c for c in all_credentials if c.id == credentials_id), None)"
+    },
+    {
+      "id": "n39",
+      "type": "block",
+      "statements": [
+        "def get_creds_by_provider(self, user_id: str, provider: str) -> list[Credentials]:\n    credentials = self.get_all_creds(user_id)\n    return [c for c in credentials if c.provider == provider]",
+        "credentials = self.get_all_creds(user_id)",
+        "return [c for c in credentials if c.provider == provider]"
+      ],
+      "code": "def get_creds_by_provider(self, user_id: str, provider: str) -> list[Credentials]:\n    credentials = self.get_all_creds(user_id)\n    return [c for c in credentials if c.provider == provider]\ncredentials = self.get_all_creds(user_id)\nreturn [c for c in credentials if c.provider == provider]"
+    },
+    {
+      "id": "n40",
+      "type": "block",
+      "statements": [
+        "def get_authorized_providers(self, user_id: str) -> list[str]:\n    credentials = self.get_all_creds(user_id)\n    return list(set((c.provider for c in credentials)))",
+        "credentials = self.get_all_creds(user_id)",
+        "return list(set((c.provider for c in credentials)))"
+      ],
+      "code": "def get_authorized_providers(self, user_id: str) -> list[str]:\n    credentials = self.get_all_creds(user_id)\n    return list(set((c.provider for c in credentials)))\ncredentials = self.get_all_creds(user_id)\nreturn list(set((c.provider for c in credentials)))"
+    },
+    {
+      "id": "n41",
+      "type": "block",
+      "statements": [
+        "def update_creds(self, user_id: str, updated: Credentials) -> None:\n    with self.locked_user_integrations(user_id):\n        current = self.get_creds_by_id(user_id, updated.id)\n        if not current:\n            raise ValueError(f'Credentials with ID {updated.id} for user with ID {user_id} not found')\n        if type(current) is not type(updated):\n            raise TypeError(f'Can not update credentials with ID {updated.id} from type {type(current)} to type {type(updated)}')\n        if isinstance(updated, OAuth2Credentials) and isinstance(current, OAuth2Credentials) and (not set(updated.scopes).issuperset(current.scopes)):\n            raise ValueError(f'Can not update credentials with ID {updated.id} and scopes {current.scopes} to more restrictive set of scopes {updated.scopes}')\n        updated_credentials_list = [updated if c.id == updated.id else c for c in self.get_all_creds(user_id)]\n        self._set_user_integration_creds(user_id, updated_credentials_list)",
+        "with self.locked_user_integrations(user_id):\n    current = self.get_creds_by_id(user_id, updated.id)\n    if not current:\n        raise ValueError(f'Credentials with ID {updated.id} for user with ID {user_id} not found')\n    if type(current) is not type(updated):\n        raise TypeError(f'Can not update credentials with ID {updated.id} from type {type(current)} to type {type(updated)}')\n    if isinstance(updated, OAuth2Credentials) and isinstance(current, OAuth2Credentials) and (not set(updated.scopes).issuperset(current.scopes)):\n        raise ValueError(f'Can not update credentials with ID {updated.id} and scopes {current.scopes} to more restrictive set of scopes {updated.scopes}')\n    updated_credentials_list = [updated if c.id == updated.id else c for c in self.get_all_creds(user_id)]\n    self._set_user_integration_creds(user_id, updated_credentials_list)",
+        "current = self.get_creds_by_id(user_id, updated.id)",
+        "not current"
+      ],
+      "code": "def update_creds(self, user_id: str, updated: Credentials) -> None:\n    with self.locked_user_integrations(user_id):\n        current = self.get_creds_by_id(user_id, updated.id)\n        if not current:\n            raise ValueError(f'Credentials with ID {updated.id} for user with ID {user_id} not found')\n        if type(current) is not type(updated):\n            raise TypeError(f'Can not update credentials with ID {updated.id} from type {type(current)} to type {type(updated)}')\n        if isinstance(updated, OAuth2Credentials) and isinstance(current, OAuth2Credentials) and (not set(updated.scopes).issuperset(current.scopes)):\n            raise ValueError(f'Can not update credentials with ID {updated.id} and scopes {current.scopes} to more restrictive set of scopes {updated.scopes}')\n        updated_credentials_list = [updated if c.id == updated.id else c for c in self.get_all_creds(user_id)]\n        self._set_user_integration_creds(user_id, updated_credentials_list)\nwith self.locked_user_integrations(user_id):\n    current = self.get_creds_by_id(user_id, updated.id)\n    if not current:\n        raise ValueError(f'Credentials with ID {updated.id} for user with ID {user_id} not found')\n    if type(current) is not type(updated):\n        raise TypeError(f'Can not update credentials with ID {updated.id} from type {type(current)} to type {type(updated)}')\n    if isinstance(updated, OAuth2Credentials) and isinstance(current, OAuth2Credentials) and (not set(updated.scopes).issuperset(current.scopes)):\n        raise ValueError(f'Can not update credentials with ID {updated.id} and scopes {current.scopes} to more restrictive set of scopes {updated.scopes}')\n    updated_credentials_list = [updated if c.id == updated.id else c for c in self.get_all_creds(user_id)]\n    self._set_user_integration_creds(user_id, updated_credentials_list)\ncurrent = self.get_creds_by_id(user_id, updated.id)\nnot current"
+    },
+    {
+      "id": "n42",
+      "type": "block",
+      "statements": [
+        "raise ValueError(f'Credentials with ID {updated.id} for user with ID {user_id} not found')"
+      ],
+      "code": "raise ValueError(f'Credentials with ID {updated.id} for user with ID {user_id} not found')"
+    },
+    {
+      "id": "n43",
+      "type": "block",
+      "statements": [],
+      "code": ""
+    },
+    {
+      "id": "n44",
+      "type": "block",
+      "statements": [
+        "type(current) IsNot type(updated)"
+      ],
+      "code": "type(current) IsNot type(updated)"
+    },
+    {
+      "id": "n45",
+      "type": "block",
+      "statements": [
+        "raise TypeError(f'Can not update credentials with ID {updated.id} from type {type(current)} to type {type(updated)}')"
+      ],
+      "code": "raise TypeError(f'Can not update credentials with ID {updated.id} from type {type(current)} to type {type(updated)}')"
+    },
+    {
+      "id": "n46",
+      "type": "block",
+      "statements": [],
+      "code": ""
+    },
+    {
+      "id": "n47",
+      "type": "block",
+      "statements": [
+        "isinstance(updated, OAuth2Credentials) and isinstance(current, OAuth2Credentials) and (not set(updated.scopes).issuperset(current.scopes))"
+      ],
+      "code": "isinstance(updated, OAuth2Credentials) and isinstance(current, OAuth2Credentials) and (not set(updated.scopes).issuperset(current.scopes))"
+    },
+    {
+      "id": "n48",
+      "type": "block",
+      "statements": [
+        "raise ValueError(f'Can not update credentials with ID {updated.id} and scopes {current.scopes} to more restrictive set of scopes {updated.scopes}')"
+      ],
+      "code": "raise ValueError(f'Can not update credentials with ID {updated.id} and scopes {current.scopes} to more restrictive set of scopes {updated.scopes}')"
+    },
+    {
+      "id": "n49",
+      "type": "block",
+      "statements": [],
+      "code": ""
+    },
+    {
+      "id": "n50",
+      "type": "block",
+      "statements": [
+        "updated_credentials_list = [updated if c.id == updated.id else c for c in self.get_all_creds(user_id)]",
+        "self._set_user_integration_creds(user_id, updated_credentials_list)",
+        "def delete_creds_by_id(self, user_id: str, credentials_id: str) -> None:\n    with self.locked_user_integrations(user_id):\n        filtered_credentials = [c for c in self.get_all_creds(user_id) if c.id != credentials_id]\n        self._set_user_integration_creds(user_id, filtered_credentials)",
+        "with self.locked_user_integrations(user_id):\n    filtered_credentials = [c for c in self.get_all_creds(user_id) if c.id != credentials_id]\n    self._set_user_integration_creds(user_id, filtered_credentials)",
+        "filtered_credentials = [c for c in self.get_all_creds(user_id) if c.id != credentials_id]",
+        "self._set_user_integration_creds(user_id, filtered_credentials)",
+        "def store_state_token(self, user_id: str, provider: str, scopes: list[str]) -> str:\n    token = secrets.token_urlsafe(32)\n    expires_at = datetime.now(timezone.utc) + timedelta(minutes=10)\n    state = OAuthState(token=token, provider=provider, expires_at=int(expires_at.timestamp()), scopes=scopes)\n    with self.locked_user_integrations(user_id):\n        user_integrations = self._get_user_integrations(user_id)\n        oauth_states = user_integrations.oauth_states\n        oauth_states.append(state)\n        user_integrations.oauth_states = oauth_states\n        self.db_manager.update_user_integrations(user_id=user_id, data=user_integrations)\n    return token",
+        "token = secrets.token_urlsafe(32)",
+        "expires_at = datetime.now(timezone.utc) + timedelta(minutes=10)",
+        "state = OAuthState(token=token, provider=provider, expires_at=int(expires_at.timestamp()), scopes=scopes)",
+        "with self.locked_user_integrations(user_id):\n    user_integrations = self._get_user_integrations(user_id)\n    oauth_states = user_integrations.oauth_states\n    oauth_states.append(state)\n    user_integrations.oauth_states = oauth_states\n    self.db_manager.update_user_integrations(user_id=user_id, data=user_integrations)",
+        "user_integrations = self._get_user_integrations(user_id)",
+        "oauth_states = user_integrations.oauth_states",
+        "oauth_states.append(state)",
+        "user_integrations.oauth_states = oauth_states",
+        "self.db_manager.update_user_integrations()",
+        "return token"
+      ],
+      "code": "updated_credentials_list = [updated if c.id == updated.id else c for c in self.get_all_creds(user_id)]\nself._set_user_integration_creds(user_id, updated_credentials_list)\ndef delete_creds_by_id(self, user_id: str, credentials_id: str) -> None:\n    with self.locked_user_integrations(user_id):\n        filtered_credentials = [c for c in self.get_all_creds(user_id) if c.id != credentials_id]\n        self._set_user_integration_creds(user_id, filtered_credentials)\nwith self.locked_user_integrations(user_id):\n    filtered_credentials = [c for c in self.get_all_creds(user_id) if c.id != credentials_id]\n    self._set_user_integration_creds(user_id, filtered_credentials)\nfiltered_credentials = [c for c in self.get_all_creds(user_id) if c.id != credentials_id]\nself._set_user_integration_creds(user_id, filtered_credentials)\ndef store_state_token(self, user_id: str, provider: str, scopes: list[str]) -> str:\n    token = secrets.token_urlsafe(32)\n    expires_at = datetime.now(timezone.utc) + timedelta(minutes=10)\n    state = OAuthState(token=token, provider=provider, expires_at=int(expires_at.timestamp()), scopes=scopes)\n    with self.locked_user_integrations(user_id):\n        user_integrations = self._get_user_integrations(user_id)\n        oauth_states = user_integrations.oauth_states\n        oauth_states.append(state)\n        user_integrations.oauth_states = oauth_states\n        self.db_manager.update_user_integrations(user_id=user_id, data=user_integrations)\n    return token\ntoken = secrets.token_urlsafe(32)\nexpires_at = datetime.now(timezone.utc) + timedelta(minutes=10)\nstate = OAuthState(token=token, provider=provider, expires_at=int(expires_at.timestamp()), scopes=scopes)\nwith self.locked_user_integrations(user_id):\n    user_integrations = self._get_user_integrations(user_id)\n    oauth_states = user_integrations.oauth_states\n    oauth_states.append(state)\n    user_integrations.oauth_states = oauth_states\n    self.db_manager.update_user_integrations(user_id=user_id, data=user_integrations)\nuser_integrations = self._get_user_integrations(user_id)\noauth_states = user_integrations.oauth_states\noauth_states.append(state)\nuser_integrations.oauth_states = oauth_states\nself.db_manager.update_user_integrations()\nreturn token"
+    },
+    {
+      "id": "n51",
+      "type": "block",
+      "statements": [
+        "def get_any_valid_scopes_from_state_token(self, user_id: str, token: str, provider: str) -> list[str]:\n    \"\"\"\n        Get the valid scopes from the OAuth state token. This will return any valid scopes\n        from any OAuth state token for the given provider. If no valid scopes are found,\n        an empty list is returned. DO NOT RELY ON THIS TOKEN TO AUTHENTICATE A USER, AS IT\n        IS TO CHECK IF THE USER HAS GIVEN PERMISSIONS TO THE APPLICATION BEFORE EXCHANGING\n        THE CODE FOR TOKENS.\n        \"\"\"\n    user_integrations = self._get_user_integrations(user_id)\n    oauth_states = user_integrations.oauth_states\n    now = datetime.now(timezone.utc)\n    valid_state = next((state for state in oauth_states if state.token == token and state.provider == provider and (state.expires_at > now.timestamp())), None)\n    if valid_state:\n        return valid_state.scopes\n    return []",
+        "'\\n        Get the valid scopes from the OAuth state token. This will return any valid scopes\\n        from any OAuth state token for the given provider. If no valid scopes are found,\\n        an empty list is returned. DO NOT RELY ON THIS TOKEN TO AUTHENTICATE A USER, AS IT\\n        IS TO CHECK IF THE USER HAS GIVEN PERMISSIONS TO THE APPLICATION BEFORE EXCHANGING\\n        THE CODE FOR TOKENS.\\n        '",
+        "user_integrations = self._get_user_integrations(user_id)",
+        "oauth_states = user_integrations.oauth_states",
+        "now = datetime.now(timezone.utc)",
+        "valid_state = next((state for state in oauth_states if state.token == token and state.provider == provider and (state.expires_at > now.timestamp())), None)",
+        "valid_state"
+      ],
+      "code": "def get_any_valid_scopes_from_state_token(self, user_id: str, token: str, provider: str) -> list[str]:\n    \"\"\"\n        Get the valid scopes from the OAuth state token. This will return any valid scopes\n        from any OAuth state token for the given provider. If no valid scopes are found,\n        an empty list is returned. DO NOT RELY ON THIS TOKEN TO AUTHENTICATE A USER, AS IT\n        IS TO CHECK IF THE USER HAS GIVEN PERMISSIONS TO THE APPLICATION BEFORE EXCHANGING\n        THE CODE FOR TOKENS.\n        \"\"\"\n    user_integrations = self._get_user_integrations(user_id)\n    oauth_states = user_integrations.oauth_states\n    now = datetime.now(timezone.utc)\n    valid_state = next((state for state in oauth_states if state.token == token and state.provider == provider and (state.expires_at > now.timestamp())), None)\n    if valid_state:\n        return valid_state.scopes\n    return []\n'\\n        Get the valid scopes from the OAuth state token. This will return any valid scopes\\n        from any OAuth state token for the given provider. If no valid scopes are found,\\n        an empty list is returned. DO NOT RELY ON THIS TOKEN TO AUTHENTICATE A USER, AS IT\\n        IS TO CHECK IF THE USER HAS GIVEN PERMISSIONS TO THE APPLICATION BEFORE EXCHANGING\\n        THE CODE FOR TOKENS.\\n        '\nuser_integrations = self._get_user_integrations(user_id)\noauth_states = user_integrations.oauth_states\nnow = datetime.now(timezone.utc)\nvalid_state = next((state for state in oauth_states if state.token == token and state.provider == provider and (state.expires_at > now.timestamp())), None)\nvalid_state"
+    },
+    {
+      "id": "n52",
+      "type": "block",
+      "statements": [
+        "return valid_state.scopes"
+      ],
+      "code": "return valid_state.scopes"
+    },
+    {
+      "id": "n53",
+      "type": "block",
+      "statements": [],
+      "code": "\nreturn []"
+    },
+    {
+      "id": "n54",
+      "type": "block",
+      "statements": [
+        "def verify_state_token(self, user_id: str, token: str, provider: str) -> bool:\n    with self.locked_user_integrations(user_id):\n        user_integrations = self._get_user_integrations(user_id)\n        oauth_states = user_integrations.oauth_states\n        now = datetime.now(timezone.utc)\n        valid_state = next((state for state in oauth_states if state.token == token and state.provider == provider and (state.expires_at > now.timestamp())), None)\n        if valid_state:\n            oauth_states.remove(valid_state)\n            user_integrations.oauth_states = oauth_states\n            self.db_manager.update_user_integrations(user_id, user_integrations)\n            return True\n    return False",
+        "with self.locked_user_integrations(user_id):\n    user_integrations = self._get_user_integrations(user_id)\n    oauth_states = user_integrations.oauth_states\n    now = datetime.now(timezone.utc)\n    valid_state = next((state for state in oauth_states if state.token == token and state.provider == provider and (state.expires_at > now.timestamp())), None)\n    if valid_state:\n        oauth_states.remove(valid_state)\n        user_integrations.oauth_states = oauth_states\n        self.db_manager.update_user_integrations(user_id, user_integrations)\n        return True",
+        "user_integrations = self._get_user_integrations(user_id)",
+        "oauth_states = user_integrations.oauth_states",
+        "now = datetime.now(timezone.utc)",
+        "valid_state = next((state for state in oauth_states if state.token == token and state.provider == provider and (state.expires_at > now.timestamp())), None)",
+        "valid_state"
+      ],
+      "code": "def verify_state_token(self, user_id: str, token: str, provider: str) -> bool:\n    with self.locked_user_integrations(user_id):\n        user_integrations = self._get_user_integrations(user_id)\n        oauth_states = user_integrations.oauth_states\n        now = datetime.now(timezone.utc)\n        valid_state = next((state for state in oauth_states if state.token == token and state.provider == provider and (state.expires_at > now.timestamp())), None)\n        if valid_state:\n            oauth_states.remove(valid_state)\n            user_integrations.oauth_states = oauth_states\n            self.db_manager.update_user_integrations(user_id, user_integrations)\n            return True\n    return False\nwith self.locked_user_integrations(user_id):\n    user_integrations = self._get_user_integrations(user_id)\n    oauth_states = user_integrations.oauth_states\n    now = datetime.now(timezone.utc)\n    valid_state = next((state for state in oauth_states if state.token == token and state.provider == provider and (state.expires_at > now.timestamp())), None)\n    if valid_state:\n        oauth_states.remove(valid_state)\n        user_integrations.oauth_states = oauth_states\n        self.db_manager.update_user_integrations(user_id, user_integrations)\n        return True\nuser_integrations = self._get_user_integrations(user_id)\noauth_states = user_integrations.oauth_states\nnow = datetime.now(timezone.utc)\nvalid_state = next((state for state in oauth_states if state.token == token and state.provider == provider and (state.expires_at > now.timestamp())), None)\nvalid_state"
+    },
+    {
+      "id": "n55",
+      "type": "block",
+      "statements": [
+        "oauth_states.remove(valid_state)",
+        "user_integrations.oauth_states = oauth_states",
+        "self.db_manager.update_user_integrations(user_id, user_integrations)",
+        "return True"
+      ],
+      "code": "oauth_states.remove(valid_state)\nuser_integrations.oauth_states = oauth_states\nself.db_manager.update_user_integrations(user_id, user_integrations)\nreturn True"
+    },
+    {
+      "id": "n56",
+      "type": "block",
+      "statements": [],
+      "code": "\nreturn False"
+    },
+    {
+      "id": "n57",
+      "type": "block",
+      "statements": [
+        "def _set_user_integration_creds(self, user_id: str, credentials: list[Credentials]) -> None:\n    integrations = self._get_user_integrations(user_id)\n    credentials = [c for c in credentials if c not in DEFAULT_CREDENTIALS]\n    integrations.credentials = credentials\n    self.db_manager.update_user_integrations(user_id, integrations)",
+        "integrations = self._get_user_integrations(user_id)",
+        "credentials = [c for c in credentials if c not in DEFAULT_CREDENTIALS]",
+        "integrations.credentials = credentials",
+        "self.db_manager.update_user_integrations(user_id, integrations)",
+        "def _get_user_integrations(self, user_id: str) -> UserIntegrations:\n    integrations: UserIntegrations = self.db_manager.get_user_integrations(user_id=user_id)\n    return integrations",
+        "integrations: UserIntegrations = self.db_manager.get_user_integrations(user_id=user_id)",
+        "return integrations"
+      ],
+      "code": "def _set_user_integration_creds(self, user_id: str, credentials: list[Credentials]) -> None:\n    integrations = self._get_user_integrations(user_id)\n    credentials = [c for c in credentials if c not in DEFAULT_CREDENTIALS]\n    integrations.credentials = credentials\n    self.db_manager.update_user_integrations(user_id, integrations)\nintegrations = self._get_user_integrations(user_id)\ncredentials = [c for c in credentials if c not in DEFAULT_CREDENTIALS]\nintegrations.credentials = credentials\nself.db_manager.update_user_integrations(user_id, integrations)\ndef _get_user_integrations(self, user_id: str) -> UserIntegrations:\n    integrations: UserIntegrations = self.db_manager.get_user_integrations(user_id=user_id)\n    return integrations\nintegrations: UserIntegrations = self.db_manager.get_user_integrations(user_id=user_id)\nreturn integrations"
+    },
+    {
+      "id": "n58",
+      "type": "block",
+      "statements": [
+        "def locked_user_integrations(self, user_id: str):\n    key = (f'user:{user_id}', 'integrations')\n    return self.locks.locked(key)",
+        "key = (f'user:{user_id}', 'integrations')",
+        "return self.locks.locked(key)"
+      ],
+      "code": "def locked_user_integrations(self, user_id: str):\n    key = (f'user:{user_id}', 'integrations')\n    return self.locks.locked(key)\nkey = (f'user:{user_id}', 'integrations')\nreturn self.locks.locked(key)"
+    }
+  ],
+  "edges": [
+    {
+      "source": "n54",
+      "target": "n55"
+    },
+    {
+      "source": "n6",
+      "target": "n7"
+    },
+    {
+      "source": "n0",
+      "target": "n1"
+    },
+    {
+      "source": "n23",
+      "target": "n25"
+    },
+    {
+      "source": "n21",
+      "target": "n22"
+    },
+    {
+      "source": "n47",
+      "target": "n49"
+    },
+    {
+      "source": "n44",
+      "target": "n45"
+    },
+    {
+      "source": "n35",
+      "target": "n37"
+    },
+    {
+      "source": "n34",
+      "target": "n35"
+    },
+    {
+      "source": "n22",
+      "target": "n23"
+    },
+    {
+      "source": "n10",
+      "target": "n11"
+    },
+    {
+      "source": "n17",
+      "target": "n19"
+    },
+    {
+      "source": "n2",
+      "target": "n3"
+    },
+    {
+      "source": "n19",
+      "target": "n21"
+    },
+    {
+      "source": "n13",
+      "target": "n14"
+    },
+    {
+      "source": "n16",
+      "target": "n17"
+    },
+    {
+      "source": "n13",
+      "target": "n15"
+    },
+    {
+      "source": "n16",
+      "target": "n18"
+    },
+    {
+      "source": "n19",
+      "target": "n20"
+    },
+    {
+      "source": "n4",
+      "target": "n5"
+    },
+    {
+      "source": "n4",
+      "target": "n6"
+    },
+    {
+      "source": "n43",
+      "target": "n44"
+    },
+    {
+      "source": "n12",
+      "target": "n13"
+    },
+    {
+      "source": "n30",
+      "target": "n31"
+    },
+    {
+      "source": "n24",
+      "target": "n25"
+    },
+    {
+      "source": "n7",
+      "target": "n8"
+    },
+    {
+      "source": "n31",
+      "target": "n33"
+    },
+    {
+      "source": "n34",
+      "target": "n36"
+    },
+    {
+      "source": "n15",
+      "target": "n16"
+    },
+    {
+      "source": "n47",
+      "target": "n48"
+    },
+    {
+      "source": "n51",
+      "target": "n53"
+    },
+    {
+      "source": "n41",
+      "target": "n42"
+    },
+    {
+      "source": "n51",
+      "target": "n52"
+    },
+    {
+      "source": "n44",
+      "target": "n46"
+    },
+    {
+      "source": "n49",
+      "target": "n50"
+    },
+    {
+      "source": "n46",
+      "target": "n47"
+    },
+    {
+      "source": "n41",
+      "target": "n43"
+    },
+    {
+      "source": "n14",
+      "target": "n16"
+    },
+    {
+      "source": "n9",
+      "target": "n10"
+    },
+    {
+      "source": "n48",
+      "target": "n50"
+    },
+    {
+      "source": "n28",
+      "target": "n30"
+    },
+    {
+      "source": "n54",
+      "target": "n56"
+    },
+    {
+      "source": "n31",
+      "target": "n32"
+    },
+    {
+      "source": "n45",
+      "target": "n47"
+    },
+    {
+      "source": "n10",
+      "target": "n12"
+    },
+    {
+      "source": "n18",
+      "target": "n19"
+    },
+    {
+      "source": "n28",
+      "target": "n29"
+    },
+    {
+      "source": "n7",
+      "target": "n9"
+    },
+    {
+      "source": "n29",
+      "target": "n31"
+    },
+    {
+      "source": "n42",
+      "target": "n44"
+    },
+    {
+      "source": "n25",
+      "target": "n26"
+    },
+    {
+      "source": "n26",
+      "target": "n28"
+    },
+    {
+      "source": "n1",
+      "target": "n3"
+    },
+    {
+      "source": "n27",
+      "target": "n28"
+    },
+    {
+      "source": "n8",
+      "target": "n10"
+    },
+    {
+      "source": "n33",
+      "target": "n34"
+    },
+    {
+      "source": "n36",
+      "target": "n37"
+    },
+    {
+      "source": "n25",
+      "target": "n27"
+    },
+    {
+      "source": "n20",
+      "target": "n22"
+    },
+    {
+      "source": "n22",
+      "target": "n24"
+    },
+    {
+      "source": "n5",
+      "target": "n7"
+    },
+    {
+      "source": "n32",
+      "target": "n34"
+    },
+    {
+      "source": "n11",
+      "target": "n13"
+    },
+    {
+      "source": "n0",
+      "target": "n2"
+    }
+  ]
+}

@@ -1,0 +1,538 @@
+{
+  "nodes": [
+    {
+      "id": "1",
+      "type": "block",
+      "statements": [
+        "from abc import ABC, abstractmethod",
+        "from datetime import datetime, timezone",
+        "from prisma import Json",
+        "from prisma.enums import CreditTransactionType",
+        "from prisma.errors import UniqueViolationError",
+        "from prisma.models import CreditTransaction",
+        "from backend.data.block import Block, BlockInput, get_block",
+        "from backend.data.block_cost_config import BLOCK_COSTS",
+        "from backend.data.cost import BlockCost, BlockCostType",
+        "from backend.util.settings import Config",
+        "config = Config()",
+        "class UserCreditBase(ABC):\n\n    def __init__(self, num_user_credits_refill: int):\n        self.num_user_credits_refill = num_user_credits_refill\n\n    @abstractmethod\n    async def get_or_refill_credit(self, user_id: str) -> int:\n        \"\"\"\n        Get the current credit for the user and refill if no transaction has been made in the current cycle.\n\n        Returns:\n            int: The current credit for the user.\n        \"\"\"\n        pass\n\n    @abstractmethod\n    async def spend_credits(self, user_id: str, user_credit: int, block_id: str, input_data: BlockInput, data_size: float, run_time: float) -> int:\n        \"\"\"\n        Spend the credits for the user based on the block usage.\n\n        Args:\n            user_id (str): The user ID.\n            user_credit (int): The current credit for the user.\n            block_id (str): The block ID.\n            input_data (BlockInput): The input data for the block.\n            data_size (float): The size of the data being processed.\n            run_time (float): The time taken to run the block.\n\n        Returns:\n            int: amount of credit spent\n        \"\"\"\n        pass\n\n    @abstractmethod\n    async def top_up_credits(self, user_id: str, amount: int):\n        \"\"\"\n        Top up the credits for the user.\n\n        Args:\n            user_id (str): The user ID.\n            amount (int): The amount to top up.\n        \"\"\"\n        pass",
+        "def __init__(self, num_user_credits_refill: int):\n    self.num_user_credits_refill = num_user_credits_refill",
+        "self.num_user_credits_refill = num_user_credits_refill",
+        "@abstractmethod\nasync def get_or_refill_credit(self, user_id: str) -> int:\n    \"\"\"\n        Get the current credit for the user and refill if no transaction has been made in the current cycle.\n\n        Returns:\n            int: The current credit for the user.\n        \"\"\"\n    pass",
+        "'\\n        Get the current credit for the user and refill if no transaction has been made in the current cycle.\\n\\n        Returns:\\n            int: The current credit for the user.\\n        '",
+        "pass",
+        "@abstractmethod\nasync def spend_credits(self, user_id: str, user_credit: int, block_id: str, input_data: BlockInput, data_size: float, run_time: float) -> int:\n    \"\"\"\n        Spend the credits for the user based on the block usage.\n\n        Args:\n            user_id (str): The user ID.\n            user_credit (int): The current credit for the user.\n            block_id (str): The block ID.\n            input_data (BlockInput): The input data for the block.\n            data_size (float): The size of the data being processed.\n            run_time (float): The time taken to run the block.\n\n        Returns:\n            int: amount of credit spent\n        \"\"\"\n    pass",
+        "'\\n        Spend the credits for the user based on the block usage.\\n\\n        Args:\\n            user_id (str): The user ID.\\n            user_credit (int): The current credit for the user.\\n            block_id (str): The block ID.\\n            input_data (BlockInput): The input data for the block.\\n            data_size (float): The size of the data being processed.\\n            run_time (float): The time taken to run the block.\\n\\n        Returns:\\n            int: amount of credit spent\\n        '",
+        "pass",
+        "@abstractmethod\nasync def top_up_credits(self, user_id: str, amount: int):\n    \"\"\"\n        Top up the credits for the user.\n\n        Args:\n            user_id (str): The user ID.\n            amount (int): The amount to top up.\n        \"\"\"\n    pass",
+        "'\\n        Top up the credits for the user.\\n\\n        Args:\\n            user_id (str): The user ID.\\n            amount (int): The amount to top up.\\n        '",
+        "pass",
+        "class UserCredit(UserCreditBase):\n\n    async def get_or_refill_credit(self, user_id: str) -> int:\n        cur_time = self.time_now()\n        cur_month = cur_time.replace(day=1, hour=0, minute=0, second=0, microsecond=0)\n        nxt_month = cur_month.replace(month=cur_month.month + 1) if cur_month.month < 12 else cur_month.replace(year=cur_month.year + 1, month=1)\n        user_credit = await CreditTransaction.prisma().group_by(by=['userId'], sum={'amount': True}, where={'userId': user_id, 'createdAt': {'gte': cur_month, 'lt': nxt_month}, 'isActive': True})\n        if user_credit:\n            credit_sum = user_credit[0].get('_sum') or {}\n            return credit_sum.get('amount', 0)\n        key = f'MONTHLY-CREDIT-TOP-UP-{cur_month}'\n        try:\n            await CreditTransaction.prisma().create(data={'amount': self.num_user_credits_refill, 'type': CreditTransactionType.TOP_UP, 'userId': user_id, 'transactionKey': key, 'createdAt': self.time_now()})\n        except UniqueViolationError:\n            pass\n        return self.num_user_credits_refill\n\n    @staticmethod\n    def time_now():\n        return datetime.now(timezone.utc)\n\n    def _block_usage_cost(self, block: Block, input_data: BlockInput, data_size: float, run_time: float) -> tuple[int, BlockInput]:\n        block_costs = BLOCK_COSTS.get(type(block))\n        if not block_costs:\n            return (0, {})\n        for block_cost in block_costs:\n            if not self._is_cost_filter_match(block_cost.cost_filter, input_data):\n                continue\n            if block_cost.cost_type == BlockCostType.RUN:\n                return (block_cost.cost_amount, block_cost.cost_filter)\n            if block_cost.cost_type == BlockCostType.SECOND:\n                return (int(run_time * block_cost.cost_amount), block_cost.cost_filter)\n            if block_cost.cost_type == BlockCostType.BYTE:\n                return (int(data_size * block_cost.cost_amount), block_cost.cost_filter)\n        return (0, {})\n\n    def _is_cost_filter_match(self, cost_filter: BlockInput, input_data: BlockInput) -> bool:\n        \"\"\"\n        Filter rules:\n          - If costFilter is an object, then check if costFilter is the subset of inputValues\n          - Otherwise, check if costFilter is equal to inputValues.\n          - Undefined, null, and empty string are considered as equal.\n        \"\"\"\n        if not isinstance(cost_filter, dict) or not isinstance(input_data, dict):\n            return cost_filter == input_data\n        return all((not input_data.get(k) and (not v) or (input_data.get(k) and self._is_cost_filter_match(v, input_data[k])) for (k, v) in cost_filter.items()))\n\n    async def spend_credits(self, user_id: str, user_credit: int, block_id: str, input_data: BlockInput, data_size: float, run_time: float, validate_balance: bool=True) -> int:\n        block = get_block(block_id)\n        if not block:\n            raise ValueError(f'Block not found: {block_id}')\n        (cost, matching_filter) = self._block_usage_cost(block=block, input_data=input_data, data_size=data_size, run_time=run_time)\n        if cost <= 0:\n            return 0\n        if validate_balance and user_credit < cost:\n            raise ValueError(f'Insufficient credit: {user_credit} < {cost}')\n        await CreditTransaction.prisma().create(data={'userId': user_id, 'amount': -cost, 'type': CreditTransactionType.USAGE, 'blockId': block.id, 'metadata': Json({'block': block.name, 'input': matching_filter}), 'createdAt': self.time_now()})\n        return cost\n\n    async def top_up_credits(self, user_id: str, amount: int):\n        await CreditTransaction.prisma().create(data={'userId': user_id, 'amount': amount, 'type': CreditTransactionType.TOP_UP, 'createdAt': self.time_now()})",
+        "async def get_or_refill_credit(self, user_id: str) -> int:\n    cur_time = self.time_now()\n    cur_month = cur_time.replace(day=1, hour=0, minute=0, second=0, microsecond=0)\n    nxt_month = cur_month.replace(month=cur_month.month + 1) if cur_month.month < 12 else cur_month.replace(year=cur_month.year + 1, month=1)\n    user_credit = await CreditTransaction.prisma().group_by(by=['userId'], sum={'amount': True}, where={'userId': user_id, 'createdAt': {'gte': cur_month, 'lt': nxt_month}, 'isActive': True})\n    if user_credit:\n        credit_sum = user_credit[0].get('_sum') or {}\n        return credit_sum.get('amount', 0)\n    key = f'MONTHLY-CREDIT-TOP-UP-{cur_month}'\n    try:\n        await CreditTransaction.prisma().create(data={'amount': self.num_user_credits_refill, 'type': CreditTransactionType.TOP_UP, 'userId': user_id, 'transactionKey': key, 'createdAt': self.time_now()})\n    except UniqueViolationError:\n        pass\n    return self.num_user_credits_refill",
+        "cur_time = self.time_now()",
+        "cur_month = cur_time.replace(day=1, hour=0, minute=0, second=0, microsecond=0)",
+        "nxt_month = cur_month.replace(month=cur_month.month + 1) if cur_month.month < 12 else cur_month.replace(year=cur_month.year + 1, month=1)",
+        "user_credit = await CreditTransaction.prisma().group_by(by=['userId'], sum={'amount': True}, where={'userId': user_id, 'createdAt': {'gte': cur_month, 'lt': nxt_month}, 'isActive': True})",
+        "user_credit"
+      ]
+    },
+    {
+      "id": "2",
+      "type": "block",
+      "statements": [
+        "credit_sum = user_credit[0].get('_sum') or {}",
+        "return credit_sum.get('amount', 0)"
+      ]
+    },
+    {
+      "id": "3",
+      "type": "block",
+      "statements": []
+    },
+    {
+      "id": "4",
+      "type": "block",
+      "statements": [
+        "key = f'MONTHLY-CREDIT-TOP-UP-{cur_month}'",
+        "try:\n    await CreditTransaction.prisma().create(data={'amount': self.num_user_credits_refill, 'type': CreditTransactionType.TOP_UP, 'userId': user_id, 'transactionKey': key, 'createdAt': self.time_now()})\nexcept UniqueViolationError:\n    pass",
+        "await CreditTransaction.prisma().create(data={'amount': self.num_user_credits_refill, 'type': CreditTransactionType.TOP_UP, 'userId': user_id, 'transactionKey': key, 'createdAt': self.time_now()})",
+        "pass",
+        "return self.num_user_credits_refill"
+      ]
+    },
+    {
+      "id": "5",
+      "type": "block",
+      "statements": [
+        "@staticmethod\ndef time_now():\n    return datetime.now(timezone.utc)",
+        "return datetime.now(timezone.utc)"
+      ]
+    },
+    {
+      "id": "6",
+      "type": "block",
+      "statements": [
+        "def _block_usage_cost(self, block: Block, input_data: BlockInput, data_size: float, run_time: float) -> tuple[int, BlockInput]:\n    block_costs = BLOCK_COSTS.get(type(block))\n    if not block_costs:\n        return (0, {})\n    for block_cost in block_costs:\n        if not self._is_cost_filter_match(block_cost.cost_filter, input_data):\n            continue\n        if block_cost.cost_type == BlockCostType.RUN:\n            return (block_cost.cost_amount, block_cost.cost_filter)\n        if block_cost.cost_type == BlockCostType.SECOND:\n            return (int(run_time * block_cost.cost_amount), block_cost.cost_filter)\n        if block_cost.cost_type == BlockCostType.BYTE:\n            return (int(data_size * block_cost.cost_amount), block_cost.cost_filter)\n    return (0, {})",
+        "block_costs = BLOCK_COSTS.get(type(block))",
+        "not block_costs"
+      ]
+    },
+    {
+      "id": "7",
+      "type": "block",
+      "statements": [
+        "return (0, {})"
+      ]
+    },
+    {
+      "id": "8",
+      "type": "block",
+      "statements": []
+    },
+    {
+      "id": "9",
+      "type": "block",
+      "statements": []
+    },
+    {
+      "id": "10",
+      "type": "block",
+      "statements": [
+        "block_cost",
+        "block_costs"
+      ]
+    },
+    {
+      "id": "11",
+      "type": "block",
+      "statements": [
+        "not self._is_cost_filter_match(block_cost.cost_filter, input_data)"
+      ]
+    },
+    {
+      "id": "12",
+      "type": "block",
+      "statements": [
+        "return (0, {})"
+      ]
+    },
+    {
+      "id": "13",
+      "type": "block",
+      "statements": [
+        "continue"
+      ]
+    },
+    {
+      "id": "14",
+      "type": "block",
+      "statements": []
+    },
+    {
+      "id": "15",
+      "type": "block",
+      "statements": [
+        "block_cost.cost_type Eq BlockCostType.RUN"
+      ]
+    },
+    {
+      "id": "16",
+      "type": "block",
+      "statements": [
+        "return (block_cost.cost_amount, block_cost.cost_filter)"
+      ]
+    },
+    {
+      "id": "17",
+      "type": "block",
+      "statements": []
+    },
+    {
+      "id": "18",
+      "type": "block",
+      "statements": [
+        "block_cost.cost_type Eq BlockCostType.SECOND"
+      ]
+    },
+    {
+      "id": "19",
+      "type": "block",
+      "statements": [
+        "return (int(run_time * block_cost.cost_amount), block_cost.cost_filter)"
+      ]
+    },
+    {
+      "id": "20",
+      "type": "block",
+      "statements": []
+    },
+    {
+      "id": "21",
+      "type": "block",
+      "statements": [
+        "block_cost.cost_type Eq BlockCostType.BYTE"
+      ]
+    },
+    {
+      "id": "22",
+      "type": "block",
+      "statements": [
+        "return (int(data_size * block_cost.cost_amount), block_cost.cost_filter)"
+      ]
+    },
+    {
+      "id": "23",
+      "type": "block",
+      "statements": []
+    },
+    {
+      "id": "24",
+      "type": "block",
+      "statements": []
+    },
+    {
+      "id": "25",
+      "type": "block",
+      "statements": [
+        "def _is_cost_filter_match(self, cost_filter: BlockInput, input_data: BlockInput) -> bool:\n    \"\"\"\n        Filter rules:\n          - If costFilter is an object, then check if costFilter is the subset of inputValues\n          - Otherwise, check if costFilter is equal to inputValues.\n          - Undefined, null, and empty string are considered as equal.\n        \"\"\"\n    if not isinstance(cost_filter, dict) or not isinstance(input_data, dict):\n        return cost_filter == input_data\n    return all((not input_data.get(k) and (not v) or (input_data.get(k) and self._is_cost_filter_match(v, input_data[k])) for (k, v) in cost_filter.items()))",
+        "'\\n        Filter rules:\\n          - If costFilter is an object, then check if costFilter is the subset of inputValues\\n          - Otherwise, check if costFilter is equal to inputValues.\\n          - Undefined, null, and empty string are considered as equal.\\n        '",
+        "not isinstance(cost_filter, dict) or not isinstance(input_data, dict)"
+      ]
+    },
+    {
+      "id": "26",
+      "type": "block",
+      "statements": [
+        "return cost_filter == input_data"
+      ]
+    },
+    {
+      "id": "27",
+      "type": "block",
+      "statements": []
+    },
+    {
+      "id": "28",
+      "type": "block",
+      "statements": [
+        "return all((not input_data.get(k) and (not v) or (input_data.get(k) and self._is_cost_filter_match(v, input_data[k])) for (k, v) in cost_filter.items()))"
+      ]
+    },
+    {
+      "id": "29",
+      "type": "block",
+      "statements": [
+        "async def spend_credits(self, user_id: str, user_credit: int, block_id: str, input_data: BlockInput, data_size: float, run_time: float, validate_balance: bool=True) -> int:\n    block = get_block(block_id)\n    if not block:\n        raise ValueError(f'Block not found: {block_id}')\n    (cost, matching_filter) = self._block_usage_cost(block=block, input_data=input_data, data_size=data_size, run_time=run_time)\n    if cost <= 0:\n        return 0\n    if validate_balance and user_credit < cost:\n        raise ValueError(f'Insufficient credit: {user_credit} < {cost}')\n    await CreditTransaction.prisma().create(data={'userId': user_id, 'amount': -cost, 'type': CreditTransactionType.USAGE, 'blockId': block.id, 'metadata': Json({'block': block.name, 'input': matching_filter}), 'createdAt': self.time_now()})\n    return cost",
+        "block = get_block(block_id)",
+        "not block"
+      ]
+    },
+    {
+      "id": "30",
+      "type": "block",
+      "statements": [
+        "raise ValueError(f'Block not found: {block_id}')"
+      ]
+    },
+    {
+      "id": "31",
+      "type": "block",
+      "statements": []
+    },
+    {
+      "id": "32",
+      "type": "block",
+      "statements": [
+        "(cost, matching_filter) = self._block_usage_cost(block=block, input_data=input_data, data_size=data_size, run_time=run_time)",
+        "cost LtE 0"
+      ]
+    },
+    {
+      "id": "33",
+      "type": "block",
+      "statements": [
+        "return 0"
+      ]
+    },
+    {
+      "id": "34",
+      "type": "block",
+      "statements": []
+    },
+    {
+      "id": "35",
+      "type": "block",
+      "statements": [
+        "validate_balance and user_credit < cost"
+      ]
+    },
+    {
+      "id": "36",
+      "type": "block",
+      "statements": [
+        "raise ValueError(f'Insufficient credit: {user_credit} < {cost}')"
+      ]
+    },
+    {
+      "id": "37",
+      "type": "block",
+      "statements": []
+    },
+    {
+      "id": "38",
+      "type": "block",
+      "statements": [
+        "await CreditTransaction.prisma().create(data={'userId': user_id, 'amount': -cost, 'type': CreditTransactionType.USAGE, 'blockId': block.id, 'metadata': Json({'block': block.name, 'input': matching_filter}), 'createdAt': self.time_now()})",
+        "return cost"
+      ]
+    },
+    {
+      "id": "39",
+      "type": "block",
+      "statements": [
+        "async def top_up_credits(self, user_id: str, amount: int):\n    await CreditTransaction.prisma().create(data={'userId': user_id, 'amount': amount, 'type': CreditTransactionType.TOP_UP, 'createdAt': self.time_now()})",
+        "await CreditTransaction.prisma().create(data={'userId': user_id, 'amount': amount, 'type': CreditTransactionType.TOP_UP, 'createdAt': self.time_now()})",
+        "class DisabledUserCredit(UserCreditBase):\n\n    async def get_or_refill_credit(self, *args, **kwargs) -> int:\n        return 0\n\n    async def spend_credits(self, *args, **kwargs) -> int:\n        return 0\n\n    async def top_up_credits(self, *args, **kwargs):\n        pass",
+        "async def get_or_refill_credit(self, *args, **kwargs) -> int:\n    return 0",
+        "return 0"
+      ]
+    },
+    {
+      "id": "40",
+      "type": "block",
+      "statements": [
+        "async def spend_credits(self, *args, **kwargs) -> int:\n    return 0",
+        "return 0"
+      ]
+    },
+    {
+      "id": "41",
+      "type": "block",
+      "statements": [
+        "async def top_up_credits(self, *args, **kwargs):\n    pass",
+        "pass",
+        "def get_user_credit_model() -> UserCreditBase:\n    if config.enable_credit.lower() == 'true':\n        return UserCredit(config.num_user_credits_refill)\n    else:\n        return DisabledUserCredit(0)",
+        "config.enable_credit.lower() Eq 'true'"
+      ]
+    },
+    {
+      "id": "42",
+      "type": "block",
+      "statements": [
+        "return UserCredit(config.num_user_credits_refill)"
+      ]
+    },
+    {
+      "id": "43",
+      "type": "block",
+      "statements": [
+        "return DisabledUserCredit(0)"
+      ]
+    },
+    {
+      "id": "44",
+      "type": "block",
+      "statements": [
+        "def get_block_costs() -> dict[str, list[BlockCost]]:\n    return {block().id: costs for (block, costs) in BLOCK_COSTS.items()}",
+        "return {block().id: costs for (block, costs) in BLOCK_COSTS.items()}"
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "source": "1",
+      "target": "2",
+      "type": "true"
+    },
+    {
+      "source": "1",
+      "target": "3",
+      "type": "false"
+    },
+    {
+      "source": "3",
+      "target": "4",
+      "type": "next"
+    },
+    {
+      "source": "6",
+      "target": "7",
+      "type": "true"
+    },
+    {
+      "source": "6",
+      "target": "8",
+      "type": "false"
+    },
+    {
+      "source": "8",
+      "target": "9",
+      "type": "next"
+    },
+    {
+      "source": "9",
+      "target": "10",
+      "type": "next"
+    },
+    {
+      "source": "10",
+      "target": "11",
+      "type": "true"
+    },
+    {
+      "source": "10",
+      "target": "12",
+      "type": "false"
+    },
+    {
+      "source": "11",
+      "target": "13",
+      "type": "true"
+    },
+    {
+      "source": "11",
+      "target": "14",
+      "type": "false"
+    },
+    {
+      "source": "13",
+      "target": "15",
+      "type": "next"
+    },
+    {
+      "source": "14",
+      "target": "15",
+      "type": "next"
+    },
+    {
+      "source": "15",
+      "target": "16",
+      "type": "true"
+    },
+    {
+      "source": "15",
+      "target": "17",
+      "type": "false"
+    },
+    {
+      "source": "17",
+      "target": "18",
+      "type": "next"
+    },
+    {
+      "source": "18",
+      "target": "19",
+      "type": "true"
+    },
+    {
+      "source": "18",
+      "target": "20",
+      "type": "false"
+    },
+    {
+      "source": "20",
+      "target": "21",
+      "type": "next"
+    },
+    {
+      "source": "21",
+      "target": "22",
+      "type": "true"
+    },
+    {
+      "source": "21",
+      "target": "23",
+      "type": "false"
+    },
+    {
+      "source": "23",
+      "target": "24",
+      "type": "next"
+    },
+    {
+      "source": "24",
+      "target": "10",
+      "type": "next"
+    },
+    {
+      "source": "25",
+      "target": "26",
+      "type": "true"
+    },
+    {
+      "source": "25",
+      "target": "27",
+      "type": "false"
+    },
+    {
+      "source": "27",
+      "target": "28",
+      "type": "next"
+    },
+    {
+      "source": "29",
+      "target": "30",
+      "type": "true"
+    },
+    {
+      "source": "29",
+      "target": "31",
+      "type": "false"
+    },
+    {
+      "source": "30",
+      "target": "32",
+      "type": "next"
+    },
+    {
+      "source": "31",
+      "target": "32",
+      "type": "next"
+    },
+    {
+      "source": "32",
+      "target": "33",
+      "type": "true"
+    },
+    {
+      "source": "32",
+      "target": "34",
+      "type": "false"
+    },
+    {
+      "source": "34",
+      "target": "35",
+      "type": "next"
+    },
+    {
+      "source": "35",
+      "target": "36",
+      "type": "true"
+    },
+    {
+      "source": "35",
+      "target": "37",
+      "type": "false"
+    },
+    {
+      "source": "36",
+      "target": "38",
+      "type": "next"
+    },
+    {
+      "source": "37",
+      "target": "38",
+      "type": "next"
+    },
+    {
+      "source": "41",
+      "target": "42",
+      "type": "true"
+    },
+    {
+      "source": "41",
+      "target": "43",
+      "type": "false"
+    }
+  ]
+}

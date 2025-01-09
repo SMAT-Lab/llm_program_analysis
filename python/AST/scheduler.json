@@ -1,0 +1,4041 @@
+{
+  "value": "import logging\nimport os\nfrom urllib.parse import parse_qs, urlencode, urlparse, urlunparse\n\nfrom apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_EXECUTED\nfrom apscheduler.job import Job as JobObj\nfrom apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore\nfrom apscheduler.schedulers.blocking import BlockingScheduler\nfrom apscheduler.triggers.cron import CronTrigger\nfrom autogpt_libs.utils.cache import thread_cached\nfrom dotenv import load_dotenv\nfrom pydantic import BaseModel\nfrom sqlalchemy import MetaData, create_engine\n\nfrom backend.data.block import BlockInput\nfrom backend.executor.manager import ExecutionManager\nfrom backend.util.service import AppService, expose, get_service_client\nfrom backend.util.settings import Config\n\n\ndef _extract_schema_from_url(database_url) -> tuple[str, str]:\n    \"\"\"\n    Extracts the schema from the DATABASE_URL and returns the schema and cleaned URL.\n    \"\"\"\n    parsed_url = urlparse(database_url)\n    query_params = parse_qs(parsed_url.query)\n\n    # Extract the 'schema' parameter\n    schema_list = query_params.pop(\"schema\", None)\n    schema = schema_list[0] if schema_list else \"public\"\n\n    # Reconstruct the query string without the 'schema' parameter\n    new_query = urlencode(query_params, doseq=True)\n    new_parsed_url = parsed_url._replace(query=new_query)\n    database_url_clean = str(urlunparse(new_parsed_url))\n\n    return schema, database_url_clean\n\n\nlogger = logging.getLogger(__name__)\nconfig = Config()\n\n\ndef log(msg, **kwargs):\n    logger.info(\"[ExecutionScheduler] \" + msg, **kwargs)\n\n\ndef job_listener(event):\n    \"\"\"Logs job execution outcomes for better monitoring.\"\"\"\n    if event.exception:\n        log(f\"Job {event.job_id} failed.\")\n    else:\n        log(f\"Job {event.job_id} completed successfully.\")\n\n\n@thread_cached\ndef get_execution_client() -> ExecutionManager:\n    return get_service_client(ExecutionManager)\n\n\ndef execute_graph(**kwargs):\n    args = JobArgs(**kwargs)\n    try:\n        log(f\"Executing recurring job for graph #{args.graph_id}\")\n        get_execution_client().add_execution(\n            args.graph_id, args.input_data, args.user_id\n        )\n    except Exception as e:\n        logger.exception(f\"Error executing graph {args.graph_id}: {e}\")\n\n\nclass JobArgs(BaseModel):\n    graph_id: str\n    input_data: BlockInput\n    user_id: str\n    graph_version: int\n    cron: str\n\n\nclass JobInfo(JobArgs):\n    id: str\n    name: str\n    next_run_time: str\n\n    @staticmethod\n    def from_db(job_args: JobArgs, job_obj: JobObj) -> \"JobInfo\":\n        return JobInfo(\n            id=job_obj.id,\n            name=job_obj.name,\n            next_run_time=job_obj.next_run_time.isoformat(),\n            **job_args.model_dump(),\n        )\n\n\nclass ExecutionScheduler(AppService):\n    scheduler: BlockingScheduler\n\n    @classmethod\n    def get_port(cls) -> int:\n        return config.execution_scheduler_port\n\n    @property\n    @thread_cached\n    def execution_client(self) -> ExecutionManager:\n        return get_service_client(ExecutionManager)\n\n    def run_service(self):\n        load_dotenv()\n        db_schema, db_url = _extract_schema_from_url(os.getenv(\"DATABASE_URL\"))\n        self.scheduler = BlockingScheduler(\n            jobstores={\n                \"default\": SQLAlchemyJobStore(\n                    engine=create_engine(db_url),\n                    metadata=MetaData(schema=db_schema),\n                )\n            }\n        )\n        self.scheduler.add_listener(job_listener, EVENT_JOB_EXECUTED | EVENT_JOB_ERROR)\n        self.scheduler.start()\n\n    @expose\n    def add_execution_schedule(\n        self,\n        graph_id: str,\n        graph_version: int,\n        cron: str,\n        input_data: BlockInput,\n        user_id: str,\n    ) -> JobInfo:\n        job_args = JobArgs(\n            graph_id=graph_id,\n            input_data=input_data,\n            user_id=user_id,\n            graph_version=graph_version,\n            cron=cron,\n        )\n        job = self.scheduler.add_job(\n            execute_graph,\n            CronTrigger.from_crontab(cron),\n            kwargs=job_args.model_dump(),\n            replace_existing=True,\n        )\n        log(f\"Added job {job.id} with cron schedule '{cron}' input data: {input_data}\")\n        return JobInfo.from_db(job_args, job)\n\n    @expose\n    def delete_schedule(self, schedule_id: str, user_id: str) -> JobInfo:\n        job = self.scheduler.get_job(schedule_id)\n        if not job:\n            log(f\"Job {schedule_id} not found.\")\n            raise ValueError(f\"Job #{schedule_id} not found.\")\n\n        job_args = JobArgs(**job.kwargs)\n        if job_args.user_id != user_id:\n            raise ValueError(\"User ID does not match the job's user ID.\")\n\n        log(f\"Deleting job {schedule_id}\")\n        job.remove()\n\n        return JobInfo.from_db(job_args, job)\n\n    @expose\n    def get_execution_schedules(\n        self, graph_id: str | None = None, user_id: str | None = None\n    ) -> list[JobInfo]:\n        schedules = []\n        for job in self.scheduler.get_jobs():\n            job_args = JobArgs(**job.kwargs)\n            if (\n                job.next_run_time is not None\n                and (graph_id is None or job_args.graph_id == graph_id)\n                and (user_id is None or job_args.user_id == user_id)\n            ):\n                schedules.append(JobInfo.from_db(job_args, job))\n        return schedules",
+  "children": [
+    {
+      "value": "import logging",
+      "children": [
+        {
+          "value": "logging",
+          "children": [
+            {
+              "value": "logging",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "import os",
+      "children": [
+        {
+          "value": "os",
+          "children": [
+            {
+              "value": "os",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "from urllib.parse import parse_qs, urlencode, urlparse, urlunparse",
+      "children": [
+        {
+          "value": "urllib.parse",
+          "children": [
+            {
+              "value": "urllib",
+              "children": []
+            },
+            {
+              "value": "parse",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "parse_qs",
+          "children": [
+            {
+              "value": "parse_qs",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "urlencode",
+          "children": [
+            {
+              "value": "urlencode",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "urlparse",
+          "children": [
+            {
+              "value": "urlparse",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "urlunparse",
+          "children": [
+            {
+              "value": "urlunparse",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_EXECUTED",
+      "children": [
+        {
+          "value": "apscheduler.events",
+          "children": [
+            {
+              "value": "apscheduler",
+              "children": []
+            },
+            {
+              "value": "events",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "EVENT_JOB_ERROR",
+          "children": [
+            {
+              "value": "EVENT_JOB_ERROR",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "EVENT_JOB_EXECUTED",
+          "children": [
+            {
+              "value": "EVENT_JOB_EXECUTED",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "from apscheduler.job import Job as JobObj",
+      "children": [
+        {
+          "value": "apscheduler.job",
+          "children": [
+            {
+              "value": "apscheduler",
+              "children": []
+            },
+            {
+              "value": "job",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "Job as JobObj",
+          "children": [
+            {
+              "value": "Job",
+              "children": [
+                {
+                  "value": "Job",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "value": "JobObj",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore",
+      "children": [
+        {
+          "value": "apscheduler.jobstores.sqlalchemy",
+          "children": [
+            {
+              "value": "apscheduler",
+              "children": []
+            },
+            {
+              "value": "jobstores",
+              "children": []
+            },
+            {
+              "value": "sqlalchemy",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "SQLAlchemyJobStore",
+          "children": [
+            {
+              "value": "SQLAlchemyJobStore",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "from apscheduler.schedulers.blocking import BlockingScheduler",
+      "children": [
+        {
+          "value": "apscheduler.schedulers.blocking",
+          "children": [
+            {
+              "value": "apscheduler",
+              "children": []
+            },
+            {
+              "value": "schedulers",
+              "children": []
+            },
+            {
+              "value": "blocking",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "BlockingScheduler",
+          "children": [
+            {
+              "value": "BlockingScheduler",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "from apscheduler.triggers.cron import CronTrigger",
+      "children": [
+        {
+          "value": "apscheduler.triggers.cron",
+          "children": [
+            {
+              "value": "apscheduler",
+              "children": []
+            },
+            {
+              "value": "triggers",
+              "children": []
+            },
+            {
+              "value": "cron",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "CronTrigger",
+          "children": [
+            {
+              "value": "CronTrigger",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "from autogpt_libs.utils.cache import thread_cached",
+      "children": [
+        {
+          "value": "autogpt_libs.utils.cache",
+          "children": [
+            {
+              "value": "autogpt_libs",
+              "children": []
+            },
+            {
+              "value": "utils",
+              "children": []
+            },
+            {
+              "value": "cache",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "thread_cached",
+          "children": [
+            {
+              "value": "thread_cached",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "from dotenv import load_dotenv",
+      "children": [
+        {
+          "value": "dotenv",
+          "children": [
+            {
+              "value": "dotenv",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "load_dotenv",
+          "children": [
+            {
+              "value": "load_dotenv",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "from pydantic import BaseModel",
+      "children": [
+        {
+          "value": "pydantic",
+          "children": [
+            {
+              "value": "pydantic",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "BaseModel",
+          "children": [
+            {
+              "value": "BaseModel",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "from sqlalchemy import MetaData, create_engine",
+      "children": [
+        {
+          "value": "sqlalchemy",
+          "children": [
+            {
+              "value": "sqlalchemy",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "MetaData",
+          "children": [
+            {
+              "value": "MetaData",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "create_engine",
+          "children": [
+            {
+              "value": "create_engine",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "from backend.data.block import BlockInput",
+      "children": [
+        {
+          "value": "backend.data.block",
+          "children": [
+            {
+              "value": "backend",
+              "children": []
+            },
+            {
+              "value": "data",
+              "children": []
+            },
+            {
+              "value": "block",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "BlockInput",
+          "children": [
+            {
+              "value": "BlockInput",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "from backend.executor.manager import ExecutionManager",
+      "children": [
+        {
+          "value": "backend.executor.manager",
+          "children": [
+            {
+              "value": "backend",
+              "children": []
+            },
+            {
+              "value": "executor",
+              "children": []
+            },
+            {
+              "value": "manager",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "ExecutionManager",
+          "children": [
+            {
+              "value": "ExecutionManager",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "from backend.util.service import AppService, expose, get_service_client",
+      "children": [
+        {
+          "value": "backend.util.service",
+          "children": [
+            {
+              "value": "backend",
+              "children": []
+            },
+            {
+              "value": "util",
+              "children": []
+            },
+            {
+              "value": "service",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "AppService",
+          "children": [
+            {
+              "value": "AppService",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "expose",
+          "children": [
+            {
+              "value": "expose",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "get_service_client",
+          "children": [
+            {
+              "value": "get_service_client",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "from backend.util.settings import Config",
+      "children": [
+        {
+          "value": "backend.util.settings",
+          "children": [
+            {
+              "value": "backend",
+              "children": []
+            },
+            {
+              "value": "util",
+              "children": []
+            },
+            {
+              "value": "settings",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "Config",
+          "children": [
+            {
+              "value": "Config",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "def _extract_schema_from_url(database_url) -> tuple[str, str]:\n    \"\"\"\n    Extracts the schema from the DATABASE_URL and returns the schema and cleaned URL.\n    \"\"\"\n    parsed_url = urlparse(database_url)\n    query_params = parse_qs(parsed_url.query)\n\n    # Extract the 'schema' parameter\n    schema_list = query_params.pop(\"schema\", None)\n    schema = schema_list[0] if schema_list else \"public\"\n\n    # Reconstruct the query string without the 'schema' parameter\n    new_query = urlencode(query_params, doseq=True)\n    new_parsed_url = parsed_url._replace(query=new_query)\n    database_url_clean = str(urlunparse(new_parsed_url))\n\n    return schema, database_url_clean",
+      "children": [
+        {
+          "value": "_extract_schema_from_url",
+          "children": []
+        },
+        {
+          "value": "(database_url)",
+          "children": [
+            {
+              "value": "database_url",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "tuple[str, str]",
+          "children": [
+            {
+              "value": "tuple[str, str]",
+              "children": [
+                {
+                  "value": "tuple",
+                  "children": []
+                },
+                {
+                  "value": "[str, str]",
+                  "children": [
+                    {
+                      "value": "str",
+                      "children": [
+                        {
+                          "value": "str",
+                          "children": []
+                        }
+                      ]
+                    },
+                    {
+                      "value": "str",
+                      "children": [
+                        {
+                          "value": "str",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "value": "\"\"\"\n    Extracts the schema from the DATABASE_URL and returns the schema and cleaned URL.\n    \"\"\"\n    parsed_url = urlparse(database_url)\n    query_params = parse_qs(parsed_url.query)\n\n    # Extract the 'schema' parameter\n    schema_list = query_params.pop(\"schema\", None)\n    schema = schema_list[0] if schema_list else \"public\"\n\n    # Reconstruct the query string without the 'schema' parameter\n    new_query = urlencode(query_params, doseq=True)\n    new_parsed_url = parsed_url._replace(query=new_query)\n    database_url_clean = str(urlunparse(new_parsed_url))\n\n    return schema, database_url_clean",
+          "children": [
+            {
+              "value": "\"\"\"\n    Extracts the schema from the DATABASE_URL and returns the schema and cleaned URL.\n    \"\"\"",
+              "children": [
+                {
+                  "value": "\"\"\"\n    Extracts the schema from the DATABASE_URL and returns the schema and cleaned URL.\n    \"\"\"",
+                  "children": [
+                    {
+                      "value": "\"\"\"",
+                      "children": []
+                    },
+                    {
+                      "value": "Extracts the schema from the DATABASE_URL and returns the schema and cleaned URL.",
+                      "children": []
+                    },
+                    {
+                      "value": "\"\"\"",
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "parsed_url = urlparse(database_url)",
+              "children": [
+                {
+                  "value": "parsed_url = urlparse(database_url)",
+                  "children": [
+                    {
+                      "value": "parsed_url",
+                      "children": []
+                    },
+                    {
+                      "value": "urlparse(database_url)",
+                      "children": [
+                        {
+                          "value": "urlparse",
+                          "children": []
+                        },
+                        {
+                          "value": "(database_url)",
+                          "children": [
+                            {
+                              "value": "database_url",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "query_params = parse_qs(parsed_url.query)",
+              "children": [
+                {
+                  "value": "query_params = parse_qs(parsed_url.query)",
+                  "children": [
+                    {
+                      "value": "query_params",
+                      "children": []
+                    },
+                    {
+                      "value": "parse_qs(parsed_url.query)",
+                      "children": [
+                        {
+                          "value": "parse_qs",
+                          "children": []
+                        },
+                        {
+                          "value": "(parsed_url.query)",
+                          "children": [
+                            {
+                              "value": "parsed_url.query",
+                              "children": [
+                                {
+                                  "value": "parsed_url",
+                                  "children": []
+                                },
+                                {
+                                  "value": "query",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "# Extract the 'schema' parameter",
+              "children": []
+            },
+            {
+              "value": "schema_list = query_params.pop(\"schema\", None)",
+              "children": [
+                {
+                  "value": "schema_list = query_params.pop(\"schema\", None)",
+                  "children": [
+                    {
+                      "value": "schema_list",
+                      "children": []
+                    },
+                    {
+                      "value": "query_params.pop(\"schema\", None)",
+                      "children": [
+                        {
+                          "value": "query_params.pop",
+                          "children": [
+                            {
+                              "value": "query_params",
+                              "children": []
+                            },
+                            {
+                              "value": "pop",
+                              "children": []
+                            }
+                          ]
+                        },
+                        {
+                          "value": "(\"schema\", None)",
+                          "children": [
+                            {
+                              "value": "\"schema\"",
+                              "children": [
+                                {
+                                  "value": "\"",
+                                  "children": []
+                                },
+                                {
+                                  "value": "schema",
+                                  "children": []
+                                },
+                                {
+                                  "value": "\"",
+                                  "children": []
+                                }
+                              ]
+                            },
+                            {
+                              "value": "None",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "schema = schema_list[0] if schema_list else \"public\"",
+              "children": [
+                {
+                  "value": "schema = schema_list[0] if schema_list else \"public\"",
+                  "children": [
+                    {
+                      "value": "schema",
+                      "children": []
+                    },
+                    {
+                      "value": "schema_list[0] if schema_list else \"public\"",
+                      "children": [
+                        {
+                          "value": "schema_list[0]",
+                          "children": [
+                            {
+                              "value": "schema_list",
+                              "children": []
+                            },
+                            {
+                              "value": "0",
+                              "children": []
+                            }
+                          ]
+                        },
+                        {
+                          "value": "schema_list",
+                          "children": []
+                        },
+                        {
+                          "value": "\"public\"",
+                          "children": [
+                            {
+                              "value": "\"",
+                              "children": []
+                            },
+                            {
+                              "value": "public",
+                              "children": []
+                            },
+                            {
+                              "value": "\"",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "# Reconstruct the query string without the 'schema' parameter",
+              "children": []
+            },
+            {
+              "value": "new_query = urlencode(query_params, doseq=True)",
+              "children": [
+                {
+                  "value": "new_query = urlencode(query_params, doseq=True)",
+                  "children": [
+                    {
+                      "value": "new_query",
+                      "children": []
+                    },
+                    {
+                      "value": "urlencode(query_params, doseq=True)",
+                      "children": [
+                        {
+                          "value": "urlencode",
+                          "children": []
+                        },
+                        {
+                          "value": "(query_params, doseq=True)",
+                          "children": [
+                            {
+                              "value": "query_params",
+                              "children": []
+                            },
+                            {
+                              "value": "doseq=True",
+                              "children": [
+                                {
+                                  "value": "doseq",
+                                  "children": []
+                                },
+                                {
+                                  "value": "True",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "new_parsed_url = parsed_url._replace(query=new_query)",
+              "children": [
+                {
+                  "value": "new_parsed_url = parsed_url._replace(query=new_query)",
+                  "children": [
+                    {
+                      "value": "new_parsed_url",
+                      "children": []
+                    },
+                    {
+                      "value": "parsed_url._replace(query=new_query)",
+                      "children": [
+                        {
+                          "value": "parsed_url._replace",
+                          "children": [
+                            {
+                              "value": "parsed_url",
+                              "children": []
+                            },
+                            {
+                              "value": "_replace",
+                              "children": []
+                            }
+                          ]
+                        },
+                        {
+                          "value": "(query=new_query)",
+                          "children": [
+                            {
+                              "value": "query=new_query",
+                              "children": [
+                                {
+                                  "value": "query",
+                                  "children": []
+                                },
+                                {
+                                  "value": "new_query",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "database_url_clean = str(urlunparse(new_parsed_url))",
+              "children": [
+                {
+                  "value": "database_url_clean = str(urlunparse(new_parsed_url))",
+                  "children": [
+                    {
+                      "value": "database_url_clean",
+                      "children": []
+                    },
+                    {
+                      "value": "str(urlunparse(new_parsed_url))",
+                      "children": [
+                        {
+                          "value": "str",
+                          "children": []
+                        },
+                        {
+                          "value": "(urlunparse(new_parsed_url))",
+                          "children": [
+                            {
+                              "value": "urlunparse(new_parsed_url)",
+                              "children": [
+                                {
+                                  "value": "urlunparse",
+                                  "children": []
+                                },
+                                {
+                                  "value": "(new_parsed_url)",
+                                  "children": [
+                                    {
+                                      "value": "new_parsed_url",
+                                      "children": []
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "return schema, database_url_clean",
+              "children": [
+                {
+                  "value": "schema, database_url_clean",
+                  "children": [
+                    {
+                      "value": "schema",
+                      "children": []
+                    },
+                    {
+                      "value": "database_url_clean",
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "logger = logging.getLogger(__name__)",
+      "children": [
+        {
+          "value": "logger = logging.getLogger(__name__)",
+          "children": [
+            {
+              "value": "logger",
+              "children": []
+            },
+            {
+              "value": "logging.getLogger(__name__)",
+              "children": [
+                {
+                  "value": "logging.getLogger",
+                  "children": [
+                    {
+                      "value": "logging",
+                      "children": []
+                    },
+                    {
+                      "value": "getLogger",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "value": "(__name__)",
+                  "children": [
+                    {
+                      "value": "__name__",
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "config = Config()",
+      "children": [
+        {
+          "value": "config = Config()",
+          "children": [
+            {
+              "value": "config",
+              "children": []
+            },
+            {
+              "value": "Config()",
+              "children": [
+                {
+                  "value": "Config",
+                  "children": []
+                },
+                {
+                  "value": "()",
+                  "children": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "def log(msg, **kwargs):\n    logger.info(\"[ExecutionScheduler] \" + msg, **kwargs)",
+      "children": [
+        {
+          "value": "log",
+          "children": []
+        },
+        {
+          "value": "(msg, **kwargs)",
+          "children": [
+            {
+              "value": "msg",
+              "children": []
+            },
+            {
+              "value": "**kwargs",
+              "children": [
+                {
+                  "value": "kwargs",
+                  "children": []
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "value": "logger.info(\"[ExecutionScheduler] \" + msg, **kwargs)",
+          "children": [
+            {
+              "value": "logger.info(\"[ExecutionScheduler] \" + msg, **kwargs)",
+              "children": [
+                {
+                  "value": "logger.info(\"[ExecutionScheduler] \" + msg, **kwargs)",
+                  "children": [
+                    {
+                      "value": "logger.info",
+                      "children": [
+                        {
+                          "value": "logger",
+                          "children": []
+                        },
+                        {
+                          "value": "info",
+                          "children": []
+                        }
+                      ]
+                    },
+                    {
+                      "value": "(\"[ExecutionScheduler] \" + msg, **kwargs)",
+                      "children": [
+                        {
+                          "value": "\"[ExecutionScheduler] \" + msg",
+                          "children": [
+                            {
+                              "value": "\"[ExecutionScheduler] \"",
+                              "children": [
+                                {
+                                  "value": "\"",
+                                  "children": []
+                                },
+                                {
+                                  "value": "[ExecutionScheduler]",
+                                  "children": []
+                                },
+                                {
+                                  "value": "\"",
+                                  "children": []
+                                }
+                              ]
+                            },
+                            {
+                              "value": "msg",
+                              "children": []
+                            }
+                          ]
+                        },
+                        {
+                          "value": "**kwargs",
+                          "children": [
+                            {
+                              "value": "kwargs",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "def job_listener(event):\n    \"\"\"Logs job execution outcomes for better monitoring.\"\"\"\n    if event.exception:\n        log(f\"Job {event.job_id} failed.\")\n    else:\n        log(f\"Job {event.job_id} completed successfully.\")",
+      "children": [
+        {
+          "value": "job_listener",
+          "children": []
+        },
+        {
+          "value": "(event)",
+          "children": [
+            {
+              "value": "event",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "\"\"\"Logs job execution outcomes for better monitoring.\"\"\"\n    if event.exception:\n        log(f\"Job {event.job_id} failed.\")\n    else:\n        log(f\"Job {event.job_id} completed successfully.\")",
+          "children": [
+            {
+              "value": "\"\"\"Logs job execution outcomes for better monitoring.\"\"\"",
+              "children": [
+                {
+                  "value": "\"\"\"Logs job execution outcomes for better monitoring.\"\"\"",
+                  "children": [
+                    {
+                      "value": "\"\"\"",
+                      "children": []
+                    },
+                    {
+                      "value": "Logs job execution outcomes for better monitoring.",
+                      "children": []
+                    },
+                    {
+                      "value": "\"\"\"",
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "if event.exception:\n        log(f\"Job {event.job_id} failed.\")\n    else:\n        log(f\"Job {event.job_id} completed successfully.\")",
+              "children": [
+                {
+                  "value": "event.exception",
+                  "children": [
+                    {
+                      "value": "event",
+                      "children": []
+                    },
+                    {
+                      "value": "exception",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "value": "log(f\"Job {event.job_id} failed.\")",
+                  "children": [
+                    {
+                      "value": "log(f\"Job {event.job_id} failed.\")",
+                      "children": [
+                        {
+                          "value": "log(f\"Job {event.job_id} failed.\")",
+                          "children": [
+                            {
+                              "value": "log",
+                              "children": []
+                            },
+                            {
+                              "value": "(f\"Job {event.job_id} failed.\")",
+                              "children": [
+                                {
+                                  "value": "f\"Job {event.job_id} failed.\"",
+                                  "children": [
+                                    {
+                                      "value": "f\"",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "Job",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "{event.job_id}",
+                                      "children": [
+                                        {
+                                          "value": "event.job_id",
+                                          "children": [
+                                            {
+                                              "value": "event",
+                                              "children": []
+                                            },
+                                            {
+                                              "value": "job_id",
+                                              "children": []
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "value": "failed.",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "\"",
+                                      "children": []
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "value": "else:\n        log(f\"Job {event.job_id} completed successfully.\")",
+                  "children": [
+                    {
+                      "value": "log(f\"Job {event.job_id} completed successfully.\")",
+                      "children": [
+                        {
+                          "value": "log(f\"Job {event.job_id} completed successfully.\")",
+                          "children": [
+                            {
+                              "value": "log(f\"Job {event.job_id} completed successfully.\")",
+                              "children": [
+                                {
+                                  "value": "log",
+                                  "children": []
+                                },
+                                {
+                                  "value": "(f\"Job {event.job_id} completed successfully.\")",
+                                  "children": [
+                                    {
+                                      "value": "f\"Job {event.job_id} completed successfully.\"",
+                                      "children": [
+                                        {
+                                          "value": "f\"",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "Job",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "{event.job_id}",
+                                          "children": [
+                                            {
+                                              "value": "event.job_id",
+                                              "children": [
+                                                {
+                                                  "value": "event",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "job_id",
+                                                  "children": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "value": "completed successfully.",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "\"",
+                                          "children": []
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "@thread_cached\ndef get_execution_client() -> ExecutionManager:\n    return get_service_client(ExecutionManager)",
+      "children": [
+        {
+          "value": "@thread_cached",
+          "children": [
+            {
+              "value": "thread_cached",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "def get_execution_client() -> ExecutionManager:\n    return get_service_client(ExecutionManager)",
+          "children": [
+            {
+              "value": "get_execution_client",
+              "children": []
+            },
+            {
+              "value": "()",
+              "children": []
+            },
+            {
+              "value": "ExecutionManager",
+              "children": [
+                {
+                  "value": "ExecutionManager",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "value": "return get_service_client(ExecutionManager)",
+              "children": [
+                {
+                  "value": "return get_service_client(ExecutionManager)",
+                  "children": [
+                    {
+                      "value": "get_service_client(ExecutionManager)",
+                      "children": [
+                        {
+                          "value": "get_service_client",
+                          "children": []
+                        },
+                        {
+                          "value": "(ExecutionManager)",
+                          "children": [
+                            {
+                              "value": "ExecutionManager",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "def execute_graph(**kwargs):\n    args = JobArgs(**kwargs)\n    try:\n        log(f\"Executing recurring job for graph #{args.graph_id}\")\n        get_execution_client().add_execution(\n            args.graph_id, args.input_data, args.user_id\n        )\n    except Exception as e:\n        logger.exception(f\"Error executing graph {args.graph_id}: {e}\")",
+      "children": [
+        {
+          "value": "execute_graph",
+          "children": []
+        },
+        {
+          "value": "(**kwargs)",
+          "children": [
+            {
+              "value": "**kwargs",
+              "children": [
+                {
+                  "value": "kwargs",
+                  "children": []
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "value": "args = JobArgs(**kwargs)\n    try:\n        log(f\"Executing recurring job for graph #{args.graph_id}\")\n        get_execution_client().add_execution(\n            args.graph_id, args.input_data, args.user_id\n        )\n    except Exception as e:\n        logger.exception(f\"Error executing graph {args.graph_id}: {e}\")",
+          "children": [
+            {
+              "value": "args = JobArgs(**kwargs)",
+              "children": [
+                {
+                  "value": "args = JobArgs(**kwargs)",
+                  "children": [
+                    {
+                      "value": "args",
+                      "children": []
+                    },
+                    {
+                      "value": "JobArgs(**kwargs)",
+                      "children": [
+                        {
+                          "value": "JobArgs",
+                          "children": []
+                        },
+                        {
+                          "value": "(**kwargs)",
+                          "children": [
+                            {
+                              "value": "**kwargs",
+                              "children": [
+                                {
+                                  "value": "kwargs",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "try:\n        log(f\"Executing recurring job for graph #{args.graph_id}\")\n        get_execution_client().add_execution(\n            args.graph_id, args.input_data, args.user_id\n        )\n    except Exception as e:\n        logger.exception(f\"Error executing graph {args.graph_id}: {e}\")",
+              "children": [
+                {
+                  "value": "log(f\"Executing recurring job for graph #{args.graph_id}\")\n        get_execution_client().add_execution(\n            args.graph_id, args.input_data, args.user_id\n        )",
+                  "children": [
+                    {
+                      "value": "log(f\"Executing recurring job for graph #{args.graph_id}\")",
+                      "children": [
+                        {
+                          "value": "log(f\"Executing recurring job for graph #{args.graph_id}\")",
+                          "children": [
+                            {
+                              "value": "log",
+                              "children": []
+                            },
+                            {
+                              "value": "(f\"Executing recurring job for graph #{args.graph_id}\")",
+                              "children": [
+                                {
+                                  "value": "f\"Executing recurring job for graph #{args.graph_id}\"",
+                                  "children": [
+                                    {
+                                      "value": "f\"",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "Executing recurring job for graph #",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "{args.graph_id}",
+                                      "children": [
+                                        {
+                                          "value": "args.graph_id",
+                                          "children": [
+                                            {
+                                              "value": "args",
+                                              "children": []
+                                            },
+                                            {
+                                              "value": "graph_id",
+                                              "children": []
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "value": "\"",
+                                      "children": []
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "get_execution_client().add_execution(\n            args.graph_id, args.input_data, args.user_id\n        )",
+                      "children": [
+                        {
+                          "value": "get_execution_client().add_execution(\n            args.graph_id, args.input_data, args.user_id\n        )",
+                          "children": [
+                            {
+                              "value": "get_execution_client().add_execution",
+                              "children": [
+                                {
+                                  "value": "get_execution_client()",
+                                  "children": [
+                                    {
+                                      "value": "get_execution_client",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "()",
+                                      "children": []
+                                    }
+                                  ]
+                                },
+                                {
+                                  "value": "add_execution",
+                                  "children": []
+                                }
+                              ]
+                            },
+                            {
+                              "value": "(\n            args.graph_id, args.input_data, args.user_id\n        )",
+                              "children": [
+                                {
+                                  "value": "args.graph_id",
+                                  "children": [
+                                    {
+                                      "value": "args",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "graph_id",
+                                      "children": []
+                                    }
+                                  ]
+                                },
+                                {
+                                  "value": "args.input_data",
+                                  "children": [
+                                    {
+                                      "value": "args",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "input_data",
+                                      "children": []
+                                    }
+                                  ]
+                                },
+                                {
+                                  "value": "args.user_id",
+                                  "children": [
+                                    {
+                                      "value": "args",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "user_id",
+                                      "children": []
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "value": "except Exception as e:\n        logger.exception(f\"Error executing graph {args.graph_id}: {e}\")",
+                  "children": [
+                    {
+                      "value": "Exception as e",
+                      "children": [
+                        {
+                          "value": "Exception",
+                          "children": []
+                        },
+                        {
+                          "value": "e",
+                          "children": [
+                            {
+                              "value": "e",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "logger.exception(f\"Error executing graph {args.graph_id}: {e}\")",
+                      "children": [
+                        {
+                          "value": "logger.exception(f\"Error executing graph {args.graph_id}: {e}\")",
+                          "children": [
+                            {
+                              "value": "logger.exception(f\"Error executing graph {args.graph_id}: {e}\")",
+                              "children": [
+                                {
+                                  "value": "logger.exception",
+                                  "children": [
+                                    {
+                                      "value": "logger",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "exception",
+                                      "children": []
+                                    }
+                                  ]
+                                },
+                                {
+                                  "value": "(f\"Error executing graph {args.graph_id}: {e}\")",
+                                  "children": [
+                                    {
+                                      "value": "f\"Error executing graph {args.graph_id}: {e}\"",
+                                      "children": [
+                                        {
+                                          "value": "f\"",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "Error executing graph",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "{args.graph_id}",
+                                          "children": [
+                                            {
+                                              "value": "args.graph_id",
+                                              "children": [
+                                                {
+                                                  "value": "args",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "graph_id",
+                                                  "children": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "value": ":",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "{e}",
+                                          "children": [
+                                            {
+                                              "value": "e",
+                                              "children": []
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "value": "\"",
+                                          "children": []
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "class JobArgs(BaseModel):\n    graph_id: str\n    input_data: BlockInput\n    user_id: str\n    graph_version: int\n    cron: str",
+      "children": [
+        {
+          "value": "JobArgs",
+          "children": []
+        },
+        {
+          "value": "(BaseModel)",
+          "children": [
+            {
+              "value": "BaseModel",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "graph_id: str\n    input_data: BlockInput\n    user_id: str\n    graph_version: int\n    cron: str",
+          "children": [
+            {
+              "value": "graph_id: str",
+              "children": [
+                {
+                  "value": "graph_id: str",
+                  "children": [
+                    {
+                      "value": "graph_id",
+                      "children": []
+                    },
+                    {
+                      "value": "str",
+                      "children": [
+                        {
+                          "value": "str",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "input_data: BlockInput",
+              "children": [
+                {
+                  "value": "input_data: BlockInput",
+                  "children": [
+                    {
+                      "value": "input_data",
+                      "children": []
+                    },
+                    {
+                      "value": "BlockInput",
+                      "children": [
+                        {
+                          "value": "BlockInput",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "user_id: str",
+              "children": [
+                {
+                  "value": "user_id: str",
+                  "children": [
+                    {
+                      "value": "user_id",
+                      "children": []
+                    },
+                    {
+                      "value": "str",
+                      "children": [
+                        {
+                          "value": "str",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "graph_version: int",
+              "children": [
+                {
+                  "value": "graph_version: int",
+                  "children": [
+                    {
+                      "value": "graph_version",
+                      "children": []
+                    },
+                    {
+                      "value": "int",
+                      "children": [
+                        {
+                          "value": "int",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "cron: str",
+              "children": [
+                {
+                  "value": "cron: str",
+                  "children": [
+                    {
+                      "value": "cron",
+                      "children": []
+                    },
+                    {
+                      "value": "str",
+                      "children": [
+                        {
+                          "value": "str",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "class JobInfo(JobArgs):\n    id: str\n    name: str\n    next_run_time: str\n\n    @staticmethod\n    def from_db(job_args: JobArgs, job_obj: JobObj) -> \"JobInfo\":\n        return JobInfo(\n            id=job_obj.id,\n            name=job_obj.name,\n            next_run_time=job_obj.next_run_time.isoformat(),\n            **job_args.model_dump(),\n        )",
+      "children": [
+        {
+          "value": "JobInfo",
+          "children": []
+        },
+        {
+          "value": "(JobArgs)",
+          "children": [
+            {
+              "value": "JobArgs",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "id: str\n    name: str\n    next_run_time: str\n\n    @staticmethod\n    def from_db(job_args: JobArgs, job_obj: JobObj) -> \"JobInfo\":\n        return JobInfo(\n            id=job_obj.id,\n            name=job_obj.name,\n            next_run_time=job_obj.next_run_time.isoformat(),\n            **job_args.model_dump(),\n        )",
+          "children": [
+            {
+              "value": "id: str",
+              "children": [
+                {
+                  "value": "id: str",
+                  "children": [
+                    {
+                      "value": "id",
+                      "children": []
+                    },
+                    {
+                      "value": "str",
+                      "children": [
+                        {
+                          "value": "str",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "name: str",
+              "children": [
+                {
+                  "value": "name: str",
+                  "children": [
+                    {
+                      "value": "name",
+                      "children": []
+                    },
+                    {
+                      "value": "str",
+                      "children": [
+                        {
+                          "value": "str",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "next_run_time: str",
+              "children": [
+                {
+                  "value": "next_run_time: str",
+                  "children": [
+                    {
+                      "value": "next_run_time",
+                      "children": []
+                    },
+                    {
+                      "value": "str",
+                      "children": [
+                        {
+                          "value": "str",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "@staticmethod\n    def from_db(job_args: JobArgs, job_obj: JobObj) -> \"JobInfo\":\n        return JobInfo(\n            id=job_obj.id,\n            name=job_obj.name,\n            next_run_time=job_obj.next_run_time.isoformat(),\n            **job_args.model_dump(),\n        )",
+              "children": [
+                {
+                  "value": "@staticmethod",
+                  "children": [
+                    {
+                      "value": "staticmethod",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "value": "def from_db(job_args: JobArgs, job_obj: JobObj) -> \"JobInfo\":\n        return JobInfo(\n            id=job_obj.id,\n            name=job_obj.name,\n            next_run_time=job_obj.next_run_time.isoformat(),\n            **job_args.model_dump(),\n        )",
+                  "children": [
+                    {
+                      "value": "from_db",
+                      "children": []
+                    },
+                    {
+                      "value": "(job_args: JobArgs, job_obj: JobObj)",
+                      "children": [
+                        {
+                          "value": "job_args: JobArgs",
+                          "children": [
+                            {
+                              "value": "job_args",
+                              "children": []
+                            },
+                            {
+                              "value": "JobArgs",
+                              "children": [
+                                {
+                                  "value": "JobArgs",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "value": "job_obj: JobObj",
+                          "children": [
+                            {
+                              "value": "job_obj",
+                              "children": []
+                            },
+                            {
+                              "value": "JobObj",
+                              "children": [
+                                {
+                                  "value": "JobObj",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "\"JobInfo\"",
+                      "children": [
+                        {
+                          "value": "\"JobInfo\"",
+                          "children": [
+                            {
+                              "value": "\"",
+                              "children": []
+                            },
+                            {
+                              "value": "JobInfo",
+                              "children": []
+                            },
+                            {
+                              "value": "\"",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "return JobInfo(\n            id=job_obj.id,\n            name=job_obj.name,\n            next_run_time=job_obj.next_run_time.isoformat(),\n            **job_args.model_dump(),\n        )",
+                      "children": [
+                        {
+                          "value": "return JobInfo(\n            id=job_obj.id,\n            name=job_obj.name,\n            next_run_time=job_obj.next_run_time.isoformat(),\n            **job_args.model_dump(),\n        )",
+                          "children": [
+                            {
+                              "value": "JobInfo(\n            id=job_obj.id,\n            name=job_obj.name,\n            next_run_time=job_obj.next_run_time.isoformat(),\n            **job_args.model_dump(),\n        )",
+                              "children": [
+                                {
+                                  "value": "JobInfo",
+                                  "children": []
+                                },
+                                {
+                                  "value": "(\n            id=job_obj.id,\n            name=job_obj.name,\n            next_run_time=job_obj.next_run_time.isoformat(),\n            **job_args.model_dump(),\n        )",
+                                  "children": [
+                                    {
+                                      "value": "id=job_obj.id",
+                                      "children": [
+                                        {
+                                          "value": "id",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "job_obj.id",
+                                          "children": [
+                                            {
+                                              "value": "job_obj",
+                                              "children": []
+                                            },
+                                            {
+                                              "value": "id",
+                                              "children": []
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "value": "name=job_obj.name",
+                                      "children": [
+                                        {
+                                          "value": "name",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "job_obj.name",
+                                          "children": [
+                                            {
+                                              "value": "job_obj",
+                                              "children": []
+                                            },
+                                            {
+                                              "value": "name",
+                                              "children": []
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "value": "next_run_time=job_obj.next_run_time.isoformat()",
+                                      "children": [
+                                        {
+                                          "value": "next_run_time",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "job_obj.next_run_time.isoformat()",
+                                          "children": [
+                                            {
+                                              "value": "job_obj.next_run_time.isoformat",
+                                              "children": [
+                                                {
+                                                  "value": "job_obj.next_run_time",
+                                                  "children": [
+                                                    {
+                                                      "value": "job_obj",
+                                                      "children": []
+                                                    },
+                                                    {
+                                                      "value": "next_run_time",
+                                                      "children": []
+                                                    }
+                                                  ]
+                                                },
+                                                {
+                                                  "value": "isoformat",
+                                                  "children": []
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "value": "()",
+                                              "children": []
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "value": "**job_args.model_dump()",
+                                      "children": [
+                                        {
+                                          "value": "job_args.model_dump()",
+                                          "children": [
+                                            {
+                                              "value": "job_args.model_dump",
+                                              "children": [
+                                                {
+                                                  "value": "job_args",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "model_dump",
+                                                  "children": []
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "value": "()",
+                                              "children": []
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "class ExecutionScheduler(AppService):\n    scheduler: BlockingScheduler\n\n    @classmethod\n    def get_port(cls) -> int:\n        return config.execution_scheduler_port\n\n    @property\n    @thread_cached\n    def execution_client(self) -> ExecutionManager:\n        return get_service_client(ExecutionManager)\n\n    def run_service(self):\n        load_dotenv()\n        db_schema, db_url = _extract_schema_from_url(os.getenv(\"DATABASE_URL\"))\n        self.scheduler = BlockingScheduler(\n            jobstores={\n                \"default\": SQLAlchemyJobStore(\n                    engine=create_engine(db_url),\n                    metadata=MetaData(schema=db_schema),\n                )\n            }\n        )\n        self.scheduler.add_listener(job_listener, EVENT_JOB_EXECUTED | EVENT_JOB_ERROR)\n        self.scheduler.start()\n\n    @expose\n    def add_execution_schedule(\n        self,\n        graph_id: str,\n        graph_version: int,\n        cron: str,\n        input_data: BlockInput,\n        user_id: str,\n    ) -> JobInfo:\n        job_args = JobArgs(\n            graph_id=graph_id,\n            input_data=input_data,\n            user_id=user_id,\n            graph_version=graph_version,\n            cron=cron,\n        )\n        job = self.scheduler.add_job(\n            execute_graph,\n            CronTrigger.from_crontab(cron),\n            kwargs=job_args.model_dump(),\n            replace_existing=True,\n        )\n        log(f\"Added job {job.id} with cron schedule '{cron}' input data: {input_data}\")\n        return JobInfo.from_db(job_args, job)\n\n    @expose\n    def delete_schedule(self, schedule_id: str, user_id: str) -> JobInfo:\n        job = self.scheduler.get_job(schedule_id)\n        if not job:\n            log(f\"Job {schedule_id} not found.\")\n            raise ValueError(f\"Job #{schedule_id} not found.\")\n\n        job_args = JobArgs(**job.kwargs)\n        if job_args.user_id != user_id:\n            raise ValueError(\"User ID does not match the job's user ID.\")\n\n        log(f\"Deleting job {schedule_id}\")\n        job.remove()\n\n        return JobInfo.from_db(job_args, job)\n\n    @expose\n    def get_execution_schedules(\n        self, graph_id: str | None = None, user_id: str | None = None\n    ) -> list[JobInfo]:\n        schedules = []\n        for job in self.scheduler.get_jobs():\n            job_args = JobArgs(**job.kwargs)\n            if (\n                job.next_run_time is not None\n                and (graph_id is None or job_args.graph_id == graph_id)\n                and (user_id is None or job_args.user_id == user_id)\n            ):\n                schedules.append(JobInfo.from_db(job_args, job))\n        return schedules",
+      "children": [
+        {
+          "value": "ExecutionScheduler",
+          "children": []
+        },
+        {
+          "value": "(AppService)",
+          "children": [
+            {
+              "value": "AppService",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "scheduler: BlockingScheduler\n\n    @classmethod\n    def get_port(cls) -> int:\n        return config.execution_scheduler_port\n\n    @property\n    @thread_cached\n    def execution_client(self) -> ExecutionManager:\n        return get_service_client(ExecutionManager)\n\n    def run_service(self):\n        load_dotenv()\n        db_schema, db_url = _extract_schema_from_url(os.getenv(\"DATABASE_URL\"))\n        self.scheduler = BlockingScheduler(\n            jobstores={\n                \"default\": SQLAlchemyJobStore(\n                    engine=create_engine(db_url),\n                    metadata=MetaData(schema=db_schema),\n                )\n            }\n        )\n        self.scheduler.add_listener(job_listener, EVENT_JOB_EXECUTED | EVENT_JOB_ERROR)\n        self.scheduler.start()\n\n    @expose\n    def add_execution_schedule(\n        self,\n        graph_id: str,\n        graph_version: int,\n        cron: str,\n        input_data: BlockInput,\n        user_id: str,\n    ) -> JobInfo:\n        job_args = JobArgs(\n            graph_id=graph_id,\n            input_data=input_data,\n            user_id=user_id,\n            graph_version=graph_version,\n            cron=cron,\n        )\n        job = self.scheduler.add_job(\n            execute_graph,\n            CronTrigger.from_crontab(cron),\n            kwargs=job_args.model_dump(),\n            replace_existing=True,\n        )\n        log(f\"Added job {job.id} with cron schedule '{cron}' input data: {input_data}\")\n        return JobInfo.from_db(job_args, job)\n\n    @expose\n    def delete_schedule(self, schedule_id: str, user_id: str) -> JobInfo:\n        job = self.scheduler.get_job(schedule_id)\n        if not job:\n            log(f\"Job {schedule_id} not found.\")\n            raise ValueError(f\"Job #{schedule_id} not found.\")\n\n        job_args = JobArgs(**job.kwargs)\n        if job_args.user_id != user_id:\n            raise ValueError(\"User ID does not match the job's user ID.\")\n\n        log(f\"Deleting job {schedule_id}\")\n        job.remove()\n\n        return JobInfo.from_db(job_args, job)\n\n    @expose\n    def get_execution_schedules(\n        self, graph_id: str | None = None, user_id: str | None = None\n    ) -> list[JobInfo]:\n        schedules = []\n        for job in self.scheduler.get_jobs():\n            job_args = JobArgs(**job.kwargs)\n            if (\n                job.next_run_time is not None\n                and (graph_id is None or job_args.graph_id == graph_id)\n                and (user_id is None or job_args.user_id == user_id)\n            ):\n                schedules.append(JobInfo.from_db(job_args, job))\n        return schedules",
+          "children": [
+            {
+              "value": "scheduler: BlockingScheduler",
+              "children": [
+                {
+                  "value": "scheduler: BlockingScheduler",
+                  "children": [
+                    {
+                      "value": "scheduler",
+                      "children": []
+                    },
+                    {
+                      "value": "BlockingScheduler",
+                      "children": [
+                        {
+                          "value": "BlockingScheduler",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "@classmethod\n    def get_port(cls) -> int:\n        return config.execution_scheduler_port",
+              "children": [
+                {
+                  "value": "@classmethod",
+                  "children": [
+                    {
+                      "value": "classmethod",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "value": "def get_port(cls) -> int:\n        return config.execution_scheduler_port",
+                  "children": [
+                    {
+                      "value": "get_port",
+                      "children": []
+                    },
+                    {
+                      "value": "(cls)",
+                      "children": [
+                        {
+                          "value": "cls",
+                          "children": []
+                        }
+                      ]
+                    },
+                    {
+                      "value": "int",
+                      "children": [
+                        {
+                          "value": "int",
+                          "children": []
+                        }
+                      ]
+                    },
+                    {
+                      "value": "return config.execution_scheduler_port",
+                      "children": [
+                        {
+                          "value": "return config.execution_scheduler_port",
+                          "children": [
+                            {
+                              "value": "config.execution_scheduler_port",
+                              "children": [
+                                {
+                                  "value": "config",
+                                  "children": []
+                                },
+                                {
+                                  "value": "execution_scheduler_port",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "@property\n    @thread_cached\n    def execution_client(self) -> ExecutionManager:\n        return get_service_client(ExecutionManager)",
+              "children": [
+                {
+                  "value": "@property",
+                  "children": [
+                    {
+                      "value": "property",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "value": "@thread_cached",
+                  "children": [
+                    {
+                      "value": "thread_cached",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "value": "def execution_client(self) -> ExecutionManager:\n        return get_service_client(ExecutionManager)",
+                  "children": [
+                    {
+                      "value": "execution_client",
+                      "children": []
+                    },
+                    {
+                      "value": "(self)",
+                      "children": [
+                        {
+                          "value": "self",
+                          "children": []
+                        }
+                      ]
+                    },
+                    {
+                      "value": "ExecutionManager",
+                      "children": [
+                        {
+                          "value": "ExecutionManager",
+                          "children": []
+                        }
+                      ]
+                    },
+                    {
+                      "value": "return get_service_client(ExecutionManager)",
+                      "children": [
+                        {
+                          "value": "return get_service_client(ExecutionManager)",
+                          "children": [
+                            {
+                              "value": "get_service_client(ExecutionManager)",
+                              "children": [
+                                {
+                                  "value": "get_service_client",
+                                  "children": []
+                                },
+                                {
+                                  "value": "(ExecutionManager)",
+                                  "children": [
+                                    {
+                                      "value": "ExecutionManager",
+                                      "children": []
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "def run_service(self):\n        load_dotenv()\n        db_schema, db_url = _extract_schema_from_url(os.getenv(\"DATABASE_URL\"))\n        self.scheduler = BlockingScheduler(\n            jobstores={\n                \"default\": SQLAlchemyJobStore(\n                    engine=create_engine(db_url),\n                    metadata=MetaData(schema=db_schema),\n                )\n            }\n        )\n        self.scheduler.add_listener(job_listener, EVENT_JOB_EXECUTED | EVENT_JOB_ERROR)\n        self.scheduler.start()",
+              "children": [
+                {
+                  "value": "run_service",
+                  "children": []
+                },
+                {
+                  "value": "(self)",
+                  "children": [
+                    {
+                      "value": "self",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "value": "load_dotenv()\n        db_schema, db_url = _extract_schema_from_url(os.getenv(\"DATABASE_URL\"))\n        self.scheduler = BlockingScheduler(\n            jobstores={\n                \"default\": SQLAlchemyJobStore(\n                    engine=create_engine(db_url),\n                    metadata=MetaData(schema=db_schema),\n                )\n            }\n        )\n        self.scheduler.add_listener(job_listener, EVENT_JOB_EXECUTED | EVENT_JOB_ERROR)\n        self.scheduler.start()",
+                  "children": [
+                    {
+                      "value": "load_dotenv()",
+                      "children": [
+                        {
+                          "value": "load_dotenv()",
+                          "children": [
+                            {
+                              "value": "load_dotenv",
+                              "children": []
+                            },
+                            {
+                              "value": "()",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "db_schema, db_url = _extract_schema_from_url(os.getenv(\"DATABASE_URL\"))",
+                      "children": [
+                        {
+                          "value": "db_schema, db_url = _extract_schema_from_url(os.getenv(\"DATABASE_URL\"))",
+                          "children": [
+                            {
+                              "value": "db_schema, db_url",
+                              "children": [
+                                {
+                                  "value": "db_schema",
+                                  "children": []
+                                },
+                                {
+                                  "value": "db_url",
+                                  "children": []
+                                }
+                              ]
+                            },
+                            {
+                              "value": "_extract_schema_from_url(os.getenv(\"DATABASE_URL\"))",
+                              "children": [
+                                {
+                                  "value": "_extract_schema_from_url",
+                                  "children": []
+                                },
+                                {
+                                  "value": "(os.getenv(\"DATABASE_URL\"))",
+                                  "children": [
+                                    {
+                                      "value": "os.getenv(\"DATABASE_URL\")",
+                                      "children": [
+                                        {
+                                          "value": "os.getenv",
+                                          "children": [
+                                            {
+                                              "value": "os",
+                                              "children": []
+                                            },
+                                            {
+                                              "value": "getenv",
+                                              "children": []
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "value": "(\"DATABASE_URL\")",
+                                          "children": [
+                                            {
+                                              "value": "\"DATABASE_URL\"",
+                                              "children": [
+                                                {
+                                                  "value": "\"",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "DATABASE_URL",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "\"",
+                                                  "children": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "self.scheduler = BlockingScheduler(\n            jobstores={\n                \"default\": SQLAlchemyJobStore(\n                    engine=create_engine(db_url),\n                    metadata=MetaData(schema=db_schema),\n                )\n            }\n        )",
+                      "children": [
+                        {
+                          "value": "self.scheduler = BlockingScheduler(\n            jobstores={\n                \"default\": SQLAlchemyJobStore(\n                    engine=create_engine(db_url),\n                    metadata=MetaData(schema=db_schema),\n                )\n            }\n        )",
+                          "children": [
+                            {
+                              "value": "self.scheduler",
+                              "children": [
+                                {
+                                  "value": "self",
+                                  "children": []
+                                },
+                                {
+                                  "value": "scheduler",
+                                  "children": []
+                                }
+                              ]
+                            },
+                            {
+                              "value": "BlockingScheduler(\n            jobstores={\n                \"default\": SQLAlchemyJobStore(\n                    engine=create_engine(db_url),\n                    metadata=MetaData(schema=db_schema),\n                )\n            }\n        )",
+                              "children": [
+                                {
+                                  "value": "BlockingScheduler",
+                                  "children": []
+                                },
+                                {
+                                  "value": "(\n            jobstores={\n                \"default\": SQLAlchemyJobStore(\n                    engine=create_engine(db_url),\n                    metadata=MetaData(schema=db_schema),\n                )\n            }\n        )",
+                                  "children": [
+                                    {
+                                      "value": "jobstores={\n                \"default\": SQLAlchemyJobStore(\n                    engine=create_engine(db_url),\n                    metadata=MetaData(schema=db_schema),\n                )\n            }",
+                                      "children": [
+                                        {
+                                          "value": "jobstores",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "{\n                \"default\": SQLAlchemyJobStore(\n                    engine=create_engine(db_url),\n                    metadata=MetaData(schema=db_schema),\n                )\n            }",
+                                          "children": [
+                                            {
+                                              "value": "\"default\": SQLAlchemyJobStore(\n                    engine=create_engine(db_url),\n                    metadata=MetaData(schema=db_schema),\n                )",
+                                              "children": [
+                                                {
+                                                  "value": "\"default\"",
+                                                  "children": [
+                                                    {
+                                                      "value": "\"",
+                                                      "children": []
+                                                    },
+                                                    {
+                                                      "value": "default",
+                                                      "children": []
+                                                    },
+                                                    {
+                                                      "value": "\"",
+                                                      "children": []
+                                                    }
+                                                  ]
+                                                },
+                                                {
+                                                  "value": "SQLAlchemyJobStore(\n                    engine=create_engine(db_url),\n                    metadata=MetaData(schema=db_schema),\n                )",
+                                                  "children": [
+                                                    {
+                                                      "value": "SQLAlchemyJobStore",
+                                                      "children": []
+                                                    },
+                                                    {
+                                                      "value": "(\n                    engine=create_engine(db_url),\n                    metadata=MetaData(schema=db_schema),\n                )",
+                                                      "children": [
+                                                        {
+                                                          "value": "engine=create_engine(db_url)",
+                                                          "children": [
+                                                            {
+                                                              "value": "engine",
+                                                              "children": []
+                                                            },
+                                                            {
+                                                              "value": "create_engine(db_url)",
+                                                              "children": [
+                                                                {
+                                                                  "value": "create_engine",
+                                                                  "children": []
+                                                                },
+                                                                {
+                                                                  "value": "(db_url)",
+                                                                  "children": [
+                                                                    {
+                                                                      "value": "db_url",
+                                                                      "children": []
+                                                                    }
+                                                                  ]
+                                                                }
+                                                              ]
+                                                            }
+                                                          ]
+                                                        },
+                                                        {
+                                                          "value": "metadata=MetaData(schema=db_schema)",
+                                                          "children": [
+                                                            {
+                                                              "value": "metadata",
+                                                              "children": []
+                                                            },
+                                                            {
+                                                              "value": "MetaData(schema=db_schema)",
+                                                              "children": [
+                                                                {
+                                                                  "value": "MetaData",
+                                                                  "children": []
+                                                                },
+                                                                {
+                                                                  "value": "(schema=db_schema)",
+                                                                  "children": [
+                                                                    {
+                                                                      "value": "schema=db_schema",
+                                                                      "children": [
+                                                                        {
+                                                                          "value": "schema",
+                                                                          "children": []
+                                                                        },
+                                                                        {
+                                                                          "value": "db_schema",
+                                                                          "children": []
+                                                                        }
+                                                                      ]
+                                                                    }
+                                                                  ]
+                                                                }
+                                                              ]
+                                                            }
+                                                          ]
+                                                        }
+                                                      ]
+                                                    }
+                                                  ]
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "self.scheduler.add_listener(job_listener, EVENT_JOB_EXECUTED | EVENT_JOB_ERROR)",
+                      "children": [
+                        {
+                          "value": "self.scheduler.add_listener(job_listener, EVENT_JOB_EXECUTED | EVENT_JOB_ERROR)",
+                          "children": [
+                            {
+                              "value": "self.scheduler.add_listener",
+                              "children": [
+                                {
+                                  "value": "self.scheduler",
+                                  "children": [
+                                    {
+                                      "value": "self",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "scheduler",
+                                      "children": []
+                                    }
+                                  ]
+                                },
+                                {
+                                  "value": "add_listener",
+                                  "children": []
+                                }
+                              ]
+                            },
+                            {
+                              "value": "(job_listener, EVENT_JOB_EXECUTED | EVENT_JOB_ERROR)",
+                              "children": [
+                                {
+                                  "value": "job_listener",
+                                  "children": []
+                                },
+                                {
+                                  "value": "EVENT_JOB_EXECUTED | EVENT_JOB_ERROR",
+                                  "children": [
+                                    {
+                                      "value": "EVENT_JOB_EXECUTED",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "EVENT_JOB_ERROR",
+                                      "children": []
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "self.scheduler.start()",
+                      "children": [
+                        {
+                          "value": "self.scheduler.start()",
+                          "children": [
+                            {
+                              "value": "self.scheduler.start",
+                              "children": [
+                                {
+                                  "value": "self.scheduler",
+                                  "children": [
+                                    {
+                                      "value": "self",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "scheduler",
+                                      "children": []
+                                    }
+                                  ]
+                                },
+                                {
+                                  "value": "start",
+                                  "children": []
+                                }
+                              ]
+                            },
+                            {
+                              "value": "()",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "@expose\n    def add_execution_schedule(\n        self,\n        graph_id: str,\n        graph_version: int,\n        cron: str,\n        input_data: BlockInput,\n        user_id: str,\n    ) -> JobInfo:\n        job_args = JobArgs(\n            graph_id=graph_id,\n            input_data=input_data,\n            user_id=user_id,\n            graph_version=graph_version,\n            cron=cron,\n        )\n        job = self.scheduler.add_job(\n            execute_graph,\n            CronTrigger.from_crontab(cron),\n            kwargs=job_args.model_dump(),\n            replace_existing=True,\n        )\n        log(f\"Added job {job.id} with cron schedule '{cron}' input data: {input_data}\")\n        return JobInfo.from_db(job_args, job)",
+              "children": [
+                {
+                  "value": "@expose",
+                  "children": [
+                    {
+                      "value": "expose",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "value": "def add_execution_schedule(\n        self,\n        graph_id: str,\n        graph_version: int,\n        cron: str,\n        input_data: BlockInput,\n        user_id: str,\n    ) -> JobInfo:\n        job_args = JobArgs(\n            graph_id=graph_id,\n            input_data=input_data,\n            user_id=user_id,\n            graph_version=graph_version,\n            cron=cron,\n        )\n        job = self.scheduler.add_job(\n            execute_graph,\n            CronTrigger.from_crontab(cron),\n            kwargs=job_args.model_dump(),\n            replace_existing=True,\n        )\n        log(f\"Added job {job.id} with cron schedule '{cron}' input data: {input_data}\")\n        return JobInfo.from_db(job_args, job)",
+                  "children": [
+                    {
+                      "value": "add_execution_schedule",
+                      "children": []
+                    },
+                    {
+                      "value": "(\n        self,\n        graph_id: str,\n        graph_version: int,\n        cron: str,\n        input_data: BlockInput,\n        user_id: str,\n    )",
+                      "children": [
+                        {
+                          "value": "self",
+                          "children": []
+                        },
+                        {
+                          "value": "graph_id: str",
+                          "children": [
+                            {
+                              "value": "graph_id",
+                              "children": []
+                            },
+                            {
+                              "value": "str",
+                              "children": [
+                                {
+                                  "value": "str",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "value": "graph_version: int",
+                          "children": [
+                            {
+                              "value": "graph_version",
+                              "children": []
+                            },
+                            {
+                              "value": "int",
+                              "children": [
+                                {
+                                  "value": "int",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "value": "cron: str",
+                          "children": [
+                            {
+                              "value": "cron",
+                              "children": []
+                            },
+                            {
+                              "value": "str",
+                              "children": [
+                                {
+                                  "value": "str",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "value": "input_data: BlockInput",
+                          "children": [
+                            {
+                              "value": "input_data",
+                              "children": []
+                            },
+                            {
+                              "value": "BlockInput",
+                              "children": [
+                                {
+                                  "value": "BlockInput",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "value": "user_id: str",
+                          "children": [
+                            {
+                              "value": "user_id",
+                              "children": []
+                            },
+                            {
+                              "value": "str",
+                              "children": [
+                                {
+                                  "value": "str",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "JobInfo",
+                      "children": [
+                        {
+                          "value": "JobInfo",
+                          "children": []
+                        }
+                      ]
+                    },
+                    {
+                      "value": "job_args = JobArgs(\n            graph_id=graph_id,\n            input_data=input_data,\n            user_id=user_id,\n            graph_version=graph_version,\n            cron=cron,\n        )\n        job = self.scheduler.add_job(\n            execute_graph,\n            CronTrigger.from_crontab(cron),\n            kwargs=job_args.model_dump(),\n            replace_existing=True,\n        )\n        log(f\"Added job {job.id} with cron schedule '{cron}' input data: {input_data}\")\n        return JobInfo.from_db(job_args, job)",
+                      "children": [
+                        {
+                          "value": "job_args = JobArgs(\n            graph_id=graph_id,\n            input_data=input_data,\n            user_id=user_id,\n            graph_version=graph_version,\n            cron=cron,\n        )",
+                          "children": [
+                            {
+                              "value": "job_args = JobArgs(\n            graph_id=graph_id,\n            input_data=input_data,\n            user_id=user_id,\n            graph_version=graph_version,\n            cron=cron,\n        )",
+                              "children": [
+                                {
+                                  "value": "job_args",
+                                  "children": []
+                                },
+                                {
+                                  "value": "JobArgs(\n            graph_id=graph_id,\n            input_data=input_data,\n            user_id=user_id,\n            graph_version=graph_version,\n            cron=cron,\n        )",
+                                  "children": [
+                                    {
+                                      "value": "JobArgs",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "(\n            graph_id=graph_id,\n            input_data=input_data,\n            user_id=user_id,\n            graph_version=graph_version,\n            cron=cron,\n        )",
+                                      "children": [
+                                        {
+                                          "value": "graph_id=graph_id",
+                                          "children": [
+                                            {
+                                              "value": "graph_id",
+                                              "children": []
+                                            },
+                                            {
+                                              "value": "graph_id",
+                                              "children": []
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "value": "input_data=input_data",
+                                          "children": [
+                                            {
+                                              "value": "input_data",
+                                              "children": []
+                                            },
+                                            {
+                                              "value": "input_data",
+                                              "children": []
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "value": "user_id=user_id",
+                                          "children": [
+                                            {
+                                              "value": "user_id",
+                                              "children": []
+                                            },
+                                            {
+                                              "value": "user_id",
+                                              "children": []
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "value": "graph_version=graph_version",
+                                          "children": [
+                                            {
+                                              "value": "graph_version",
+                                              "children": []
+                                            },
+                                            {
+                                              "value": "graph_version",
+                                              "children": []
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "value": "cron=cron",
+                                          "children": [
+                                            {
+                                              "value": "cron",
+                                              "children": []
+                                            },
+                                            {
+                                              "value": "cron",
+                                              "children": []
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "value": "job = self.scheduler.add_job(\n            execute_graph,\n            CronTrigger.from_crontab(cron),\n            kwargs=job_args.model_dump(),\n            replace_existing=True,\n        )",
+                          "children": [
+                            {
+                              "value": "job = self.scheduler.add_job(\n            execute_graph,\n            CronTrigger.from_crontab(cron),\n            kwargs=job_args.model_dump(),\n            replace_existing=True,\n        )",
+                              "children": [
+                                {
+                                  "value": "job",
+                                  "children": []
+                                },
+                                {
+                                  "value": "self.scheduler.add_job(\n            execute_graph,\n            CronTrigger.from_crontab(cron),\n            kwargs=job_args.model_dump(),\n            replace_existing=True,\n        )",
+                                  "children": [
+                                    {
+                                      "value": "self.scheduler.add_job",
+                                      "children": [
+                                        {
+                                          "value": "self.scheduler",
+                                          "children": [
+                                            {
+                                              "value": "self",
+                                              "children": []
+                                            },
+                                            {
+                                              "value": "scheduler",
+                                              "children": []
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "value": "add_job",
+                                          "children": []
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "value": "(\n            execute_graph,\n            CronTrigger.from_crontab(cron),\n            kwargs=job_args.model_dump(),\n            replace_existing=True,\n        )",
+                                      "children": [
+                                        {
+                                          "value": "execute_graph",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "CronTrigger.from_crontab(cron)",
+                                          "children": [
+                                            {
+                                              "value": "CronTrigger.from_crontab",
+                                              "children": [
+                                                {
+                                                  "value": "CronTrigger",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "from_crontab",
+                                                  "children": []
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "value": "(cron)",
+                                              "children": [
+                                                {
+                                                  "value": "cron",
+                                                  "children": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "value": "kwargs=job_args.model_dump()",
+                                          "children": [
+                                            {
+                                              "value": "kwargs",
+                                              "children": []
+                                            },
+                                            {
+                                              "value": "job_args.model_dump()",
+                                              "children": [
+                                                {
+                                                  "value": "job_args.model_dump",
+                                                  "children": [
+                                                    {
+                                                      "value": "job_args",
+                                                      "children": []
+                                                    },
+                                                    {
+                                                      "value": "model_dump",
+                                                      "children": []
+                                                    }
+                                                  ]
+                                                },
+                                                {
+                                                  "value": "()",
+                                                  "children": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "value": "replace_existing=True",
+                                          "children": [
+                                            {
+                                              "value": "replace_existing",
+                                              "children": []
+                                            },
+                                            {
+                                              "value": "True",
+                                              "children": []
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "value": "log(f\"Added job {job.id} with cron schedule '{cron}' input data: {input_data}\")",
+                          "children": [
+                            {
+                              "value": "log(f\"Added job {job.id} with cron schedule '{cron}' input data: {input_data}\")",
+                              "children": [
+                                {
+                                  "value": "log",
+                                  "children": []
+                                },
+                                {
+                                  "value": "(f\"Added job {job.id} with cron schedule '{cron}' input data: {input_data}\")",
+                                  "children": [
+                                    {
+                                      "value": "f\"Added job {job.id} with cron schedule '{cron}' input data: {input_data}\"",
+                                      "children": [
+                                        {
+                                          "value": "f\"",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "Added job",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "{job.id}",
+                                          "children": [
+                                            {
+                                              "value": "job.id",
+                                              "children": [
+                                                {
+                                                  "value": "job",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "id",
+                                                  "children": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "value": "with cron schedule '",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "{cron}",
+                                          "children": [
+                                            {
+                                              "value": "cron",
+                                              "children": []
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "value": "' input data:",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "{input_data}",
+                                          "children": [
+                                            {
+                                              "value": "input_data",
+                                              "children": []
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "value": "\"",
+                                          "children": []
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "value": "return JobInfo.from_db(job_args, job)",
+                          "children": [
+                            {
+                              "value": "JobInfo.from_db(job_args, job)",
+                              "children": [
+                                {
+                                  "value": "JobInfo.from_db",
+                                  "children": [
+                                    {
+                                      "value": "JobInfo",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "from_db",
+                                      "children": []
+                                    }
+                                  ]
+                                },
+                                {
+                                  "value": "(job_args, job)",
+                                  "children": [
+                                    {
+                                      "value": "job_args",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "job",
+                                      "children": []
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "@expose\n    def delete_schedule(self, schedule_id: str, user_id: str) -> JobInfo:\n        job = self.scheduler.get_job(schedule_id)\n        if not job:\n            log(f\"Job {schedule_id} not found.\")\n            raise ValueError(f\"Job #{schedule_id} not found.\")\n\n        job_args = JobArgs(**job.kwargs)\n        if job_args.user_id != user_id:\n            raise ValueError(\"User ID does not match the job's user ID.\")\n\n        log(f\"Deleting job {schedule_id}\")\n        job.remove()\n\n        return JobInfo.from_db(job_args, job)",
+              "children": [
+                {
+                  "value": "@expose",
+                  "children": [
+                    {
+                      "value": "expose",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "value": "def delete_schedule(self, schedule_id: str, user_id: str) -> JobInfo:\n        job = self.scheduler.get_job(schedule_id)\n        if not job:\n            log(f\"Job {schedule_id} not found.\")\n            raise ValueError(f\"Job #{schedule_id} not found.\")\n\n        job_args = JobArgs(**job.kwargs)\n        if job_args.user_id != user_id:\n            raise ValueError(\"User ID does not match the job's user ID.\")\n\n        log(f\"Deleting job {schedule_id}\")\n        job.remove()\n\n        return JobInfo.from_db(job_args, job)",
+                  "children": [
+                    {
+                      "value": "delete_schedule",
+                      "children": []
+                    },
+                    {
+                      "value": "(self, schedule_id: str, user_id: str)",
+                      "children": [
+                        {
+                          "value": "self",
+                          "children": []
+                        },
+                        {
+                          "value": "schedule_id: str",
+                          "children": [
+                            {
+                              "value": "schedule_id",
+                              "children": []
+                            },
+                            {
+                              "value": "str",
+                              "children": [
+                                {
+                                  "value": "str",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "value": "user_id: str",
+                          "children": [
+                            {
+                              "value": "user_id",
+                              "children": []
+                            },
+                            {
+                              "value": "str",
+                              "children": [
+                                {
+                                  "value": "str",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "JobInfo",
+                      "children": [
+                        {
+                          "value": "JobInfo",
+                          "children": []
+                        }
+                      ]
+                    },
+                    {
+                      "value": "job = self.scheduler.get_job(schedule_id)\n        if not job:\n            log(f\"Job {schedule_id} not found.\")\n            raise ValueError(f\"Job #{schedule_id} not found.\")\n\n        job_args = JobArgs(**job.kwargs)\n        if job_args.user_id != user_id:\n            raise ValueError(\"User ID does not match the job's user ID.\")\n\n        log(f\"Deleting job {schedule_id}\")\n        job.remove()\n\n        return JobInfo.from_db(job_args, job)",
+                      "children": [
+                        {
+                          "value": "job = self.scheduler.get_job(schedule_id)",
+                          "children": [
+                            {
+                              "value": "job = self.scheduler.get_job(schedule_id)",
+                              "children": [
+                                {
+                                  "value": "job",
+                                  "children": []
+                                },
+                                {
+                                  "value": "self.scheduler.get_job(schedule_id)",
+                                  "children": [
+                                    {
+                                      "value": "self.scheduler.get_job",
+                                      "children": [
+                                        {
+                                          "value": "self.scheduler",
+                                          "children": [
+                                            {
+                                              "value": "self",
+                                              "children": []
+                                            },
+                                            {
+                                              "value": "scheduler",
+                                              "children": []
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "value": "get_job",
+                                          "children": []
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "value": "(schedule_id)",
+                                      "children": [
+                                        {
+                                          "value": "schedule_id",
+                                          "children": []
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "value": "if not job:\n            log(f\"Job {schedule_id} not found.\")\n            raise ValueError(f\"Job #{schedule_id} not found.\")",
+                          "children": [
+                            {
+                              "value": "not job",
+                              "children": [
+                                {
+                                  "value": "job",
+                                  "children": []
+                                }
+                              ]
+                            },
+                            {
+                              "value": "log(f\"Job {schedule_id} not found.\")\n            raise ValueError(f\"Job #{schedule_id} not found.\")",
+                              "children": [
+                                {
+                                  "value": "log(f\"Job {schedule_id} not found.\")",
+                                  "children": [
+                                    {
+                                      "value": "log(f\"Job {schedule_id} not found.\")",
+                                      "children": [
+                                        {
+                                          "value": "log",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "(f\"Job {schedule_id} not found.\")",
+                                          "children": [
+                                            {
+                                              "value": "f\"Job {schedule_id} not found.\"",
+                                              "children": [
+                                                {
+                                                  "value": "f\"",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "Job",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "{schedule_id}",
+                                                  "children": [
+                                                    {
+                                                      "value": "schedule_id",
+                                                      "children": []
+                                                    }
+                                                  ]
+                                                },
+                                                {
+                                                  "value": "not found.",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "\"",
+                                                  "children": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                },
+                                {
+                                  "value": "raise ValueError(f\"Job #{schedule_id} not found.\")",
+                                  "children": [
+                                    {
+                                      "value": "ValueError(f\"Job #{schedule_id} not found.\")",
+                                      "children": [
+                                        {
+                                          "value": "ValueError",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "(f\"Job #{schedule_id} not found.\")",
+                                          "children": [
+                                            {
+                                              "value": "f\"Job #{schedule_id} not found.\"",
+                                              "children": [
+                                                {
+                                                  "value": "f\"",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "Job #",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "{schedule_id}",
+                                                  "children": [
+                                                    {
+                                                      "value": "schedule_id",
+                                                      "children": []
+                                                    }
+                                                  ]
+                                                },
+                                                {
+                                                  "value": "not found.",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "\"",
+                                                  "children": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "value": "job_args = JobArgs(**job.kwargs)",
+                          "children": [
+                            {
+                              "value": "job_args = JobArgs(**job.kwargs)",
+                              "children": [
+                                {
+                                  "value": "job_args",
+                                  "children": []
+                                },
+                                {
+                                  "value": "JobArgs(**job.kwargs)",
+                                  "children": [
+                                    {
+                                      "value": "JobArgs",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "(**job.kwargs)",
+                                      "children": [
+                                        {
+                                          "value": "**job.kwargs",
+                                          "children": [
+                                            {
+                                              "value": "job.kwargs",
+                                              "children": [
+                                                {
+                                                  "value": "job",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "kwargs",
+                                                  "children": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "value": "if job_args.user_id != user_id:\n            raise ValueError(\"User ID does not match the job's user ID.\")",
+                          "children": [
+                            {
+                              "value": "job_args.user_id != user_id",
+                              "children": [
+                                {
+                                  "value": "job_args.user_id",
+                                  "children": [
+                                    {
+                                      "value": "job_args",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "user_id",
+                                      "children": []
+                                    }
+                                  ]
+                                },
+                                {
+                                  "value": "user_id",
+                                  "children": []
+                                }
+                              ]
+                            },
+                            {
+                              "value": "raise ValueError(\"User ID does not match the job's user ID.\")",
+                              "children": [
+                                {
+                                  "value": "raise ValueError(\"User ID does not match the job's user ID.\")",
+                                  "children": [
+                                    {
+                                      "value": "ValueError(\"User ID does not match the job's user ID.\")",
+                                      "children": [
+                                        {
+                                          "value": "ValueError",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "(\"User ID does not match the job's user ID.\")",
+                                          "children": [
+                                            {
+                                              "value": "\"User ID does not match the job's user ID.\"",
+                                              "children": [
+                                                {
+                                                  "value": "\"",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "User ID does not match the job's user ID.",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "\"",
+                                                  "children": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "value": "log(f\"Deleting job {schedule_id}\")",
+                          "children": [
+                            {
+                              "value": "log(f\"Deleting job {schedule_id}\")",
+                              "children": [
+                                {
+                                  "value": "log",
+                                  "children": []
+                                },
+                                {
+                                  "value": "(f\"Deleting job {schedule_id}\")",
+                                  "children": [
+                                    {
+                                      "value": "f\"Deleting job {schedule_id}\"",
+                                      "children": [
+                                        {
+                                          "value": "f\"",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "Deleting job",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "{schedule_id}",
+                                          "children": [
+                                            {
+                                              "value": "schedule_id",
+                                              "children": []
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "value": "\"",
+                                          "children": []
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "value": "job.remove()",
+                          "children": [
+                            {
+                              "value": "job.remove()",
+                              "children": [
+                                {
+                                  "value": "job.remove",
+                                  "children": [
+                                    {
+                                      "value": "job",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "remove",
+                                      "children": []
+                                    }
+                                  ]
+                                },
+                                {
+                                  "value": "()",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "value": "return JobInfo.from_db(job_args, job)",
+                          "children": [
+                            {
+                              "value": "JobInfo.from_db(job_args, job)",
+                              "children": [
+                                {
+                                  "value": "JobInfo.from_db",
+                                  "children": [
+                                    {
+                                      "value": "JobInfo",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "from_db",
+                                      "children": []
+                                    }
+                                  ]
+                                },
+                                {
+                                  "value": "(job_args, job)",
+                                  "children": [
+                                    {
+                                      "value": "job_args",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "job",
+                                      "children": []
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "@expose\n    def get_execution_schedules(\n        self, graph_id: str | None = None, user_id: str | None = None\n    ) -> list[JobInfo]:\n        schedules = []\n        for job in self.scheduler.get_jobs():\n            job_args = JobArgs(**job.kwargs)\n            if (\n                job.next_run_time is not None\n                and (graph_id is None or job_args.graph_id == graph_id)\n                and (user_id is None or job_args.user_id == user_id)\n            ):\n                schedules.append(JobInfo.from_db(job_args, job))\n        return schedules",
+              "children": [
+                {
+                  "value": "@expose",
+                  "children": [
+                    {
+                      "value": "expose",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "value": "def get_execution_schedules(\n        self, graph_id: str | None = None, user_id: str | None = None\n    ) -> list[JobInfo]:\n        schedules = []\n        for job in self.scheduler.get_jobs():\n            job_args = JobArgs(**job.kwargs)\n            if (\n                job.next_run_time is not None\n                and (graph_id is None or job_args.graph_id == graph_id)\n                and (user_id is None or job_args.user_id == user_id)\n            ):\n                schedules.append(JobInfo.from_db(job_args, job))\n        return schedules",
+                  "children": [
+                    {
+                      "value": "get_execution_schedules",
+                      "children": []
+                    },
+                    {
+                      "value": "(\n        self, graph_id: str | None = None, user_id: str | None = None\n    )",
+                      "children": [
+                        {
+                          "value": "self",
+                          "children": []
+                        },
+                        {
+                          "value": "graph_id: str | None = None",
+                          "children": [
+                            {
+                              "value": "graph_id",
+                              "children": []
+                            },
+                            {
+                              "value": "str | None",
+                              "children": [
+                                {
+                                  "value": "str | None",
+                                  "children": [
+                                    {
+                                      "value": "str",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "None",
+                                      "children": []
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "value": "None",
+                              "children": []
+                            }
+                          ]
+                        },
+                        {
+                          "value": "user_id: str | None = None",
+                          "children": [
+                            {
+                              "value": "user_id",
+                              "children": []
+                            },
+                            {
+                              "value": "str | None",
+                              "children": [
+                                {
+                                  "value": "str | None",
+                                  "children": [
+                                    {
+                                      "value": "str",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "None",
+                                      "children": []
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "value": "None",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "list[JobInfo]",
+                      "children": [
+                        {
+                          "value": "list[JobInfo]",
+                          "children": [
+                            {
+                              "value": "list",
+                              "children": []
+                            },
+                            {
+                              "value": "[JobInfo]",
+                              "children": [
+                                {
+                                  "value": "JobInfo",
+                                  "children": [
+                                    {
+                                      "value": "JobInfo",
+                                      "children": []
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "schedules = []\n        for job in self.scheduler.get_jobs():\n            job_args = JobArgs(**job.kwargs)\n            if (\n                job.next_run_time is not None\n                and (graph_id is None or job_args.graph_id == graph_id)\n                and (user_id is None or job_args.user_id == user_id)\n            ):\n                schedules.append(JobInfo.from_db(job_args, job))\n        return schedules",
+                      "children": [
+                        {
+                          "value": "schedules = []",
+                          "children": [
+                            {
+                              "value": "schedules = []",
+                              "children": [
+                                {
+                                  "value": "schedules",
+                                  "children": []
+                                },
+                                {
+                                  "value": "[]",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "value": "for job in self.scheduler.get_jobs():\n            job_args = JobArgs(**job.kwargs)\n            if (\n                job.next_run_time is not None\n                and (graph_id is None or job_args.graph_id == graph_id)\n                and (user_id is None or job_args.user_id == user_id)\n            ):\n                schedules.append(JobInfo.from_db(job_args, job))",
+                          "children": [
+                            {
+                              "value": "job",
+                              "children": []
+                            },
+                            {
+                              "value": "self.scheduler.get_jobs()",
+                              "children": [
+                                {
+                                  "value": "self.scheduler.get_jobs",
+                                  "children": [
+                                    {
+                                      "value": "self.scheduler",
+                                      "children": [
+                                        {
+                                          "value": "self",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "scheduler",
+                                          "children": []
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "value": "get_jobs",
+                                      "children": []
+                                    }
+                                  ]
+                                },
+                                {
+                                  "value": "()",
+                                  "children": []
+                                }
+                              ]
+                            },
+                            {
+                              "value": "job_args = JobArgs(**job.kwargs)\n            if (\n                job.next_run_time is not None\n                and (graph_id is None or job_args.graph_id == graph_id)\n                and (user_id is None or job_args.user_id == user_id)\n            ):\n                schedules.append(JobInfo.from_db(job_args, job))",
+                              "children": [
+                                {
+                                  "value": "job_args = JobArgs(**job.kwargs)",
+                                  "children": [
+                                    {
+                                      "value": "job_args = JobArgs(**job.kwargs)",
+                                      "children": [
+                                        {
+                                          "value": "job_args",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "JobArgs(**job.kwargs)",
+                                          "children": [
+                                            {
+                                              "value": "JobArgs",
+                                              "children": []
+                                            },
+                                            {
+                                              "value": "(**job.kwargs)",
+                                              "children": [
+                                                {
+                                                  "value": "**job.kwargs",
+                                                  "children": [
+                                                    {
+                                                      "value": "job.kwargs",
+                                                      "children": [
+                                                        {
+                                                          "value": "job",
+                                                          "children": []
+                                                        },
+                                                        {
+                                                          "value": "kwargs",
+                                                          "children": []
+                                                        }
+                                                      ]
+                                                    }
+                                                  ]
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                },
+                                {
+                                  "value": "if (\n                job.next_run_time is not None\n                and (graph_id is None or job_args.graph_id == graph_id)\n                and (user_id is None or job_args.user_id == user_id)\n            ):\n                schedules.append(JobInfo.from_db(job_args, job))",
+                                  "children": [
+                                    {
+                                      "value": "(\n                job.next_run_time is not None\n                and (graph_id is None or job_args.graph_id == graph_id)\n                and (user_id is None or job_args.user_id == user_id)\n            )",
+                                      "children": [
+                                        {
+                                          "value": "job.next_run_time is not None\n                and (graph_id is None or job_args.graph_id == graph_id)\n                and (user_id is None or job_args.user_id == user_id)",
+                                          "children": [
+                                            {
+                                              "value": "job.next_run_time is not None\n                and (graph_id is None or job_args.graph_id == graph_id)",
+                                              "children": [
+                                                {
+                                                  "value": "job.next_run_time is not None",
+                                                  "children": [
+                                                    {
+                                                      "value": "job.next_run_time",
+                                                      "children": [
+                                                        {
+                                                          "value": "job",
+                                                          "children": []
+                                                        },
+                                                        {
+                                                          "value": "next_run_time",
+                                                          "children": []
+                                                        }
+                                                      ]
+                                                    },
+                                                    {
+                                                      "value": "None",
+                                                      "children": []
+                                                    }
+                                                  ]
+                                                },
+                                                {
+                                                  "value": "(graph_id is None or job_args.graph_id == graph_id)",
+                                                  "children": [
+                                                    {
+                                                      "value": "graph_id is None or job_args.graph_id == graph_id",
+                                                      "children": [
+                                                        {
+                                                          "value": "graph_id is None",
+                                                          "children": [
+                                                            {
+                                                              "value": "graph_id",
+                                                              "children": []
+                                                            },
+                                                            {
+                                                              "value": "None",
+                                                              "children": []
+                                                            }
+                                                          ]
+                                                        },
+                                                        {
+                                                          "value": "job_args.graph_id == graph_id",
+                                                          "children": [
+                                                            {
+                                                              "value": "job_args.graph_id",
+                                                              "children": [
+                                                                {
+                                                                  "value": "job_args",
+                                                                  "children": []
+                                                                },
+                                                                {
+                                                                  "value": "graph_id",
+                                                                  "children": []
+                                                                }
+                                                              ]
+                                                            },
+                                                            {
+                                                              "value": "graph_id",
+                                                              "children": []
+                                                            }
+                                                          ]
+                                                        }
+                                                      ]
+                                                    }
+                                                  ]
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "value": "(user_id is None or job_args.user_id == user_id)",
+                                              "children": [
+                                                {
+                                                  "value": "user_id is None or job_args.user_id == user_id",
+                                                  "children": [
+                                                    {
+                                                      "value": "user_id is None",
+                                                      "children": [
+                                                        {
+                                                          "value": "user_id",
+                                                          "children": []
+                                                        },
+                                                        {
+                                                          "value": "None",
+                                                          "children": []
+                                                        }
+                                                      ]
+                                                    },
+                                                    {
+                                                      "value": "job_args.user_id == user_id",
+                                                      "children": [
+                                                        {
+                                                          "value": "job_args.user_id",
+                                                          "children": [
+                                                            {
+                                                              "value": "job_args",
+                                                              "children": []
+                                                            },
+                                                            {
+                                                              "value": "user_id",
+                                                              "children": []
+                                                            }
+                                                          ]
+                                                        },
+                                                        {
+                                                          "value": "user_id",
+                                                          "children": []
+                                                        }
+                                                      ]
+                                                    }
+                                                  ]
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "value": "schedules.append(JobInfo.from_db(job_args, job))",
+                                      "children": [
+                                        {
+                                          "value": "schedules.append(JobInfo.from_db(job_args, job))",
+                                          "children": [
+                                            {
+                                              "value": "schedules.append(JobInfo.from_db(job_args, job))",
+                                              "children": [
+                                                {
+                                                  "value": "schedules.append",
+                                                  "children": [
+                                                    {
+                                                      "value": "schedules",
+                                                      "children": []
+                                                    },
+                                                    {
+                                                      "value": "append",
+                                                      "children": []
+                                                    }
+                                                  ]
+                                                },
+                                                {
+                                                  "value": "(JobInfo.from_db(job_args, job))",
+                                                  "children": [
+                                                    {
+                                                      "value": "JobInfo.from_db(job_args, job)",
+                                                      "children": [
+                                                        {
+                                                          "value": "JobInfo.from_db",
+                                                          "children": [
+                                                            {
+                                                              "value": "JobInfo",
+                                                              "children": []
+                                                            },
+                                                            {
+                                                              "value": "from_db",
+                                                              "children": []
+                                                            }
+                                                          ]
+                                                        },
+                                                        {
+                                                          "value": "(job_args, job)",
+                                                          "children": [
+                                                            {
+                                                              "value": "job_args",
+                                                              "children": []
+                                                            },
+                                                            {
+                                                              "value": "job",
+                                                              "children": []
+                                                            }
+                                                          ]
+                                                        }
+                                                      ]
+                                                    }
+                                                  ]
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "value": "return schedules",
+                          "children": [
+                            {
+                              "value": "schedules",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

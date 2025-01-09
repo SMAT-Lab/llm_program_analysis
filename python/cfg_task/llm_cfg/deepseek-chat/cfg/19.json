@@ -1,0 +1,242 @@
+{
+    "nodes": [
+        {
+            "id": "chunk_0_GlobalBlock_1",
+            "code": "import asyncio\nimport json\nimport logging\nfrom abc import ABC, abstractmethod\nfrom datetime import datetime\nfrom typing import Any, AsyncGenerator, Generator, Generic, Optional, TypeVar\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_2",
+            "code": "from pydantic import BaseModel\nfrom redis.asyncio.client import PubSub as AsyncPubSub\nfrom redis.client import PubSub\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_3",
+            "code": "from backend.data import redis\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_4",
+            "code": "logger = logging.getLogger(__name__)\n"
+        },
+        {
+            "id": "chunk_1_DateTimeEncoder_1",
+            "code": "class DateTimeEncoder(json.JSONEncoder):\n"
+        },
+        {
+            "id": "chunk_1_DateTimeEncoder_2",
+            "code": "    def default(self, o):\n"
+        },
+        {
+            "id": "chunk_1_DateTimeEncoder_3",
+            "code": "        if isinstance(o, datetime):\n            return o.isoformat()\n"
+        },
+        {
+            "id": "chunk_1_DateTimeEncoder_4",
+            "code": "        return super().default(o)\n"
+        },
+        {
+            "id": "chunk_2_GlobalBlock_1",
+            "code": "M = TypeVar(\"M\", bound=BaseModel)\n"
+        },
+        {
+            "id": "chunk_3_BaseRedisEventBus_1",
+            "code": "class BaseRedisEventBus(Generic[M], ABC):\n    Model: type[M]\n"
+        },
+        {
+            "id": "chunk_3_BaseRedisEventBus_2",
+            "code": "    @property\n    @abstractmethod\n    def event_bus_name(self) -> str:\n        pass\n"
+        },
+        {
+            "id": "chunk_3_BaseRedisEventBus_3",
+            "code": "    def _serialize_message(self, item: M, channel_key: str) -> tuple[str, str]:\n        message = json.dumps(item.model_dump(), cls=DateTimeEncoder)\n        channel_name = f\"{self.event_bus_name}/{channel_key}\"\n        logger.info(f\"[{channel_name}] Publishing an event to Redis {message}\")\n        return message, channel_name\n"
+        },
+        {
+            "id": "chunk_3_BaseRedisEventBus_4",
+            "code": "    def _deserialize_message(self, msg: Any, channel_key: str) -> M | None:\n        message_type = \"pmessage\" if \"*\" in channel_key else \"message\"\n        if msg[\"type\"] != message_type:\n            return None\n"
+        },
+        {
+            "id": "chunk_3_BaseRedisEventBus_5",
+            "code": "        try:\n            data = json.loads(msg[\"data\"])\n            logger.info(f\"Consuming an event from Redis {data}\")\n            return self.Model(**data)\n"
+        },
+        {
+            "id": "chunk_3_BaseRedisEventBus_6",
+            "code": "        except Exception as e:\n            logger.error(f\"Failed to parse event result from Redis {msg} {e}\")\n"
+        },
+        {
+            "id": "chunk_3_BaseRedisEventBus_7",
+            "code": "    def _get_pubsub_channel(\n        self, connection: redis.Redis | redis.AsyncRedis, channel_key: str\n    ) -> tuple[PubSub | AsyncPubSub, str]:\n        full_channel_name = f\"{self.event_bus_name}/{channel_key}\"\n        pubsub = connection.pubsub()\n        return pubsub, full_channel_name\n"
+        },
+        {
+            "id": "chunk_4_RedisEventBus_1",
+            "code": "class RedisEventBus(BaseRedisEventBus[M], ABC):\n    Model: type[M]\n"
+        },
+        {
+            "id": "chunk_4_RedisEventBus_2",
+            "code": "    @property\n    def connection(self) -> redis.Redis:\n        return redis.get_redis()\n"
+        },
+        {
+            "id": "chunk_4_RedisEventBus_3",
+            "code": "    def publish_event(self, event: M, channel_key: str):\n        message, full_channel_name = self._serialize_message(event, channel_key)\n        self.connection.publish(full_channel_name, message)\n"
+        },
+        {
+            "id": "chunk_4_RedisEventBus_4",
+            "code": "    def listen_events(self, channel_key: str) -> Generator[M, None, None]:\n        pubsub, full_channel_name = self._get_pubsub_channel(\n            self.connection, channel_key\n        )\n        assert isinstance(pubsub, PubSub)\n"
+        },
+        {
+            "id": "chunk_4_RedisEventBus_5",
+            "code": "        if \"*\" in channel_key:\n            pubsub.psubscribe(full_channel_name)\n        else:\n            pubsub.subscribe(full_channel_name)\n"
+        },
+        {
+            "id": "chunk_4_RedisEventBus_6",
+            "code": "        for message in pubsub.listen():\n            if event := self._deserialize_message(message, channel_key):\n                yield event\n"
+        },
+        {
+            "id": "chunk_5_AsyncRedisEventBus_1",
+            "code": "class AsyncRedisEventBus(BaseRedisEventBus[M], ABC):\n    Model: type[M]\n"
+        },
+        {
+            "id": "chunk_5_AsyncRedisEventBus_2",
+            "code": "    @property\n    async def connection(self) -> redis.AsyncRedis:\n        return await redis.get_redis_async()\n"
+        },
+        {
+            "id": "chunk_5_AsyncRedisEventBus_3",
+            "code": "    async def publish_event(self, event: M, channel_key: str):\n        message, full_channel_name = self._serialize_message(event, channel_key)\n        connection = await self.connection\n        await connection.publish(full_channel_name, message)\n"
+        },
+        {
+            "id": "chunk_5_AsyncRedisEventBus_4",
+            "code": "    async def listen_events(self, channel_key: str) -> AsyncGenerator[M, None]:\n        pubsub, full_channel_name = self._get_pubsub_channel(\n            await self.connection, channel_key\n        )\n"
+        },
+        {
+            "id": "chunk_5_AsyncRedisEventBus_5",
+            "code": "        assert isinstance(pubsub, AsyncPubSub)\n"
+        },
+        {
+            "id": "chunk_5_AsyncRedisEventBus_6",
+            "code": "        if \"*\" in channel_key:\n            await pubsub.psubscribe(full_channel_name)\n        else:\n            await pubsub.subscribe(full_channel_name)\n"
+        },
+        {
+            "id": "chunk_5_AsyncRedisEventBus_7",
+            "code": "        async for message in pubsub.listen():\n            if event := self._deserialize_message(message, channel_key):\n                yield event\n"
+        },
+        {
+            "id": "chunk_5_AsyncRedisEventBus_8",
+            "code": "    async def wait_for_event(\n        self, channel_key: str, timeout: Optional[float] = None\n    ) -> M | None:\n"
+        },
+        {
+            "id": "chunk_5_AsyncRedisEventBus_9",
+            "code": "        try:\n            return await asyncio.wait_for(\n                anext(aiter(self.listen_events(channel_key))), timeout\n            )\n"
+        },
+        {
+            "id": "chunk_5_AsyncRedisEventBus_10",
+            "code": "        except TimeoutError:\n            return None\n"
+        }
+    ],
+    "edges": [
+        {
+            "from": "chunk_0_GlobalBlock_1",
+            "to": "chunk_0_GlobalBlock_2"
+        },
+        {
+            "from": "chunk_0_GlobalBlock_2",
+            "to": "chunk_0_GlobalBlock_3"
+        },
+        {
+            "from": "chunk_0_GlobalBlock_3",
+            "to": "chunk_0_GlobalBlock_4"
+        },
+        {
+            "from": "chunk_1_DateTimeEncoder_1",
+            "to": "chunk_1_DateTimeEncoder_2"
+        },
+        {
+            "from": "chunk_1_DateTimeEncoder_2",
+            "to": "chunk_1_DateTimeEncoder_3"
+        },
+        {
+            "from": "chunk_1_DateTimeEncoder_3",
+            "to": "chunk_1_DateTimeEncoder_4"
+        },
+        {
+            "from": "chunk_3_BaseRedisEventBus_1",
+            "to": "chunk_3_BaseRedisEventBus_2"
+        },
+        {
+            "from": "chunk_3_BaseRedisEventBus_2",
+            "to": "chunk_3_BaseRedisEventBus_3"
+        },
+        {
+            "from": "chunk_3_BaseRedisEventBus_2",
+            "to": "chunk_3_BaseRedisEventBus_4"
+        },
+        {
+            "from": "chunk_3_BaseRedisEventBus_2",
+            "to": "chunk_3_BaseRedisEventBus_7"
+        },
+        {
+            "from": "chunk_3_BaseRedisEventBus_4",
+            "to": "chunk_3_BaseRedisEventBus_5"
+        },
+        {
+            "from": "chunk_3_BaseRedisEventBus_4",
+            "to": "chunk_3_BaseRedisEventBus_6"
+        },
+        {
+            "from": "chunk_4_RedisEventBus_1",
+            "to": "chunk_4_RedisEventBus_2"
+        },
+        {
+            "from": "chunk_4_RedisEventBus_2",
+            "to": "chunk_4_RedisEventBus_3"
+        },
+        {
+            "from": "chunk_4_RedisEventBus_2",
+            "to": "chunk_4_RedisEventBus_4"
+        },
+        {
+            "from": "chunk_4_RedisEventBus_4",
+            "to": "chunk_4_RedisEventBus_5"
+        },
+        {
+            "from": "chunk_4_RedisEventBus_5",
+            "to": "chunk_4_RedisEventBus_6"
+        },
+        {
+            "from": "chunk_4_RedisEventBus_6",
+            "to": "chunk_4_RedisEventBus_6"
+        },
+        {
+            "from": "chunk_5_AsyncRedisEventBus_1",
+            "to": "chunk_5_AsyncRedisEventBus_2"
+        },
+        {
+            "from": "chunk_5_AsyncRedisEventBus_1",
+            "to": "chunk_5_AsyncRedisEventBus_3"
+        },
+        {
+            "from": "chunk_5_AsyncRedisEventBus_1",
+            "to": "chunk_5_AsyncRedisEventBus_4"
+        },
+        {
+            "from": "chunk_5_AsyncRedisEventBus_1",
+            "to": "chunk_5_AsyncRedisEventBus_8"
+        },
+        {
+            "from": "chunk_5_AsyncRedisEventBus_4",
+            "to": "chunk_5_AsyncRedisEventBus_5"
+        },
+        {
+            "from": "chunk_5_AsyncRedisEventBus_5",
+            "to": "chunk_5_AsyncRedisEventBus_6"
+        },
+        {
+            "from": "chunk_5_AsyncRedisEventBus_6",
+            "to": "chunk_5_AsyncRedisEventBus_7"
+        },
+        {
+            "from": "chunk_5_AsyncRedisEventBus_8",
+            "to": "chunk_5_AsyncRedisEventBus_9"
+        },
+        {
+            "from": "chunk_5_AsyncRedisEventBus_9",
+            "to": "chunk_5_AsyncRedisEventBus_10"
+        }
+    ]
+}

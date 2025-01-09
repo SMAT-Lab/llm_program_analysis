@@ -1,0 +1,3 @@
+AUTO = 'AUTO'
+ON = 'ON'
+OFF = 'OFF'

@@ -1,0 +1,286 @@
+{
+    "nodes": [
+        {
+            "id": "chunk_0_GlobalBlock_1",
+            "code": "import logging\nfrom typing import TYPE_CHECKING, AsyncGenerator, Optional\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_2",
+            "code": "from prisma import Json\nfrom prisma.models import IntegrationWebhook\nfrom pydantic import Field, computed_field\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_3",
+            "code": "from backend.data.includes import INTEGRATION_WEBHOOK_INCLUDE\nfrom backend.data.queue import AsyncRedisEventBus\nfrom backend.integrations.providers import ProviderName\nfrom backend.integrations.webhooks.utils import webhook_ingress_url\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_4",
+            "code": "from .db import BaseDbModel\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_5",
+            "code": "if TYPE_CHECKING:\n    from .graph import NodeModel\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_6",
+            "code": "logger = logging.getLogger(__name__)\n"
+        },
+        {
+            "id": "chunk_1_Webhook_1",
+            "code": "class Webhook(BaseDbModel):\n    user_id: str\n    provider: ProviderName\n    credentials_id: str\n    webhook_type: str\n    resource: str\n    events: list[str]\n    config: dict = Field(default_factory=dict)\n    secret: str\n\n    provider_webhook_id: str\n\n    attached_nodes: Optional[list[\"NodeModel\"]] = None\n\n"
+        },
+        {
+            "id": "chunk_1_Webhook_2",
+            "code": "    @computed_field\n    @property\n    def url(self) -> str:\n        return webhook_ingress_url(self.provider.value, self.id)\n"
+        },
+        {
+            "id": "chunk_1_Webhook_3",
+            "code": "    @staticmethod\n    def from_db(webhook: IntegrationWebhook):\n        from .graph import NodeModel\n\n        return Webhook(\n            id=webhook.id,\n            user_id=webhook.userId,\n            provider=ProviderName(webhook.provider),\n            credentials_id=webhook.credentialsId,\n            webhook_type=webhook.webhookType,\n            resource=webhook.resource,\n            events=webhook.events,\n            config=dict(webhook.config),\n            secret=webhook.secret,\n            provider_webhook_id=webhook.providerWebhookId,\n            attached_nodes=(\n                [NodeModel.from_db(node) for node in webhook.AgentNodes]\n                if webhook.AgentNodes is not None\n                else None\n            ),\n        )\n"
+        },
+        {
+            "id": "chunk_2_url_1",
+            "code": "    def url(self) -> str:\n        return webhook_ingress_url(self.provider.value, self.id)\n"
+        },
+        {
+            "id": "chunk_3_from_db_1",
+            "code": "    def from_db(webhook: IntegrationWebhook):\n        from .graph import NodeModel\n"
+        },
+        {
+            "id": "chunk_3_from_db_2",
+            "code": "        return Webhook(\n            id=webhook.id,\n            user_id=webhook.userId,\n            provider=ProviderName(webhook.provider),\n            credentials_id=webhook.credentialsId,\n            webhook_type=webhook.webhookType,\n            resource=webhook.resource,\n            events=webhook.events,\n            config=dict(webhook.config),\n            secret=webhook.secret,\n            provider_webhook_id=webhook.providerWebhookId,\n            attached_nodes=(\n                [NodeModel.from_db(node) for node in webhook.AgentNodes]\n                if webhook.AgentNodes is not None\n                else None\n            ),\n        )\n"
+        },
+        {
+            "id": "chunk_4_create_webhook_1",
+            "code": "async def create_webhook(webhook: Webhook) -> Webhook:\n"
+        },
+        {
+            "id": "chunk_4_create_webhook_2",
+            "code": "    created_webhook = await IntegrationWebhook.prisma().create(\n        data={\n            \"id\": webhook.id,\n            \"userId\": webhook.user_id,\n            \"provider\": webhook.provider.value,\n            \"credentialsId\": webhook.credentials_id,\n            \"webhookType\": webhook.webhook_type,\n            \"resource\": webhook.resource,\n            \"events\": webhook.events,\n            \"config\": Json(webhook.config),\n            \"secret\": webhook.secret,\n            \"providerWebhookId\": webhook.provider_webhook_id,\n        }\n    )\n"
+        },
+        {
+            "id": "chunk_4_create_webhook_3",
+            "code": "    return Webhook.from_db(created_webhook)\n"
+        },
+        {
+            "id": "chunk_5_get_webhook_1",
+            "code": "async def get_webhook(webhook_id: str) -> Webhook:\n    \"\"\"\u26a0\ufe0f No `user_id` check: DO NOT USE without check in user-facing endpoints.\"\"\"\n"
+        },
+        {
+            "id": "chunk_5_get_webhook_2",
+            "code": "    webhook = await IntegrationWebhook.prisma().find_unique_or_raise(\n        where={\"id\": webhook_id},\n        include=INTEGRATION_WEBHOOK_INCLUDE,\n    )\n"
+        },
+        {
+            "id": "chunk_5_get_webhook_3",
+            "code": "    return Webhook.from_db(webhook)\n"
+        },
+        {
+            "id": "chunk_6_get_all_webhooks_by_creds_1",
+            "code": "async def get_all_webhooks_by_creds(credentials_id: str) -> list[Webhook]:\n    \"\"\"\u26a0\ufe0f No `user_id` check: DO NOT USE without check in user-facing endpoints.\"\"\"\n"
+        },
+        {
+            "id": "chunk_6_get_all_webhooks_by_creds_2",
+            "code": "    if not credentials_id:\n        raise ValueError(\"credentials_id must not be empty\")\n"
+        },
+        {
+            "id": "chunk_6_get_all_webhooks_by_creds_3",
+            "code": "    webhooks = await IntegrationWebhook.prisma().find_many(\n        where={\"credentialsId\": credentials_id},\n        include=INTEGRATION_WEBHOOK_INCLUDE,\n    )\n"
+        },
+        {
+            "id": "chunk_6_get_all_webhooks_by_creds_4",
+            "code": "    return [Webhook.from_db(webhook) for webhook in webhooks]\n"
+        },
+        {
+            "id": "chunk_7_find_webhook_by_credentials_and_props_1",
+            "code": "async def find_webhook_by_credentials_and_props(\n    credentials_id: str, webhook_type: str, resource: str, events: list[str]\n) -> Webhook | None:\n"
+        },
+        {
+            "id": "chunk_7_find_webhook_by_credentials_and_props_2",
+            "code": "    \"\"\"\u26a0\ufe0f No `user_id` check: DO NOT USE without check in user-facing endpoints.\"\"\"\n"
+        },
+        {
+            "id": "chunk_7_find_webhook_by_credentials_and_props_3",
+            "code": "    webhook = await IntegrationWebhook.prisma().find_first(\n        where={\n            \"credentialsId\": credentials_id,\n            \"webhookType\": webhook_type,\n            \"resource\": resource,\n            \"events\": {\"has_every\": events},\n        },\n        include=INTEGRATION_WEBHOOK_INCLUDE,\n    )\n"
+        },
+        {
+            "id": "chunk_7_find_webhook_by_credentials_and_props_4",
+            "code": "    return Webhook.from_db(webhook) if webhook else None\n"
+        },
+        {
+            "id": "chunk_8_find_webhook_by_graph_and_props_1",
+            "code": "async def find_webhook_by_graph_and_props(\n    graph_id: str, provider: str, webhook_type: str, events: list[str]\n) -> Webhook | None:\n"
+        },
+        {
+            "id": "chunk_8_find_webhook_by_graph_and_props_2",
+            "code": "    \"\"\"\u26a0\ufe0f No `user_id` check: DO NOT USE without check in user-facing endpoints.\"\"\"\n"
+        },
+        {
+            "id": "chunk_8_find_webhook_by_graph_and_props_3",
+            "code": "    webhook = await IntegrationWebhook.prisma().find_first(\n        where={\n            \"provider\": provider,\n            \"webhookType\": webhook_type,\n            \"events\": {\"has_every\": events},\n            \"AgentNodes\": {\"some\": {\"agentGraphId\": graph_id}},\n        },\n        include=INTEGRATION_WEBHOOK_INCLUDE,\n    )\n"
+        },
+        {
+            "id": "chunk_8_find_webhook_by_graph_and_props_4",
+            "code": "    return Webhook.from_db(webhook) if webhook else None\n"
+        },
+        {
+            "id": "chunk_9_update_webhook_config_1",
+            "code": "async def update_webhook_config(webhook_id: str, updated_config: dict) -> Webhook:\n    \"\"\"\u26a0\ufe0f No `user_id` check: DO NOT USE without check in user-facing endpoints.\"\"\"\n"
+        },
+        {
+            "id": "chunk_9_update_webhook_config_2",
+            "code": "    _updated_webhook = await IntegrationWebhook.prisma().update(\n        where={\"id\": webhook_id},\n        data={\"config\": Json(updated_config)},\n        include=INTEGRATION_WEBHOOK_INCLUDE,\n    )\n"
+        },
+        {
+            "id": "chunk_9_update_webhook_config_3",
+            "code": "    if _updated_webhook is None:\n        raise ValueError(f\"Webhook #{webhook_id} not found\")\n"
+        },
+        {
+            "id": "chunk_9_update_webhook_config_4",
+            "code": "    return Webhook.from_db(_updated_webhook)\n"
+        },
+        {
+            "id": "chunk_10_delete_webhook_1",
+            "code": "async def delete_webhook(webhook_id: str) -> None:\n    \"\"\"\u26a0\ufe0f No `user_id` check: DO NOT USE without check in user-facing endpoints.\"\"\"\n    deleted = await IntegrationWebhook.prisma().delete(where={\"id\": webhook_id})\n"
+        },
+        {
+            "id": "chunk_10_delete_webhook_2",
+            "code": "    if not deleted:\n        raise ValueError(f\"Webhook #{webhook_id} not found\")\n"
+        },
+        {
+            "id": "chunk_11_WebhookEvent_1",
+            "code": "class WebhookEvent(BaseDbModel):\n    provider: str\n    webhook_id: str\n    event_type: str\n    payload: dict\n"
+        },
+        {
+            "id": "chunk_12_WebhookEventBus_1",
+            "code": "class WebhookEventBus(AsyncRedisEventBus[WebhookEvent]):\n    Model = WebhookEvent\n"
+        },
+        {
+            "id": "chunk_12_WebhookEventBus_2",
+            "code": "    @property\n    def event_bus_name(self) -> str:\n        return \"webhooks\"\n"
+        },
+        {
+            "id": "chunk_13_publish_webhook_event_1",
+            "code": "async def publish_webhook_event(event: WebhookEvent):\n    await _webhook_event_bus.publish_event(\n        event, f\"{event.webhook_id}/{event.event_type}\"\n    )\n"
+        },
+        {
+            "id": "chunk_14_listen_for_webhook_events_1",
+            "code": "async def listen_for_webhook_events(\n    webhook_id: str, event_type: Optional[str] = None\n) -> AsyncGenerator[WebhookEvent, None]:\n"
+        },
+        {
+            "id": "chunk_14_listen_for_webhook_events_2",
+            "code": "    async for event in _webhook_event_bus.listen_events(\n        f\"{webhook_id}/{event_type or '*'}\"\n    ):\n"
+        },
+        {
+            "id": "chunk_14_listen_for_webhook_events_3",
+            "code": "        yield event\n"
+        },
+        {
+            "id": "chunk_15_wait_for_webhook_event_1",
+            "code": "async def wait_for_webhook_event(\n    webhook_id: str, event_type: Optional[str] = None, timeout: Optional[float] = None\n) -> WebhookEvent | None:\n    return await _webhook_event_bus.wait_for_event(\n        f\"{webhook_id}/{event_type or '*'}\", timeout\n    )\n"
+        }
+    ],
+    "edges": [
+        {
+            "from": "chunk_0_GlobalBlock_1",
+            "to": "chunk_0_GlobalBlock_2"
+        },
+        {
+            "from": "chunk_0_GlobalBlock_2",
+            "to": "chunk_0_GlobalBlock_3"
+        },
+        {
+            "from": "chunk_0_GlobalBlock_3",
+            "to": "chunk_0_GlobalBlock_4"
+        },
+        {
+            "from": "chunk_0_GlobalBlock_4",
+            "to": "chunk_0_GlobalBlock_5"
+        },
+        {
+            "from": "chunk_0_GlobalBlock_5",
+            "to": "chunk_0_GlobalBlock_6"
+        },
+        {
+            "from": "chunk_3_from_db_1",
+            "to": "chunk_3_from_db_2"
+        },
+        {
+            "from": "chunk_4_create_webhook_1",
+            "to": "chunk_4_create_webhook_2"
+        },
+        {
+            "from": "chunk_4_create_webhook_2",
+            "to": "chunk_4_create_webhook_3"
+        },
+        {
+            "from": "chunk_5_get_webhook_1",
+            "to": "chunk_5_get_webhook_2"
+        },
+        {
+            "from": "chunk_5_get_webhook_2",
+            "to": "chunk_5_get_webhook_3"
+        },
+        {
+            "from": "chunk_6_get_all_webhooks_by_creds_1",
+            "to": "chunk_6_get_all_webhooks_by_creds_2"
+        },
+        {
+            "from": "chunk_6_get_all_webhooks_by_creds_2",
+            "to": "chunk_6_get_all_webhooks_by_creds_3"
+        },
+        {
+            "from": "chunk_6_get_all_webhooks_by_creds_3",
+            "to": "chunk_6_get_all_webhooks_by_creds_4"
+        },
+        {
+            "from": "chunk_7_find_webhook_by_credentials_and_props_1",
+            "to": "chunk_7_find_webhook_by_credentials_and_props_2"
+        },
+        {
+            "from": "chunk_7_find_webhook_by_credentials_and_props_2",
+            "to": "chunk_7_find_webhook_by_credentials_and_props_3"
+        },
+        {
+            "from": "chunk_7_find_webhook_by_credentials_and_props_3",
+            "to": "chunk_7_find_webhook_by_credentials_and_props_4"
+        },
+        {
+            "from": "chunk_8_find_webhook_by_graph_and_props_1",
+            "to": "chunk_8_find_webhook_by_graph_and_props_2"
+        },
+        {
+            "from": "chunk_8_find_webhook_by_graph_and_props_2",
+            "to": "chunk_8_find_webhook_by_graph_and_props_3"
+        },
+        {
+            "from": "chunk_8_find_webhook_by_graph_and_props_3",
+            "to": "chunk_8_find_webhook_by_graph_and_props_4"
+        },
+        {
+            "from": "chunk_9_update_webhook_config_1",
+            "to": "chunk_9_update_webhook_config_2"
+        },
+        {
+            "from": "chunk_9_update_webhook_config_2",
+            "to": "chunk_9_update_webhook_config_3"
+        },
+        {
+            "from": "chunk_9_update_webhook_config_3",
+            "to": "chunk_9_update_webhook_config_4"
+        },
+        {
+            "from": "chunk_10_delete_webhook_1",
+            "to": "chunk_10_delete_webhook_2"
+        },
+        {
+            "from": "chunk_14_listen_for_webhook_events_1",
+            "to": "chunk_14_listen_for_webhook_events_2"
+        },
+        {
+            "from": "chunk_14_listen_for_webhook_events_2",
+            "to": "chunk_14_listen_for_webhook_events_3"
+        },
+        {
+            "from": "chunk_14_listen_for_webhook_events_3",
+            "to": "chunk_14_listen_for_webhook_events_2"
+        }
+    ]
+}

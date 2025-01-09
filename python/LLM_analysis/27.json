@@ -1,0 +1,45 @@
+{
+  "nodes": [
+    {
+      "id": "n0",
+      "code": "from typing import cast\nfrom unittest.mock import AsyncMock\n\nimport pytest\nfrom fastapi import WebSocket, WebSocketDisconnect\n\nfrom backend.server.conn_manager import ConnectionManager\nfrom backend.server.ws_api import (\n    Methods,\n    WsMessage,\n    handle_subscribe,\n    handle_unsubscribe,\n    websocket_router,\n)\n"
+    },
+    {
+      "id": "n1",
+      "code": "@pytest.fixture\ndef mock_websocket() -> AsyncMock:\n    return AsyncMock(spec=WebSocket)\n"
+    },
+    {
+      "id": "n2",
+      "code": "@pytest.fixture\ndef mock_manager() -> AsyncMock:\n    return AsyncMock(spec=ConnectionManager)\n"
+    },
+    {
+      "id": "n3",
+      "code": "@pytest.mark.asyncio\nasync def test_websocket_router_subscribe(\n    mock_websocket: AsyncMock, mock_manager: AsyncMock\n) -> None:\n\n    mock_websocket.receive_text.side_effect = [\n        WsMessage(\n            method=Methods.SUBSCRIBE, data={\"graph_id\": \"test_graph\"}\n        ).model_dump_json(),\n        WebSocketDisconnect(),\n    ]\n\n    await websocket_router(\n        cast(WebSocket, mock_websocket), cast(ConnectionManager, mock_manager)\n    )\n\n    mock_manager.connect.assert_called_once_with(mock_websocket)\n    mock_manager.subscribe.assert_called_once_with(\"test_graph\", mock_websocket)\n    mock_websocket.send_text.assert_called_once()\n    assert '\"method\":\"subscribe\"' in mock_websocket.send_text.call_args[0][0]\n    assert '\"success\":true' in mock_websocket.send_text.call_args[0][0]\n    mock_manager.disconnect.assert_called_once_with(mock_websocket)\n"
+    },
+    {
+      "id": "n4",
+      "code": "@pytest.mark.asyncio\nasync def test_websocket_router_unsubscribe(\n    mock_websocket: AsyncMock, mock_manager: AsyncMock\n) -> None:\n\n    mock_websocket.receive_text.side_effect = [\n        WsMessage(\n            method=Methods.UNSUBSCRIBE, data={\"graph_id\": \"test_graph\"}\n        ).model_dump_json(),\n        WebSocketDisconnect(),\n    ]\n\n\n\n    await websocket_router(\n        cast(WebSocket, mock_websocket), cast(ConnectionManager, mock_manager)\n    )\n\n\n\n    mock_manager.connect.assert_called_once_with(mock_websocket)\n    mock_manager.unsubscribe.assert_called_once_with(\"test_graph\", mock_websocket)\n    mock_websocket.send_text.assert_called_once()\n    assert '\"method\":\"unsubscribe\"' in mock_websocket.send_text.call_args[0][0]\n    assert '\"success\":true' in mock_websocket.send_text.call_args[0][0]\n    mock_manager.disconnect.assert_called_once_with(mock_websocket)\n\n\n"
+    },
+    {
+      "id": "n5",
+      "code": "@pytest.mark.asyncio\nasync def test_websocket_router_invalid_method(\n    mock_websocket: AsyncMock, mock_manager: AsyncMock\n) -> None:\n\n    mock_websocket.receive_text.side_effect = [\n        WsMessage(method=Methods.EXECUTION_EVENT).model_dump_json(),\n        WebSocketDisconnect(),\n    ]\n\n    await websocket_router(\n        cast(WebSocket, mock_websocket), cast(ConnectionManager, mock_manager)\n    )\n\n    mock_manager.connect.assert_called_once_with(mock_websocket)\n    mock_websocket.send_text.assert_called_once()\n    assert '\"method\":\"error\"' in mock_websocket.send_text.call_args[0][0]\n    assert '\"success\":false' in mock_websocket.send_text.call_args[0][0]\n    mock_manager.disconnect.assert_called_once_with(mock_websocket)\n"
+    },
+    {
+      "id": "n6",
+      "code": "@pytest.mark.asyncio\nasync def test_handle_subscribe_success(\n    mock_websocket: AsyncMock, mock_manager: AsyncMock\n) -> None:\n\n    message = WsMessage(method=Methods.SUBSCRIBE, data={\"graph_id\": \"test_graph\"})\n\n    await handle_subscribe(\n        cast(WebSocket, mock_websocket), cast(ConnectionManager, mock_manager), message\n    )\n\n    mock_manager.subscribe.assert_called_once_with(\"test_graph\", mock_websocket)\n    mock_websocket.send_text.assert_called_once()\n    assert '\"method\":\"subscribe\"' in mock_websocket.send_text.call_args[0][0]\n    assert '\"success\":true' in mock_websocket.send_text.call_args[0][0]\n"
+    },
+    {
+      "id": "n7",
+      "code": "@pytest.mark.asyncio\nasync def test_handle_subscribe_missing_data(\n    mock_websocket: AsyncMock, mock_manager: AsyncMock\n) -> None:\n\n    message = WsMessage(method=Methods.SUBSCRIBE)\n\n    await handle_subscribe(\n        cast(WebSocket, mock_websocket), cast(ConnectionManager, mock_manager), message\n    )\n\n    mock_manager.subscribe.assert_not_called()\n    mock_websocket.send_text.assert_called_once()\n    assert '\"method\":\"error\"' in mock_websocket.send_text.call_args[0][0]\n    assert '\"success\":false' in mock_websocket.send_text.call_args[0][0]\n"
+    },
+    {
+      "id": "n8",
+      "code": "@pytest.mark.asyncio\nasync def test_handle_unsubscribe_success(\n    mock_websocket: AsyncMock, mock_manager: AsyncMock\n) -> None:\n\n    message = WsMessage(method=Methods.UNSUBSCRIBE, data={\"graph_id\": \"test_graph\"})\n\n    await handle_unsubscribe(\n        cast(WebSocket, mock_websocket), cast(ConnectionManager, mock_manager), message\n    )\n\n    mock_manager.unsubscribe.assert_called_once_with(\"test_graph\", mock_websocket)\n    mock_websocket.send_text.assert_called_once()\n    assert '\"method\":\"unsubscribe\"' in mock_websocket.send_text.call_args[0][0]\n    assert '\"success\":true' in mock_websocket.send_text.call_args[0][0]\n"
+    },
+    {
+      "id": "n9",
+      "code": "@pytest.mark.asyncio\nasync def test_handle_unsubscribe_missing_data(\n    mock_websocket: AsyncMock, mock_manager: AsyncMock\n) -> None:\n\n    message = WsMessage(method=Methods.UNSUBSCRIBE)\n\n    await handle_unsubscribe(\n        cast(WebSocket, mock_websocket), cast(ConnectionManager, mock_manager), message\n    )\n\n    mock_manager.unsubscribe.assert_not_called()\n    mock_websocket.send_text.assert_called_once()\n    assert '\"method\":\"error\"' in mock_websocket.send_text.call_args[0][0]\n    assert '\"success\":false' in mock_websocket.send_text.call_args[0][0]\n"
+    }
+  ],
+  "edges": []
+}

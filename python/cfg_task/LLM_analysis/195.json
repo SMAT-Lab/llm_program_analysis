@@ -1,0 +1,66 @@
+{
+  "nodes": [
+    {
+      "id": "n0",
+      "code": "import uuid\nfrom typing import Any, Literal\n\nfrom pinecone import Pinecone, ServerlessSpec\n\nfrom backend.data.block import Block, BlockCategory, BlockOutput, BlockSchema\n\nfrom backend.data.model import (\n    APIKeyCredentials,\n    CredentialsField,\n    CredentialsMetaInput,\n    SchemaField,\n)\n\nfrom backend.integrations.providers import ProviderName\n\nPineconeCredentials = APIKeyCredentials\n\nPineconeCredentialsInput = CredentialsMetaInput[\n    Literal[ProviderName.PINECONE],\n    Literal[\"api_key\"],\n]\n"
+    },
+    {
+      "id": "n1",
+      "code": "def PineconeCredentialsField() -> PineconeCredentialsInput:\n    \"\"\"Creates a Pinecone credentials input on a block.\"\"\"\n    return CredentialsField(\n        description=\"The Pinecone integration can be used with an API Key.\",\n    )\n"
+    },
+    {
+      "id": "n2",
+      "code": "class PineconeInitBlock(Block):\n\n    class Input(BlockSchema):\n        credentials: PineconeCredentialsInput = PineconeCredentialsField()\n        index_name: str = SchemaField(description=\"Name of the Pinecone index\")\n        dimension: int = SchemaField(\n            description=\"Dimension of the vectors\", default=768\n        )\n        metric: str = SchemaField(\n            description=\"Distance metric for the index\", default=\"cosine\"\n        )\n        cloud: str = SchemaField(\n            description=\"Cloud provider for serverless\", default=\"aws\"\n        )\n        region: str = SchemaField(\n            description=\"Region for serverless\", default=\"us-east-1\"\n        )\n\n    class Output(BlockSchema):\n        index: str = SchemaField(description=\"Name of the initialized Pinecone index\")\n        message: str = SchemaField(description=\"Status message\")\n\n    def __init__(self):\n        super().__init__(\n            id=\"48d8fdab-8f03-41f3-8407-8107ba11ec9b\",\n            description=\"Initializes a Pinecone index\",\n            categories={BlockCategory.LOGIC},\n            input_schema=PineconeInitBlock.Input,\n            output_schema=PineconeInitBlock.Output,\n        )\n\n    def run(\n        self, input_data: Input, *, credentials: APIKeyCredentials, **kwargs\n    ) -> BlockOutput:\n\n        pc = Pinecone(api_key=credentials.api_key.get_secret_value())\n\n        try:\n            existing_indexes = pc.list_indexes()\n            if input_data.index_name not in [index.name for index in existing_indexes]:\n"
+    },
+    {
+      "id": "n3",
+      "code": "                pc.create_index(\n                    name=input_data.index_name,\n                    dimension=input_data.dimension,\n                    metric=input_data.metric,\n                    spec=ServerlessSpec(\n                        cloud=input_data.cloud, region=input_data.region\n                    ),\n                )\n\n                message = f\"Created new index: {input_data.index_name}\"\n"
+    },
+    {
+      "id": "n4",
+      "code": "            else:\n                message = f\"Using existing index: {input_data.index_name}\"\n"
+    },
+    {
+      "id": "n5",
+      "code": "            yield \"index\", input_data.index_name\n            yield \"message\", message\n"
+    },
+    {
+      "id": "n6",
+      "code": "        except Exception as e:\n            yield \"message\", f\"Error initializing Pinecone index: {str(e)}\"\n"
+    },
+    {
+      "id": "n7",
+      "code": "class PineconeQueryBlock(Block):\n    class Input(BlockSchema):\n        credentials: PineconeCredentialsInput = PineconeCredentialsField()\n        query_vector: list = SchemaField(description=\"Query vector\")\n        namespace: str = SchemaField(\n            description=\"Namespace to query in Pinecone\", default=\"\"\n        )\n        top_k: int = SchemaField(\n            description=\"Number of top results to return\", default=3\n        )\n        include_values: bool = SchemaField(\n            description=\"Whether to include vector values in the response\",\n            default=False,\n        )\n        include_metadata: bool = SchemaField(\n            description=\"Whether to include metadata in the response\", default=True\n        )\n        host: str = SchemaField(description=\"Host for pinecone\", default=\"\")\n        idx_name: str = SchemaField(description=\"Index name for pinecone\")\n\n    class Output(BlockSchema):\n        results: Any = SchemaField(description=\"Query results from Pinecone\")\n        combined_results: Any = SchemaField(\n            description=\"Combined results from Pinecone\"\n        )\n\n    def __init__(self):\n        super().__init__(\n            id=\"9ad93d0f-91b4-4c9c-8eb1-82e26b4a01c5\",\n            description=\"Queries a Pinecone index\",\n            categories={BlockCategory.LOGIC},\n            input_schema=PineconeQueryBlock.Input,\n            output_schema=PineconeQueryBlock.Output,\n        )\n\n    def run(\n        self,\n        input_data: Input,\n        *,\n        credentials: APIKeyCredentials,\n        **kwargs,\n    ) -> BlockOutput:\n\n        try:\n            # Create a new client instance\n            pc = Pinecone(api_key=credentials.api_key.get_secret_value())\n\n            # Get the index\n            idx = pc.Index(input_data.idx_name)\n\n            # Ensure query_vector is in correct format\n            query_vector = input_data.query_vector\n            if isinstance(query_vector, list) and len(query_vector) > 0:\n                if isinstance(query_vector[0], list):\n                    query_vector = query_vector[0]\n\n\n            results = idx.query(\n                namespace=input_data.namespace,\n                vector=query_vector,\n                top_k=input_data.top_k,\n                include_values=input_data.include_values,\n                include_metadata=input_data.include_metadata,\n            ).to_dict()  # type: ignore\n\n            combined_text = \"\"\n            if results[\"matches\"]:\n                texts = [\n                    match[\"metadata\"][\"text\"]\n                    for match in results[\"matches\"]\n                    if match.get(\"metadata\", {}).get(\"text\")\n                ]\n                combined_text = \"\\n\\n\".join(texts)\n\n            # Return both the raw matches and combined text\n            yield \"results\", {\n                \"matches\": results[\"matches\"],\n                \"combined_text\": combined_text,\n            }\n            yield \"combined_results\", combined_text\n"
+    },
+    {
+      "id": "n8",
+      "code": "        except Exception as e:\n            error_msg = f\"Error querying Pinecone: {str(e)}\"\n            raise RuntimeError(error_msg) from e\n"
+    },
+    {
+      "id": "n9",
+      "code": "class PineconeInsertBlock(Block):\n    class Input(BlockSchema):\n        credentials: PineconeCredentialsInput = PineconeCredentialsField()\n        index: str = SchemaField(description=\"Initialized Pinecone index\")\n        chunks: list = SchemaField(description=\"List of text chunks to ingest\")\n        embeddings: list = SchemaField(\n            description=\"List of embeddings corresponding to the chunks\"\n        )\n        namespace: str = SchemaField(\n            description=\"Namespace to use in Pinecone\", default=\"\"\n        )\n        metadata: dict = SchemaField(\n            description=\"Additional metadata to store with each vector\", default={}\n        )\n\n    class Output(BlockSchema):\n        upsert_response: str = SchemaField(\n            description=\"Response from Pinecone upsert operation\"\n        )\n\n    def __init__(self):\n        super().__init__(\n            id=\"477f2168-cd91-475a-8146-9499a5982434\",\n            description=\"Upload data to a Pinecone index\",\n            categories={BlockCategory.LOGIC},\n            input_schema=PineconeInsertBlock.Input,\n            output_schema=PineconeInsertBlock.Output,\n        )\n\n    def run(\n        self,\n        input_data: Input,\n        *,\n        credentials: APIKeyCredentials,\n        **kwargs,\n    ) -> BlockOutput:\n\n        try:\n            # Create a new client instance\n            pc = Pinecone(api_key=credentials.api_key.get_secret_value())\n\n            # Get the index\n            idx = pc.Index(input_data.index)\n\n            vectors = []\n            for chunk, embedding in zip(input_data.chunks, input_data.embeddings):\n                vector_metadata = input_data.metadata.copy()\n                vector_metadata[\"text\"] = chunk\n                vectors.append(\n                    {\n                        \"id\": str(uuid.uuid4()),\n                        \"values\": embedding,\n                        \"metadata\": vector_metadata,\n                    }\n                )\n\n            idx.upsert(vectors=vectors, namespace=input_data.namespace)\n\n            yield \"upsert_response\", \"successfully upserted\"\n"
+    },
+    {
+      "id": "n10",
+      "code": "        except Exception as e:\n            error_msg = f\"Error uploading to Pinecone: {str(e)}\"\n            raise RuntimeError(error_msg) from e\n"
+    }
+  ],
+  "edges": [
+    {
+      "source": "n3",
+      "target": "n5"
+    },
+    {
+      "source": "n2",
+      "target": "n4"
+    },
+    {
+      "source": "n2",
+      "target": "n3"
+    },
+    {
+      "source": "n4",
+      "target": "n5"
+    }
+  ]
+}

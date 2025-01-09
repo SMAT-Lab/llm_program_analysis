@@ -1,0 +1,21 @@
+{
+  "nodes": [
+    {
+      "id": "n0",
+      "code": "from typing import Any, Literal\n\nfrom pydantic import SecretStr\n\nfrom backend.data.block import Block, BlockCategory, BlockOutput, BlockSchema\n\nfrom backend.data.model import (\n    APIKeyCredentials,\n    CredentialsField,\n    CredentialsMetaInput,\n    SchemaField,\n)\n\nfrom backend.integrations.providers import ProviderName\n\nfrom backend.util.request import requests\n"
+    },
+    {
+      "id": "n1",
+      "code": "TEST_CREDENTIALS = APIKeyCredentials(\n    id=\"01234567-89ab-cdef-0123-456789abcdef\",\n    provider=\"unreal_speech\",\n    api_key=SecretStr(\"mock-unreal-speech-api-key\"),\n    title=\"Mock Unreal Speech API key\",\n    expires_at=None,\n)\n"
+    },
+    {
+      "id": "n2",
+      "code": "TEST_CREDENTIALS_INPUT = {\n    \"provider\": TEST_CREDENTIALS.provider,\n    \"id\": TEST_CREDENTIALS.id,\n    \"type\": TEST_CREDENTIALS.type,\n    \"title\": TEST_CREDENTIALS.type,\n}\n"
+    },
+    {
+      "id": "n3",
+      "code": "class UnrealTextToSpeechBlock(Block):\n\n    class Input(BlockSchema):\n        text: str = SchemaField(\n            description=\"The text to be converted to speech\",\n            placeholder=\"Enter the text you want to convert to speech\",\n        )\n        voice_id: str = SchemaField(\n            description=\"The voice ID to use for text-to-speech conversion\",\n            placeholder=\"Scarlett\",\n            default=\"Scarlett\",\n        )\n        credentials: CredentialsMetaInput[\n            Literal[ProviderName.UNREAL_SPEECH], Literal[\"api_key\"]\n        ] = CredentialsField(\n            description=\"The Unreal Speech integration can be used with \"\n            \"any API key with sufficient permissions for the blocks it is used on.\",\n        )\n\n    class Output(BlockSchema):\n        mp3_url: str = SchemaField(description=\"The URL of the generated MP3 file\")\n        error: str = SchemaField(description=\"Error message if the API call failed\")\n\n    def __init__(self):\n        super().__init__(\n            id=\"4ff1ff6d-cc40-4caa-ae69-011daa20c378\",\n            description=\"Converts text to speech using the Unreal Speech API\",\n            categories={BlockCategory.AI, BlockCategory.TEXT},\n            input_schema=UnrealTextToSpeechBlock.Input,\n            output_schema=UnrealTextToSpeechBlock.Output,\n            test_input={\n                \"text\": \"This is a test of the text to speech API.\",\n                \"voice_id\": \"Scarlett\",\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n            },\n            test_output=[(\"mp3_url\", \"https://example.com/test.mp3\")],\n            test_mock={\n                \"call_unreal_speech_api\": lambda *args, **kwargs: {\n                    \"OutputUri\": \"https://example.com/test.mp3\"\n                }\n            },\n            test_credentials=TEST_CREDENTIALS,\n        )\n\n    @staticmethod\n    def call_unreal_speech_api(\n        api_key: SecretStr, text: str, voice_id: str\n    ) -> dict[str, Any]:\n        url = \"https://api.v7.unrealspeech.com/speech\"\n        headers = {\n            \"Authorization\": f\"Bearer {api_key.get_secret_value()}\",\n            \"Content-Type\": \"application/json\",\n        }\n        data = {\n            \"Text\": text,\n            \"VoiceId\": voice_id,\n            \"Bitrate\": \"192k\",\n            \"Speed\": \"0\",\n            \"Pitch\": \"1\",\n            \"TimestampType\": \"sentence\",\n        }\n\n        response = requests.post(url, headers=headers, json=data)\n        return response.json()\n\n    def run(\n        self, input_data: Input, *, credentials: APIKeyCredentials, **kwargs\n    ) -> BlockOutput:\n        api_response = self.call_unreal_speech_api(\n            credentials.api_key,\n            input_data.text,\n            input_data.voice_id,\n        )\n        yield \"mp3_url\", api_response[\"OutputUri\"]\n"
+    }
+  ],
+  "edges": []
+}

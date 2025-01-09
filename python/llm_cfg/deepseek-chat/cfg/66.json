@@ -1,0 +1,278 @@
+{
+    "nodes": [
+        {
+            "id": "chunk_0_GlobalBlock_1",
+            "code": "import logging\nimport os\nimport signal\nimport sys\nfrom abc import ABC, abstractmethod\nfrom multiprocessing import Process, set_start_method\nfrom typing import Optional\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_2",
+            "code": "from backend.util.logging import configure_logging\nfrom backend.util.metrics import sentry_init\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_3",
+            "code": "logger = logging.getLogger(__name__)\n_SERVICE_NAME = \"MainProcess\"\n"
+        },
+        {
+            "id": "chunk_1_get_service_name_1",
+            "code": "def get_service_name():\n    return _SERVICE_NAME\n"
+        },
+        {
+            "id": "chunk_2_set_service_name_1",
+            "code": "def set_service_name(name: str):\n    global _SERVICE_NAME\n    _SERVICE_NAME = name\n"
+        },
+        {
+            "id": "chunk_3_AppProcess_1",
+            "code": "class AppProcess(ABC):\n    \"\"\"\n    A class to represent an object that can be executed in a background process.\n    \"\"\"\n"
+        },
+        {
+            "id": "chunk_3_AppProcess_2",
+            "code": "    process: Optional[Process] = None\n"
+        },
+        {
+            "id": "chunk_3_AppProcess_3",
+            "code": "    set_start_method(\"spawn\", force=True)\n    configure_logging()\n    sentry_init()\n"
+        },
+        {
+            "id": "chunk_3_AppProcess_4",
+            "code": "    # Methods that are executed INSIDE the process #\n\n"
+        },
+        {
+            "id": "chunk_3_AppProcess_5",
+            "code": "    @abstractmethod\n    def run(self):\n        \"\"\"\n        The method that will be executed in the process.\n        \"\"\"\n        pass\n"
+        },
+        {
+            "id": "chunk_3_AppProcess_6",
+            "code": "    @classmethod\n    @property\n    def service_name(cls) -> str:\n        return cls.__name__\n"
+        },
+        {
+            "id": "chunk_3_AppProcess_7",
+            "code": "    def cleanup(self):\n        \"\"\"\n        Implement this method on a subclass to do post-execution cleanup,\n        e.g. disconnecting from a database or terminating child processes.\n        \"\"\"\n        pass\n"
+        },
+        {
+            "id": "chunk_3_AppProcess_8",
+            "code": "    def health_check(self):\n        \"\"\"\n        A method to check the health of the process.\n        \"\"\"\n        pass\n"
+        },
+        {
+            "id": "chunk_3_AppProcess_9",
+            "code": "    def execute_run_command(self, silent):\n        signal.signal(signal.SIGTERM, self._self_terminate)\n"
+        },
+        {
+            "id": "chunk_3_AppProcess_10",
+            "code": "        try:\n            if silent:\n                sys.stdout = open(os.devnull, \"w\")\n                sys.stderr = open(os.devnull, \"w\")\n\n            set_service_name(self.service_name)\n            logger.info(f\"[{self.service_name}] Starting...\")\n            self.run()\n"
+        },
+        {
+            "id": "chunk_3_AppProcess_11",
+            "code": "        except (KeyboardInterrupt, SystemExit) as e:\n            logger.warning(f\"[{self.service_name}] Terminated: {e}; quitting...\")\n"
+        },
+        {
+            "id": "chunk_3_AppProcess_12",
+            "code": "    def _self_terminate(self, signum: int, frame):\n        self.cleanup()\n        sys.exit(0)\n"
+        },
+        {
+            "id": "chunk_3_AppProcess_13",
+            "code": "    # Methods that are executed OUTSIDE the process #\n\n"
+        },
+        {
+            "id": "chunk_3_AppProcess_14",
+            "code": "    def __enter__(self):\n        self.start(background=True)\n        return self\n"
+        },
+        {
+            "id": "chunk_3_AppProcess_15",
+            "code": "    def __exit__(self, *args, **kwargs):\n        self.stop()\n"
+        },
+        {
+            "id": "chunk_3_AppProcess_16",
+            "code": "    def start(self, background: bool = False, silent: bool = False, **proc_args) -> int:\n        \"\"\"\n        Start the background process.\n        Args:\n            background: Whether to run the process in the background.\n            silent: Whether to disable stdout and stderr.\n            proc_args: Additional arguments to pass to the process.\n        Returns:\n            the process id or 0 if the process is not running in the background.\n        \"\"\"\n"
+        },
+        {
+            "id": "chunk_3_AppProcess_17",
+            "code": "        if not background:\n            self.execute_run_command(silent)\n            return 0\n"
+        },
+        {
+            "id": "chunk_3_AppProcess_18",
+            "code": "        self.process = Process(\n            name=self.__class__.__name__,\n            target=self.execute_run_command,\n            args=(silent,),\n            **proc_args,\n        )\n        self.process.start()\n        self.health_check()\n        return self.process.pid or 0\n"
+        },
+        {
+            "id": "chunk_3_AppProcess_19",
+            "code": "    def stop(self):\n        \"\"\"\n        Stop the background process.\n        \"\"\"\n"
+        },
+        {
+            "id": "chunk_3_AppProcess_20",
+            "code": "        if not self.process:\n            return\n"
+        },
+        {
+            "id": "chunk_3_AppProcess_21",
+            "code": "        self.process.terminate()\n        self.process.join()\n        self.process = None\n"
+        },
+        {
+            "id": "chunk_4_run_1",
+            "code": "    def run(self):\n        \"\"\"\n        The method that will be executed in the process.\n        \"\"\"\n        pass\n"
+        },
+        {
+            "id": "chunk_5_service_name_1",
+            "code": "    def service_name(cls) -> str:\n        return cls.__name__\n"
+        },
+        {
+            "id": "chunk_6_cleanup_1",
+            "code": "    def cleanup(self):\n        \"\"\"\n        Implement this method on a subclass to do post-execution cleanup,\n        e.g. disconnecting from a database or terminating child processes.\n        \"\"\"\n        pass\n"
+        },
+        {
+            "id": "chunk_7_health_check_1",
+            "code": "    def health_check(self):\n        \"\"\"\n        A method to check the health of the process.\n        \"\"\"\n        pass\n"
+        },
+        {
+            "id": "chunk_8_execute_run_command_1",
+            "code": "    def execute_run_command(self, silent):\n        signal.signal(signal.SIGTERM, self._self_terminate)\n"
+        },
+        {
+            "id": "chunk_8_execute_run_command_2",
+            "code": "        try:\n            if silent:\n                sys.stdout = open(os.devnull, \"w\")\n                sys.stderr = open(os.devnull, \"w\")\n\n            set_service_name(self.service_name)\n            logger.info(f\"[{self.service_name}] Starting...\")\n            self.run()\n"
+        },
+        {
+            "id": "chunk_8_execute_run_command_3",
+            "code": "        except (KeyboardInterrupt, SystemExit) as e:\n            logger.warning(f\"[{self.service_name}] Terminated: {e}; quitting...\")\n"
+        },
+        {
+            "id": "chunk_8_execute_run_command_4",
+            "code": "    def _self_terminate(self, signum: int, frame):\n\n"
+        },
+        {
+            "id": "chunk_9__self_terminate_1",
+            "code": "    def _self_terminate(self, signum: int, frame):\n        self.cleanup()\n        sys.exit(0)\n"
+        },
+        {
+            "id": "chunk_10___enter___1",
+            "code": "    def __enter__(self):\n        self.start(background=True)\n        return self\n"
+        },
+        {
+            "id": "chunk_11___exit___1",
+            "code": "    def __exit__(self, *args, **kwargs):\n        self.stop()\n"
+        },
+        {
+            "id": "chunk_12_start_1",
+            "code": "    def start(self, background: bool = False, silent: bool = False, **proc_args) -> int:\n        \"\"\"\n        Start the background process.\n        Args:\n            background: Whether to run the process in the background.\n            silent: Whether to disable stdout and stderr.\n            proc_args: Additional arguments to pass to the process.\n        Returns:\n            the process id or 0 if the process is not running in the background.\n        \"\"\"\n"
+        },
+        {
+            "id": "chunk_12_start_2",
+            "code": "        if not background:\n            self.execute_run_command(silent)\n            return 0\n"
+        },
+        {
+            "id": "chunk_12_start_3",
+            "code": "        self.process = Process(\n            name=self.__class__.__name__,\n            target=self.execute_run_command,\n            args=(silent,),\n            **proc_args,\n        )\n        self.process.start()\n        self.health_check()\n        return self.process.pid or 0\n"
+        },
+        {
+            "id": "chunk_13_stop_1",
+            "code": "    def stop(self):\n        \"\"\"\n        Stop the background process.\n        \"\"\"\n"
+        },
+        {
+            "id": "chunk_13_stop_2",
+            "code": "        if not self.process:\n            return\n"
+        },
+        {
+            "id": "chunk_13_stop_3",
+            "code": "        self.process.terminate()\n        self.process.join()\n        self.process = None\n"
+        }
+    ],
+    "edges": [
+        {
+            "from": "chunk_0_GlobalBlock_1",
+            "to": "chunk_0_GlobalBlock_2"
+        },
+        {
+            "from": "chunk_0_GlobalBlock_2",
+            "to": "chunk_0_GlobalBlock_3"
+        },
+        {
+            "from": "chunk_3_AppProcess_1",
+            "to": "chunk_3_AppProcess_2"
+        },
+        {
+            "from": "chunk_3_AppProcess_2",
+            "to": "chunk_3_AppProcess_3"
+        },
+        {
+            "from": "chunk_3_AppProcess_3",
+            "to": "chunk_3_AppProcess_4"
+        },
+        {
+            "from": "chunk_3_AppProcess_4",
+            "to": "chunk_3_AppProcess_5"
+        },
+        {
+            "from": "chunk_3_AppProcess_5",
+            "to": "chunk_3_AppProcess_6"
+        },
+        {
+            "from": "chunk_3_AppProcess_6",
+            "to": "chunk_3_AppProcess_7"
+        },
+        {
+            "from": "chunk_3_AppProcess_7",
+            "to": "chunk_3_AppProcess_8"
+        },
+        {
+            "from": "chunk_3_AppProcess_8",
+            "to": "chunk_3_AppProcess_9"
+        },
+        {
+            "from": "chunk_3_AppProcess_9",
+            "to": "chunk_3_AppProcess_10"
+        },
+        {
+            "from": "chunk_3_AppProcess_10",
+            "to": "chunk_3_AppProcess_11"
+        },
+        {
+            "from": "chunk_3_AppProcess_10",
+            "to": "chunk_3_AppProcess_12"
+        },
+        {
+            "from": "chunk_3_AppProcess_13",
+            "to": "chunk_3_AppProcess_14"
+        },
+        {
+            "from": "chunk_3_AppProcess_14",
+            "to": "chunk_3_AppProcess_15"
+        },
+        {
+            "from": "chunk_3_AppProcess_16",
+            "to": "chunk_3_AppProcess_17"
+        },
+        {
+            "from": "chunk_3_AppProcess_16",
+            "to": "chunk_3_AppProcess_18"
+        },
+        {
+            "from": "chunk_3_AppProcess_19",
+            "to": "chunk_3_AppProcess_20"
+        },
+        {
+            "from": "chunk_3_AppProcess_20",
+            "to": "chunk_3_AppProcess_21"
+        },
+        {
+            "from": "chunk_8_execute_run_command_1",
+            "to": "chunk_8_execute_run_command_2"
+        },
+        {
+            "from": "chunk_8_execute_run_command_2",
+            "to": "chunk_8_execute_run_command_3"
+        },
+        {
+            "from": "chunk_12_start_1",
+            "to": "chunk_12_start_2"
+        },
+        {
+            "from": "chunk_12_start_2",
+            "to": "chunk_12_start_3"
+        },
+        {
+            "from": "chunk_13_stop_1",
+            "to": "chunk_13_stop_2"
+        },
+        {
+            "from": "chunk_13_stop_2",
+            "to": "chunk_13_stop_3"
+        }
+    ]
+}

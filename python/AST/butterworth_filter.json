@@ -1,0 +1,4687 @@
+{
+  "value": "from math import cos, sin, sqrt, tau\n\nfrom audio_filters.iir_filter import IIRFilter\n\n\"\"\"\nCreate 2nd-order IIR filters with Butterworth design.\n\nCode based on https://webaudio.github.io/Audio-EQ-Cookbook/audio-eq-cookbook.html\nAlternatively you can use scipy.signal.butter, which should yield the same results.\n\"\"\"\n\n\ndef make_lowpass(\n    frequency: int,\n    samplerate: int,\n    q_factor: float = 1 / sqrt(2),\n) -> IIRFilter:\n    \"\"\"\n    Creates a low-pass filter\n\n    >>> filter = make_lowpass(1000, 48000)\n    >>> filter.a_coeffs + filter.b_coeffs  # doctest: +NORMALIZE_WHITESPACE\n    [1.0922959556412573, -1.9828897227476208, 0.9077040443587427, 0.004277569313094809,\n     0.008555138626189618, 0.004277569313094809]\n    \"\"\"\n    w0 = tau * frequency / samplerate\n    _sin = sin(w0)\n    _cos = cos(w0)\n    alpha = _sin / (2 * q_factor)\n\n    b0 = (1 - _cos) / 2\n    b1 = 1 - _cos\n\n    a0 = 1 + alpha\n    a1 = -2 * _cos\n    a2 = 1 - alpha\n\n    filt = IIRFilter(2)\n    filt.set_coefficients([a0, a1, a2], [b0, b1, b0])\n    return filt\n\n\ndef make_highpass(\n    frequency: int,\n    samplerate: int,\n    q_factor: float = 1 / sqrt(2),\n) -> IIRFilter:\n    \"\"\"\n    Creates a high-pass filter\n\n    >>> filter = make_highpass(1000, 48000)\n    >>> filter.a_coeffs + filter.b_coeffs  # doctest: +NORMALIZE_WHITESPACE\n    [1.0922959556412573, -1.9828897227476208, 0.9077040443587427, 0.9957224306869052,\n     -1.9914448613738105, 0.9957224306869052]\n    \"\"\"\n    w0 = tau * frequency / samplerate\n    _sin = sin(w0)\n    _cos = cos(w0)\n    alpha = _sin / (2 * q_factor)\n\n    b0 = (1 + _cos) / 2\n    b1 = -1 - _cos\n\n    a0 = 1 + alpha\n    a1 = -2 * _cos\n    a2 = 1 - alpha\n\n    filt = IIRFilter(2)\n    filt.set_coefficients([a0, a1, a2], [b0, b1, b0])\n    return filt\n\n\ndef make_bandpass(\n    frequency: int,\n    samplerate: int,\n    q_factor: float = 1 / sqrt(2),\n) -> IIRFilter:\n    \"\"\"\n    Creates a band-pass filter\n\n    >>> filter = make_bandpass(1000, 48000)\n    >>> filter.a_coeffs + filter.b_coeffs  # doctest: +NORMALIZE_WHITESPACE\n    [1.0922959556412573, -1.9828897227476208, 0.9077040443587427, 0.06526309611002579,\n     0, -0.06526309611002579]\n    \"\"\"\n    w0 = tau * frequency / samplerate\n    _sin = sin(w0)\n    _cos = cos(w0)\n    alpha = _sin / (2 * q_factor)\n\n    b0 = _sin / 2\n    b1 = 0\n    b2 = -b0\n\n    a0 = 1 + alpha\n    a1 = -2 * _cos\n    a2 = 1 - alpha\n\n    filt = IIRFilter(2)\n    filt.set_coefficients([a0, a1, a2], [b0, b1, b2])\n    return filt\n\n\ndef make_allpass(\n    frequency: int,\n    samplerate: int,\n    q_factor: float = 1 / sqrt(2),\n) -> IIRFilter:\n    \"\"\"\n    Creates an all-pass filter\n\n    >>> filter = make_allpass(1000, 48000)\n    >>> filter.a_coeffs + filter.b_coeffs  # doctest: +NORMALIZE_WHITESPACE\n    [1.0922959556412573, -1.9828897227476208, 0.9077040443587427, 0.9077040443587427,\n     -1.9828897227476208, 1.0922959556412573]\n    \"\"\"\n    w0 = tau * frequency / samplerate\n    _sin = sin(w0)\n    _cos = cos(w0)\n    alpha = _sin / (2 * q_factor)\n\n    b0 = 1 - alpha\n    b1 = -2 * _cos\n    b2 = 1 + alpha\n\n    filt = IIRFilter(2)\n    filt.set_coefficients([b2, b1, b0], [b0, b1, b2])\n    return filt\n\n\ndef make_peak(\n    frequency: int,\n    samplerate: int,\n    gain_db: float,\n    q_factor: float = 1 / sqrt(2),\n) -> IIRFilter:\n    \"\"\"\n    Creates a peak filter\n\n    >>> filter = make_peak(1000, 48000, 6)\n    >>> filter.a_coeffs + filter.b_coeffs  # doctest: +NORMALIZE_WHITESPACE\n    [1.0653405327119334, -1.9828897227476208, 0.9346594672880666, 1.1303715025601122,\n     -1.9828897227476208, 0.8696284974398878]\n    \"\"\"\n    w0 = tau * frequency / samplerate\n    _sin = sin(w0)\n    _cos = cos(w0)\n    alpha = _sin / (2 * q_factor)\n    big_a = 10 ** (gain_db / 40)\n\n    b0 = 1 + alpha * big_a\n    b1 = -2 * _cos\n    b2 = 1 - alpha * big_a\n    a0 = 1 + alpha / big_a\n    a1 = -2 * _cos\n    a2 = 1 - alpha / big_a\n\n    filt = IIRFilter(2)\n    filt.set_coefficients([a0, a1, a2], [b0, b1, b2])\n    return filt\n\n\ndef make_lowshelf(\n    frequency: int,\n    samplerate: int,\n    gain_db: float,\n    q_factor: float = 1 / sqrt(2),\n) -> IIRFilter:\n    \"\"\"\n    Creates a low-shelf filter\n\n    >>> filter = make_lowshelf(1000, 48000, 6)\n    >>> filter.a_coeffs + filter.b_coeffs  # doctest: +NORMALIZE_WHITESPACE\n    [3.0409336710888786, -5.608870992220748, 2.602157875636628, 3.139954022810743,\n     -5.591841778072785, 2.5201667380627257]\n    \"\"\"\n    w0 = tau * frequency / samplerate\n    _sin = sin(w0)\n    _cos = cos(w0)\n    alpha = _sin / (2 * q_factor)\n    big_a = 10 ** (gain_db / 40)\n    pmc = (big_a + 1) - (big_a - 1) * _cos\n    ppmc = (big_a + 1) + (big_a - 1) * _cos\n    mpc = (big_a - 1) - (big_a + 1) * _cos\n    pmpc = (big_a - 1) + (big_a + 1) * _cos\n    aa2 = 2 * sqrt(big_a) * alpha\n\n    b0 = big_a * (pmc + aa2)\n    b1 = 2 * big_a * mpc\n    b2 = big_a * (pmc - aa2)\n    a0 = ppmc + aa2\n    a1 = -2 * pmpc\n    a2 = ppmc - aa2\n\n    filt = IIRFilter(2)\n    filt.set_coefficients([a0, a1, a2], [b0, b1, b2])\n    return filt\n\n\ndef make_highshelf(\n    frequency: int,\n    samplerate: int,\n    gain_db: float,\n    q_factor: float = 1 / sqrt(2),\n) -> IIRFilter:\n    \"\"\"\n    Creates a high-shelf filter\n\n    >>> filter = make_highshelf(1000, 48000, 6)\n    >>> filter.a_coeffs + filter.b_coeffs  # doctest: +NORMALIZE_WHITESPACE\n    [2.2229172136088806, -3.9587208137297303, 1.7841414181566304, 4.295432981120543,\n     -7.922740859457287, 3.6756456963725253]\n    \"\"\"\n    w0 = tau * frequency / samplerate\n    _sin = sin(w0)\n    _cos = cos(w0)\n    alpha = _sin / (2 * q_factor)\n    big_a = 10 ** (gain_db / 40)\n    pmc = (big_a + 1) - (big_a - 1) * _cos\n    ppmc = (big_a + 1) + (big_a - 1) * _cos\n    mpc = (big_a - 1) - (big_a + 1) * _cos\n    pmpc = (big_a - 1) + (big_a + 1) * _cos\n    aa2 = 2 * sqrt(big_a) * alpha\n\n    b0 = big_a * (ppmc + aa2)\n    b1 = -2 * big_a * pmpc\n    b2 = big_a * (ppmc - aa2)\n    a0 = pmc + aa2\n    a1 = 2 * mpc\n    a2 = pmc - aa2\n\n    filt = IIRFilter(2)\n    filt.set_coefficients([a0, a1, a2], [b0, b1, b2])\n    return filt",
+  "children": [
+    {
+      "value": "from math import cos, sin, sqrt, tau",
+      "children": [
+        {
+          "value": "math",
+          "children": [
+            {
+              "value": "math",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "cos",
+          "children": [
+            {
+              "value": "cos",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "sin",
+          "children": [
+            {
+              "value": "sin",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "sqrt",
+          "children": [
+            {
+              "value": "sqrt",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "tau",
+          "children": [
+            {
+              "value": "tau",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "from audio_filters.iir_filter import IIRFilter",
+      "children": [
+        {
+          "value": "audio_filters.iir_filter",
+          "children": [
+            {
+              "value": "audio_filters",
+              "children": []
+            },
+            {
+              "value": "iir_filter",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "IIRFilter",
+          "children": [
+            {
+              "value": "IIRFilter",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "\"\"\"\nCreate 2nd-order IIR filters with Butterworth design.\n\nCode based on https://webaudio.github.io/Audio-EQ-Cookbook/audio-eq-cookbook.html\nAlternatively you can use scipy.signal.butter, which should yield the same results.\n\"\"\"",
+      "children": [
+        {
+          "value": "\"\"\"\nCreate 2nd-order IIR filters with Butterworth design.\n\nCode based on https://webaudio.github.io/Audio-EQ-Cookbook/audio-eq-cookbook.html\nAlternatively you can use scipy.signal.butter, which should yield the same results.\n\"\"\"",
+          "children": [
+            {
+              "value": "\"\"\"",
+              "children": []
+            },
+            {
+              "value": "Create 2nd-order IIR filters with Butterworth design.\n\nCode based on https://webaudio.github.io/Audio-EQ-Cookbook/audio-eq-cookbook.html\nAlternatively you can use scipy.signal.butter, which should yield the same results.",
+              "children": []
+            },
+            {
+              "value": "\"\"\"",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "def make_lowpass(\n    frequency: int,\n    samplerate: int,\n    q_factor: float = 1 / sqrt(2),\n) -> IIRFilter:\n    \"\"\"\n    Creates a low-pass filter\n\n    >>> filter = make_lowpass(1000, 48000)\n    >>> filter.a_coeffs + filter.b_coeffs  # doctest: +NORMALIZE_WHITESPACE\n    [1.0922959556412573, -1.9828897227476208, 0.9077040443587427, 0.004277569313094809,\n     0.008555138626189618, 0.004277569313094809]\n    \"\"\"\n    w0 = tau * frequency / samplerate\n    _sin = sin(w0)\n    _cos = cos(w0)\n    alpha = _sin / (2 * q_factor)\n\n    b0 = (1 - _cos) / 2\n    b1 = 1 - _cos\n\n    a0 = 1 + alpha\n    a1 = -2 * _cos\n    a2 = 1 - alpha\n\n    filt = IIRFilter(2)\n    filt.set_coefficients([a0, a1, a2], [b0, b1, b0])\n    return filt",
+      "children": [
+        {
+          "value": "make_lowpass",
+          "children": []
+        },
+        {
+          "value": "(\n    frequency: int,\n    samplerate: int,\n    q_factor: float = 1 / sqrt(2),\n)",
+          "children": [
+            {
+              "value": "frequency: int",
+              "children": [
+                {
+                  "value": "frequency",
+                  "children": []
+                },
+                {
+                  "value": "int",
+                  "children": [
+                    {
+                      "value": "int",
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "samplerate: int",
+              "children": [
+                {
+                  "value": "samplerate",
+                  "children": []
+                },
+                {
+                  "value": "int",
+                  "children": [
+                    {
+                      "value": "int",
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "q_factor: float = 1 / sqrt(2)",
+              "children": [
+                {
+                  "value": "q_factor",
+                  "children": []
+                },
+                {
+                  "value": "float",
+                  "children": [
+                    {
+                      "value": "float",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "value": "1 / sqrt(2)",
+                  "children": [
+                    {
+                      "value": "1",
+                      "children": []
+                    },
+                    {
+                      "value": "sqrt(2)",
+                      "children": [
+                        {
+                          "value": "sqrt",
+                          "children": []
+                        },
+                        {
+                          "value": "(2)",
+                          "children": [
+                            {
+                              "value": "2",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "value": "IIRFilter",
+          "children": [
+            {
+              "value": "IIRFilter",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "\"\"\"\n    Creates a low-pass filter\n\n    >>> filter = make_lowpass(1000, 48000)\n    >>> filter.a_coeffs + filter.b_coeffs  # doctest: +NORMALIZE_WHITESPACE\n    [1.0922959556412573, -1.9828897227476208, 0.9077040443587427, 0.004277569313094809,\n     0.008555138626189618, 0.004277569313094809]\n    \"\"\"\n    w0 = tau * frequency / samplerate\n    _sin = sin(w0)\n    _cos = cos(w0)\n    alpha = _sin / (2 * q_factor)\n\n    b0 = (1 - _cos) / 2\n    b1 = 1 - _cos\n\n    a0 = 1 + alpha\n    a1 = -2 * _cos\n    a2 = 1 - alpha\n\n    filt = IIRFilter(2)\n    filt.set_coefficients([a0, a1, a2], [b0, b1, b0])\n    return filt",
+          "children": [
+            {
+              "value": "\"\"\"\n    Creates a low-pass filter\n\n    >>> filter = make_lowpass(1000, 48000)\n    >>> filter.a_coeffs + filter.b_coeffs  # doctest: +NORMALIZE_WHITESPACE\n    [1.0922959556412573, -1.9828897227476208, 0.9077040443587427, 0.004277569313094809,\n     0.008555138626189618, 0.004277569313094809]\n    \"\"\"",
+              "children": [
+                {
+                  "value": "\"\"\"\n    Creates a low-pass filter\n\n    >>> filter = make_lowpass(1000, 48000)\n    >>> filter.a_coeffs + filter.b_coeffs  # doctest: +NORMALIZE_WHITESPACE\n    [1.0922959556412573, -1.9828897227476208, 0.9077040443587427, 0.004277569313094809,\n     0.008555138626189618, 0.004277569313094809]\n    \"\"\"",
+                  "children": [
+                    {
+                      "value": "\"\"\"",
+                      "children": []
+                    },
+                    {
+                      "value": "Creates a low-pass filter\n\n    >>> filter = make_lowpass(1000, 48000)\n    >>> filter.a_coeffs + filter.b_coeffs  # doctest: +NORMALIZE_WHITESPACE\n    [1.0922959556412573, -1.9828897227476208, 0.9077040443587427, 0.004277569313094809,\n     0.008555138626189618, 0.004277569313094809]",
+                      "children": []
+                    },
+                    {
+                      "value": "\"\"\"",
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "w0 = tau * frequency / samplerate",
+              "children": [
+                {
+                  "value": "w0 = tau * frequency / samplerate",
+                  "children": [
+                    {
+                      "value": "w0",
+                      "children": []
+                    },
+                    {
+                      "value": "tau * frequency / samplerate",
+                      "children": [
+                        {
+                          "value": "tau * frequency",
+                          "children": [
+                            {
+                              "value": "tau",
+                              "children": []
+                            },
+                            {
+                              "value": "frequency",
+                              "children": []
+                            }
+                          ]
+                        },
+                        {
+                          "value": "samplerate",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "_sin = sin(w0)",
+              "children": [
+                {
+                  "value": "_sin = sin(w0)",
+                  "children": [
+                    {
+                      "value": "_sin",
+                      "children": []
+                    },
+                    {
+                      "value": "sin(w0)",
+                      "children": [
+                        {
+                          "value": "sin",
+                          "children": []
+                        },
+                        {
+                          "value": "(w0)",
+                          "children": [
+                            {
+                              "value": "w0",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "_cos = cos(w0)",
+              "children": [
+                {
+                  "value": "_cos = cos(w0)",
+                  "children": [
+                    {
+                      "value": "_cos",
+                      "children": []
+                    },
+                    {
+                      "value": "cos(w0)",
+                      "children": [
+                        {
+                          "value": "cos",
+                          "children": []
+                        },
+                        {
+                          "value": "(w0)",
+                          "children": [
+                            {
+                              "value": "w0",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "alpha = _sin / (2 * q_factor)",
+              "children": [
+                {
+                  "value": "alpha = _sin / (2 * q_factor)",
+                  "children": [
+                    {
+                      "value": "alpha",
+                      "children": []
+                    },
+                    {
+                      "value": "_sin / (2 * q_factor)",
+                      "children": [
+                        {
+                          "value": "_sin",
+                          "children": []
+                        },
+                        {
+                          "value": "(2 * q_factor)",
+                          "children": [
+                            {
+                              "value": "2 * q_factor",
+                              "children": [
+                                {
+                                  "value": "2",
+                                  "children": []
+                                },
+                                {
+                                  "value": "q_factor",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "b0 = (1 - _cos) / 2",
+              "children": [
+                {
+                  "value": "b0 = (1 - _cos) / 2",
+                  "children": [
+                    {
+                      "value": "b0",
+                      "children": []
+                    },
+                    {
+                      "value": "(1 - _cos) / 2",
+                      "children": [
+                        {
+                          "value": "(1 - _cos)",
+                          "children": [
+                            {
+                              "value": "1 - _cos",
+                              "children": [
+                                {
+                                  "value": "1",
+                                  "children": []
+                                },
+                                {
+                                  "value": "_cos",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "value": "2",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "b1 = 1 - _cos",
+              "children": [
+                {
+                  "value": "b1 = 1 - _cos",
+                  "children": [
+                    {
+                      "value": "b1",
+                      "children": []
+                    },
+                    {
+                      "value": "1 - _cos",
+                      "children": [
+                        {
+                          "value": "1",
+                          "children": []
+                        },
+                        {
+                          "value": "_cos",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "a0 = 1 + alpha",
+              "children": [
+                {
+                  "value": "a0 = 1 + alpha",
+                  "children": [
+                    {
+                      "value": "a0",
+                      "children": []
+                    },
+                    {
+                      "value": "1 + alpha",
+                      "children": [
+                        {
+                          "value": "1",
+                          "children": []
+                        },
+                        {
+                          "value": "alpha",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "a1 = -2 * _cos",
+              "children": [
+                {
+                  "value": "a1 = -2 * _cos",
+                  "children": [
+                    {
+                      "value": "a1",
+                      "children": []
+                    },
+                    {
+                      "value": "-2 * _cos",
+                      "children": [
+                        {
+                          "value": "-2",
+                          "children": [
+                            {
+                              "value": "2",
+                              "children": []
+                            }
+                          ]
+                        },
+                        {
+                          "value": "_cos",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "a2 = 1 - alpha",
+              "children": [
+                {
+                  "value": "a2 = 1 - alpha",
+                  "children": [
+                    {
+                      "value": "a2",
+                      "children": []
+                    },
+                    {
+                      "value": "1 - alpha",
+                      "children": [
+                        {
+                          "value": "1",
+                          "children": []
+                        },
+                        {
+                          "value": "alpha",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "filt = IIRFilter(2)",
+              "children": [
+                {
+                  "value": "filt = IIRFilter(2)",
+                  "children": [
+                    {
+                      "value": "filt",
+                      "children": []
+                    },
+                    {
+                      "value": "IIRFilter(2)",
+                      "children": [
+                        {
+                          "value": "IIRFilter",
+                          "children": []
+                        },
+                        {
+                          "value": "(2)",
+                          "children": [
+                            {
+                              "value": "2",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "filt.set_coefficients([a0, a1, a2], [b0, b1, b0])",
+              "children": [
+                {
+                  "value": "filt.set_coefficients([a0, a1, a2], [b0, b1, b0])",
+                  "children": [
+                    {
+                      "value": "filt.set_coefficients",
+                      "children": [
+                        {
+                          "value": "filt",
+                          "children": []
+                        },
+                        {
+                          "value": "set_coefficients",
+                          "children": []
+                        }
+                      ]
+                    },
+                    {
+                      "value": "([a0, a1, a2], [b0, b1, b0])",
+                      "children": [
+                        {
+                          "value": "[a0, a1, a2]",
+                          "children": [
+                            {
+                              "value": "a0",
+                              "children": []
+                            },
+                            {
+                              "value": "a1",
+                              "children": []
+                            },
+                            {
+                              "value": "a2",
+                              "children": []
+                            }
+                          ]
+                        },
+                        {
+                          "value": "[b0, b1, b0]",
+                          "children": [
+                            {
+                              "value": "b0",
+                              "children": []
+                            },
+                            {
+                              "value": "b1",
+                              "children": []
+                            },
+                            {
+                              "value": "b0",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "return filt",
+              "children": [
+                {
+                  "value": "filt",
+                  "children": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "def make_highpass(\n    frequency: int,\n    samplerate: int,\n    q_factor: float = 1 / sqrt(2),\n) -> IIRFilter:\n    \"\"\"\n    Creates a high-pass filter\n\n    >>> filter = make_highpass(1000, 48000)\n    >>> filter.a_coeffs + filter.b_coeffs  # doctest: +NORMALIZE_WHITESPACE\n    [1.0922959556412573, -1.9828897227476208, 0.9077040443587427, 0.9957224306869052,\n     -1.9914448613738105, 0.9957224306869052]\n    \"\"\"\n    w0 = tau * frequency / samplerate\n    _sin = sin(w0)\n    _cos = cos(w0)\n    alpha = _sin / (2 * q_factor)\n\n    b0 = (1 + _cos) / 2\n    b1 = -1 - _cos\n\n    a0 = 1 + alpha\n    a1 = -2 * _cos\n    a2 = 1 - alpha\n\n    filt = IIRFilter(2)\n    filt.set_coefficients([a0, a1, a2], [b0, b1, b0])\n    return filt",
+      "children": [
+        {
+          "value": "make_highpass",
+          "children": []
+        },
+        {
+          "value": "(\n    frequency: int,\n    samplerate: int,\n    q_factor: float = 1 / sqrt(2),\n)",
+          "children": [
+            {
+              "value": "frequency: int",
+              "children": [
+                {
+                  "value": "frequency",
+                  "children": []
+                },
+                {
+                  "value": "int",
+                  "children": [
+                    {
+                      "value": "int",
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "samplerate: int",
+              "children": [
+                {
+                  "value": "samplerate",
+                  "children": []
+                },
+                {
+                  "value": "int",
+                  "children": [
+                    {
+                      "value": "int",
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "q_factor: float = 1 / sqrt(2)",
+              "children": [
+                {
+                  "value": "q_factor",
+                  "children": []
+                },
+                {
+                  "value": "float",
+                  "children": [
+                    {
+                      "value": "float",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "value": "1 / sqrt(2)",
+                  "children": [
+                    {
+                      "value": "1",
+                      "children": []
+                    },
+                    {
+                      "value": "sqrt(2)",
+                      "children": [
+                        {
+                          "value": "sqrt",
+                          "children": []
+                        },
+                        {
+                          "value": "(2)",
+                          "children": [
+                            {
+                              "value": "2",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "value": "IIRFilter",
+          "children": [
+            {
+              "value": "IIRFilter",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "\"\"\"\n    Creates a high-pass filter\n\n    >>> filter = make_highpass(1000, 48000)\n    >>> filter.a_coeffs + filter.b_coeffs  # doctest: +NORMALIZE_WHITESPACE\n    [1.0922959556412573, -1.9828897227476208, 0.9077040443587427, 0.9957224306869052,\n     -1.9914448613738105, 0.9957224306869052]\n    \"\"\"\n    w0 = tau * frequency / samplerate\n    _sin = sin(w0)\n    _cos = cos(w0)\n    alpha = _sin / (2 * q_factor)\n\n    b0 = (1 + _cos) / 2\n    b1 = -1 - _cos\n\n    a0 = 1 + alpha\n    a1 = -2 * _cos\n    a2 = 1 - alpha\n\n    filt = IIRFilter(2)\n    filt.set_coefficients([a0, a1, a2], [b0, b1, b0])\n    return filt",
+          "children": [
+            {
+              "value": "\"\"\"\n    Creates a high-pass filter\n\n    >>> filter = make_highpass(1000, 48000)\n    >>> filter.a_coeffs + filter.b_coeffs  # doctest: +NORMALIZE_WHITESPACE\n    [1.0922959556412573, -1.9828897227476208, 0.9077040443587427, 0.9957224306869052,\n     -1.9914448613738105, 0.9957224306869052]\n    \"\"\"",
+              "children": [
+                {
+                  "value": "\"\"\"\n    Creates a high-pass filter\n\n    >>> filter = make_highpass(1000, 48000)\n    >>> filter.a_coeffs + filter.b_coeffs  # doctest: +NORMALIZE_WHITESPACE\n    [1.0922959556412573, -1.9828897227476208, 0.9077040443587427, 0.9957224306869052,\n     -1.9914448613738105, 0.9957224306869052]\n    \"\"\"",
+                  "children": [
+                    {
+                      "value": "\"\"\"",
+                      "children": []
+                    },
+                    {
+                      "value": "Creates a high-pass filter\n\n    >>> filter = make_highpass(1000, 48000)\n    >>> filter.a_coeffs + filter.b_coeffs  # doctest: +NORMALIZE_WHITESPACE\n    [1.0922959556412573, -1.9828897227476208, 0.9077040443587427, 0.9957224306869052,\n     -1.9914448613738105, 0.9957224306869052]",
+                      "children": []
+                    },
+                    {
+                      "value": "\"\"\"",
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "w0 = tau * frequency / samplerate",
+              "children": [
+                {
+                  "value": "w0 = tau * frequency / samplerate",
+                  "children": [
+                    {
+                      "value": "w0",
+                      "children": []
+                    },
+                    {
+                      "value": "tau * frequency / samplerate",
+                      "children": [
+                        {
+                          "value": "tau * frequency",
+                          "children": [
+                            {
+                              "value": "tau",
+                              "children": []
+                            },
+                            {
+                              "value": "frequency",
+                              "children": []
+                            }
+                          ]
+                        },
+                        {
+                          "value": "samplerate",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "_sin = sin(w0)",
+              "children": [
+                {
+                  "value": "_sin = sin(w0)",
+                  "children": [
+                    {
+                      "value": "_sin",
+                      "children": []
+                    },
+                    {
+                      "value": "sin(w0)",
+                      "children": [
+                        {
+                          "value": "sin",
+                          "children": []
+                        },
+                        {
+                          "value": "(w0)",
+                          "children": [
+                            {
+                              "value": "w0",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "_cos = cos(w0)",
+              "children": [
+                {
+                  "value": "_cos = cos(w0)",
+                  "children": [
+                    {
+                      "value": "_cos",
+                      "children": []
+                    },
+                    {
+                      "value": "cos(w0)",
+                      "children": [
+                        {
+                          "value": "cos",
+                          "children": []
+                        },
+                        {
+                          "value": "(w0)",
+                          "children": [
+                            {
+                              "value": "w0",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "alpha = _sin / (2 * q_factor)",
+              "children": [
+                {
+                  "value": "alpha = _sin / (2 * q_factor)",
+                  "children": [
+                    {
+                      "value": "alpha",
+                      "children": []
+                    },
+                    {
+                      "value": "_sin / (2 * q_factor)",
+                      "children": [
+                        {
+                          "value": "_sin",
+                          "children": []
+                        },
+                        {
+                          "value": "(2 * q_factor)",
+                          "children": [
+                            {
+                              "value": "2 * q_factor",
+                              "children": [
+                                {
+                                  "value": "2",
+                                  "children": []
+                                },
+                                {
+                                  "value": "q_factor",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "b0 = (1 + _cos) / 2",
+              "children": [
+                {
+                  "value": "b0 = (1 + _cos) / 2",
+                  "children": [
+                    {
+                      "value": "b0",
+                      "children": []
+                    },
+                    {
+                      "value": "(1 + _cos) / 2",
+                      "children": [
+                        {
+                          "value": "(1 + _cos)",
+                          "children": [
+                            {
+                              "value": "1 + _cos",
+                              "children": [
+                                {
+                                  "value": "1",
+                                  "children": []
+                                },
+                                {
+                                  "value": "_cos",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "value": "2",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "b1 = -1 - _cos",
+              "children": [
+                {
+                  "value": "b1 = -1 - _cos",
+                  "children": [
+                    {
+                      "value": "b1",
+                      "children": []
+                    },
+                    {
+                      "value": "-1 - _cos",
+                      "children": [
+                        {
+                          "value": "-1",
+                          "children": [
+                            {
+                              "value": "1",
+                              "children": []
+                            }
+                          ]
+                        },
+                        {
+                          "value": "_cos",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "a0 = 1 + alpha",
+              "children": [
+                {
+                  "value": "a0 = 1 + alpha",
+                  "children": [
+                    {
+                      "value": "a0",
+                      "children": []
+                    },
+                    {
+                      "value": "1 + alpha",
+                      "children": [
+                        {
+                          "value": "1",
+                          "children": []
+                        },
+                        {
+                          "value": "alpha",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "a1 = -2 * _cos",
+              "children": [
+                {
+                  "value": "a1 = -2 * _cos",
+                  "children": [
+                    {
+                      "value": "a1",
+                      "children": []
+                    },
+                    {
+                      "value": "-2 * _cos",
+                      "children": [
+                        {
+                          "value": "-2",
+                          "children": [
+                            {
+                              "value": "2",
+                              "children": []
+                            }
+                          ]
+                        },
+                        {
+                          "value": "_cos",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "a2 = 1 - alpha",
+              "children": [
+                {
+                  "value": "a2 = 1 - alpha",
+                  "children": [
+                    {
+                      "value": "a2",
+                      "children": []
+                    },
+                    {
+                      "value": "1 - alpha",
+                      "children": [
+                        {
+                          "value": "1",
+                          "children": []
+                        },
+                        {
+                          "value": "alpha",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "filt = IIRFilter(2)",
+              "children": [
+                {
+                  "value": "filt = IIRFilter(2)",
+                  "children": [
+                    {
+                      "value": "filt",
+                      "children": []
+                    },
+                    {
+                      "value": "IIRFilter(2)",
+                      "children": [
+                        {
+                          "value": "IIRFilter",
+                          "children": []
+                        },
+                        {
+                          "value": "(2)",
+                          "children": [
+                            {
+                              "value": "2",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "filt.set_coefficients([a0, a1, a2], [b0, b1, b0])",
+              "children": [
+                {
+                  "value": "filt.set_coefficients([a0, a1, a2], [b0, b1, b0])",
+                  "children": [
+                    {
+                      "value": "filt.set_coefficients",
+                      "children": [
+                        {
+                          "value": "filt",
+                          "children": []
+                        },
+                        {
+                          "value": "set_coefficients",
+                          "children": []
+                        }
+                      ]
+                    },
+                    {
+                      "value": "([a0, a1, a2], [b0, b1, b0])",
+                      "children": [
+                        {
+                          "value": "[a0, a1, a2]",
+                          "children": [
+                            {
+                              "value": "a0",
+                              "children": []
+                            },
+                            {
+                              "value": "a1",
+                              "children": []
+                            },
+                            {
+                              "value": "a2",
+                              "children": []
+                            }
+                          ]
+                        },
+                        {
+                          "value": "[b0, b1, b0]",
+                          "children": [
+                            {
+                              "value": "b0",
+                              "children": []
+                            },
+                            {
+                              "value": "b1",
+                              "children": []
+                            },
+                            {
+                              "value": "b0",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "return filt",
+              "children": [
+                {
+                  "value": "filt",
+                  "children": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "def make_bandpass(\n    frequency: int,\n    samplerate: int,\n    q_factor: float = 1 / sqrt(2),\n) -> IIRFilter:\n    \"\"\"\n    Creates a band-pass filter\n\n    >>> filter = make_bandpass(1000, 48000)\n    >>> filter.a_coeffs + filter.b_coeffs  # doctest: +NORMALIZE_WHITESPACE\n    [1.0922959556412573, -1.9828897227476208, 0.9077040443587427, 0.06526309611002579,\n     0, -0.06526309611002579]\n    \"\"\"\n    w0 = tau * frequency / samplerate\n    _sin = sin(w0)\n    _cos = cos(w0)\n    alpha = _sin / (2 * q_factor)\n\n    b0 = _sin / 2\n    b1 = 0\n    b2 = -b0\n\n    a0 = 1 + alpha\n    a1 = -2 * _cos\n    a2 = 1 - alpha\n\n    filt = IIRFilter(2)\n    filt.set_coefficients([a0, a1, a2], [b0, b1, b2])\n    return filt",
+      "children": [
+        {
+          "value": "make_bandpass",
+          "children": []
+        },
+        {
+          "value": "(\n    frequency: int,\n    samplerate: int,\n    q_factor: float = 1 / sqrt(2),\n)",
+          "children": [
+            {
+              "value": "frequency: int",
+              "children": [
+                {
+                  "value": "frequency",
+                  "children": []
+                },
+                {
+                  "value": "int",
+                  "children": [
+                    {
+                      "value": "int",
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "samplerate: int",
+              "children": [
+                {
+                  "value": "samplerate",
+                  "children": []
+                },
+                {
+                  "value": "int",
+                  "children": [
+                    {
+                      "value": "int",
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "q_factor: float = 1 / sqrt(2)",
+              "children": [
+                {
+                  "value": "q_factor",
+                  "children": []
+                },
+                {
+                  "value": "float",
+                  "children": [
+                    {
+                      "value": "float",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "value": "1 / sqrt(2)",
+                  "children": [
+                    {
+                      "value": "1",
+                      "children": []
+                    },
+                    {
+                      "value": "sqrt(2)",
+                      "children": [
+                        {
+                          "value": "sqrt",
+                          "children": []
+                        },
+                        {
+                          "value": "(2)",
+                          "children": [
+                            {
+                              "value": "2",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "value": "IIRFilter",
+          "children": [
+            {
+              "value": "IIRFilter",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "\"\"\"\n    Creates a band-pass filter\n\n    >>> filter = make_bandpass(1000, 48000)\n    >>> filter.a_coeffs + filter.b_coeffs  # doctest: +NORMALIZE_WHITESPACE\n    [1.0922959556412573, -1.9828897227476208, 0.9077040443587427, 0.06526309611002579,\n     0, -0.06526309611002579]\n    \"\"\"\n    w0 = tau * frequency / samplerate\n    _sin = sin(w0)\n    _cos = cos(w0)\n    alpha = _sin / (2 * q_factor)\n\n    b0 = _sin / 2\n    b1 = 0\n    b2 = -b0\n\n    a0 = 1 + alpha\n    a1 = -2 * _cos\n    a2 = 1 - alpha\n\n    filt = IIRFilter(2)\n    filt.set_coefficients([a0, a1, a2], [b0, b1, b2])\n    return filt",
+          "children": [
+            {
+              "value": "\"\"\"\n    Creates a band-pass filter\n\n    >>> filter = make_bandpass(1000, 48000)\n    >>> filter.a_coeffs + filter.b_coeffs  # doctest: +NORMALIZE_WHITESPACE\n    [1.0922959556412573, -1.9828897227476208, 0.9077040443587427, 0.06526309611002579,\n     0, -0.06526309611002579]\n    \"\"\"",
+              "children": [
+                {
+                  "value": "\"\"\"\n    Creates a band-pass filter\n\n    >>> filter = make_bandpass(1000, 48000)\n    >>> filter.a_coeffs + filter.b_coeffs  # doctest: +NORMALIZE_WHITESPACE\n    [1.0922959556412573, -1.9828897227476208, 0.9077040443587427, 0.06526309611002579,\n     0, -0.06526309611002579]\n    \"\"\"",
+                  "children": [
+                    {
+                      "value": "\"\"\"",
+                      "children": []
+                    },
+                    {
+                      "value": "Creates a band-pass filter\n\n    >>> filter = make_bandpass(1000, 48000)\n    >>> filter.a_coeffs + filter.b_coeffs  # doctest: +NORMALIZE_WHITESPACE\n    [1.0922959556412573, -1.9828897227476208, 0.9077040443587427, 0.06526309611002579,\n     0, -0.06526309611002579]",
+                      "children": []
+                    },
+                    {
+                      "value": "\"\"\"",
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "w0 = tau * frequency / samplerate",
+              "children": [
+                {
+                  "value": "w0 = tau * frequency / samplerate",
+                  "children": [
+                    {
+                      "value": "w0",
+                      "children": []
+                    },
+                    {
+                      "value": "tau * frequency / samplerate",
+                      "children": [
+                        {
+                          "value": "tau * frequency",
+                          "children": [
+                            {
+                              "value": "tau",
+                              "children": []
+                            },
+                            {
+                              "value": "frequency",
+                              "children": []
+                            }
+                          ]
+                        },
+                        {
+                          "value": "samplerate",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "_sin = sin(w0)",
+              "children": [
+                {
+                  "value": "_sin = sin(w0)",
+                  "children": [
+                    {
+                      "value": "_sin",
+                      "children": []
+                    },
+                    {
+                      "value": "sin(w0)",
+                      "children": [
+                        {
+                          "value": "sin",
+                          "children": []
+                        },
+                        {
+                          "value": "(w0)",
+                          "children": [
+                            {
+                              "value": "w0",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "_cos = cos(w0)",
+              "children": [
+                {
+                  "value": "_cos = cos(w0)",
+                  "children": [
+                    {
+                      "value": "_cos",
+                      "children": []
+                    },
+                    {
+                      "value": "cos(w0)",
+                      "children": [
+                        {
+                          "value": "cos",
+                          "children": []
+                        },
+                        {
+                          "value": "(w0)",
+                          "children": [
+                            {
+                              "value": "w0",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "alpha = _sin / (2 * q_factor)",
+              "children": [
+                {
+                  "value": "alpha = _sin / (2 * q_factor)",
+                  "children": [
+                    {
+                      "value": "alpha",
+                      "children": []
+                    },
+                    {
+                      "value": "_sin / (2 * q_factor)",
+                      "children": [
+                        {
+                          "value": "_sin",
+                          "children": []
+                        },
+                        {
+                          "value": "(2 * q_factor)",
+                          "children": [
+                            {
+                              "value": "2 * q_factor",
+                              "children": [
+                                {
+                                  "value": "2",
+                                  "children": []
+                                },
+                                {
+                                  "value": "q_factor",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "b0 = _sin / 2",
+              "children": [
+                {
+                  "value": "b0 = _sin / 2",
+                  "children": [
+                    {
+                      "value": "b0",
+                      "children": []
+                    },
+                    {
+                      "value": "_sin / 2",
+                      "children": [
+                        {
+                          "value": "_sin",
+                          "children": []
+                        },
+                        {
+                          "value": "2",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "b1 = 0",
+              "children": [
+                {
+                  "value": "b1 = 0",
+                  "children": [
+                    {
+                      "value": "b1",
+                      "children": []
+                    },
+                    {
+                      "value": "0",
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "b2 = -b0",
+              "children": [
+                {
+                  "value": "b2 = -b0",
+                  "children": [
+                    {
+                      "value": "b2",
+                      "children": []
+                    },
+                    {
+                      "value": "-b0",
+                      "children": [
+                        {
+                          "value": "b0",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "a0 = 1 + alpha",
+              "children": [
+                {
+                  "value": "a0 = 1 + alpha",
+                  "children": [
+                    {
+                      "value": "a0",
+                      "children": []
+                    },
+                    {
+                      "value": "1 + alpha",
+                      "children": [
+                        {
+                          "value": "1",
+                          "children": []
+                        },
+                        {
+                          "value": "alpha",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "a1 = -2 * _cos",
+              "children": [
+                {
+                  "value": "a1 = -2 * _cos",
+                  "children": [
+                    {
+                      "value": "a1",
+                      "children": []
+                    },
+                    {
+                      "value": "-2 * _cos",
+                      "children": [
+                        {
+                          "value": "-2",
+                          "children": [
+                            {
+                              "value": "2",
+                              "children": []
+                            }
+                          ]
+                        },
+                        {
+                          "value": "_cos",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "a2 = 1 - alpha",
+              "children": [
+                {
+                  "value": "a2 = 1 - alpha",
+                  "children": [
+                    {
+                      "value": "a2",
+                      "children": []
+                    },
+                    {
+                      "value": "1 - alpha",
+                      "children": [
+                        {
+                          "value": "1",
+                          "children": []
+                        },
+                        {
+                          "value": "alpha",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "filt = IIRFilter(2)",
+              "children": [
+                {
+                  "value": "filt = IIRFilter(2)",
+                  "children": [
+                    {
+                      "value": "filt",
+                      "children": []
+                    },
+                    {
+                      "value": "IIRFilter(2)",
+                      "children": [
+                        {
+                          "value": "IIRFilter",
+                          "children": []
+                        },
+                        {
+                          "value": "(2)",
+                          "children": [
+                            {
+                              "value": "2",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "filt.set_coefficients([a0, a1, a2], [b0, b1, b2])",
+              "children": [
+                {
+                  "value": "filt.set_coefficients([a0, a1, a2], [b0, b1, b2])",
+                  "children": [
+                    {
+                      "value": "filt.set_coefficients",
+                      "children": [
+                        {
+                          "value": "filt",
+                          "children": []
+                        },
+                        {
+                          "value": "set_coefficients",
+                          "children": []
+                        }
+                      ]
+                    },
+                    {
+                      "value": "([a0, a1, a2], [b0, b1, b2])",
+                      "children": [
+                        {
+                          "value": "[a0, a1, a2]",
+                          "children": [
+                            {
+                              "value": "a0",
+                              "children": []
+                            },
+                            {
+                              "value": "a1",
+                              "children": []
+                            },
+                            {
+                              "value": "a2",
+                              "children": []
+                            }
+                          ]
+                        },
+                        {
+                          "value": "[b0, b1, b2]",
+                          "children": [
+                            {
+                              "value": "b0",
+                              "children": []
+                            },
+                            {
+                              "value": "b1",
+                              "children": []
+                            },
+                            {
+                              "value": "b2",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "return filt",
+              "children": [
+                {
+                  "value": "filt",
+                  "children": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "def make_allpass(\n    frequency: int,\n    samplerate: int,\n    q_factor: float = 1 / sqrt(2),\n) -> IIRFilter:\n    \"\"\"\n    Creates an all-pass filter\n\n    >>> filter = make_allpass(1000, 48000)\n    >>> filter.a_coeffs + filter.b_coeffs  # doctest: +NORMALIZE_WHITESPACE\n    [1.0922959556412573, -1.9828897227476208, 0.9077040443587427, 0.9077040443587427,\n     -1.9828897227476208, 1.0922959556412573]\n    \"\"\"\n    w0 = tau * frequency / samplerate\n    _sin = sin(w0)\n    _cos = cos(w0)\n    alpha = _sin / (2 * q_factor)\n\n    b0 = 1 - alpha\n    b1 = -2 * _cos\n    b2 = 1 + alpha\n\n    filt = IIRFilter(2)\n    filt.set_coefficients([b2, b1, b0], [b0, b1, b2])\n    return filt",
+      "children": [
+        {
+          "value": "make_allpass",
+          "children": []
+        },
+        {
+          "value": "(\n    frequency: int,\n    samplerate: int,\n    q_factor: float = 1 / sqrt(2),\n)",
+          "children": [
+            {
+              "value": "frequency: int",
+              "children": [
+                {
+                  "value": "frequency",
+                  "children": []
+                },
+                {
+                  "value": "int",
+                  "children": [
+                    {
+                      "value": "int",
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "samplerate: int",
+              "children": [
+                {
+                  "value": "samplerate",
+                  "children": []
+                },
+                {
+                  "value": "int",
+                  "children": [
+                    {
+                      "value": "int",
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "q_factor: float = 1 / sqrt(2)",
+              "children": [
+                {
+                  "value": "q_factor",
+                  "children": []
+                },
+                {
+                  "value": "float",
+                  "children": [
+                    {
+                      "value": "float",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "value": "1 / sqrt(2)",
+                  "children": [
+                    {
+                      "value": "1",
+                      "children": []
+                    },
+                    {
+                      "value": "sqrt(2)",
+                      "children": [
+                        {
+                          "value": "sqrt",
+                          "children": []
+                        },
+                        {
+                          "value": "(2)",
+                          "children": [
+                            {
+                              "value": "2",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "value": "IIRFilter",
+          "children": [
+            {
+              "value": "IIRFilter",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "\"\"\"\n    Creates an all-pass filter\n\n    >>> filter = make_allpass(1000, 48000)\n    >>> filter.a_coeffs + filter.b_coeffs  # doctest: +NORMALIZE_WHITESPACE\n    [1.0922959556412573, -1.9828897227476208, 0.9077040443587427, 0.9077040443587427,\n     -1.9828897227476208, 1.0922959556412573]\n    \"\"\"\n    w0 = tau * frequency / samplerate\n    _sin = sin(w0)\n    _cos = cos(w0)\n    alpha = _sin / (2 * q_factor)\n\n    b0 = 1 - alpha\n    b1 = -2 * _cos\n    b2 = 1 + alpha\n\n    filt = IIRFilter(2)\n    filt.set_coefficients([b2, b1, b0], [b0, b1, b2])\n    return filt",
+          "children": [
+            {
+              "value": "\"\"\"\n    Creates an all-pass filter\n\n    >>> filter = make_allpass(1000, 48000)\n    >>> filter.a_coeffs + filter.b_coeffs  # doctest: +NORMALIZE_WHITESPACE\n    [1.0922959556412573, -1.9828897227476208, 0.9077040443587427, 0.9077040443587427,\n     -1.9828897227476208, 1.0922959556412573]\n    \"\"\"",
+              "children": [
+                {
+                  "value": "\"\"\"\n    Creates an all-pass filter\n\n    >>> filter = make_allpass(1000, 48000)\n    >>> filter.a_coeffs + filter.b_coeffs  # doctest: +NORMALIZE_WHITESPACE\n    [1.0922959556412573, -1.9828897227476208, 0.9077040443587427, 0.9077040443587427,\n     -1.9828897227476208, 1.0922959556412573]\n    \"\"\"",
+                  "children": [
+                    {
+                      "value": "\"\"\"",
+                      "children": []
+                    },
+                    {
+                      "value": "Creates an all-pass filter\n\n    >>> filter = make_allpass(1000, 48000)\n    >>> filter.a_coeffs + filter.b_coeffs  # doctest: +NORMALIZE_WHITESPACE\n    [1.0922959556412573, -1.9828897227476208, 0.9077040443587427, 0.9077040443587427,\n     -1.9828897227476208, 1.0922959556412573]",
+                      "children": []
+                    },
+                    {
+                      "value": "\"\"\"",
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "w0 = tau * frequency / samplerate",
+              "children": [
+                {
+                  "value": "w0 = tau * frequency / samplerate",
+                  "children": [
+                    {
+                      "value": "w0",
+                      "children": []
+                    },
+                    {
+                      "value": "tau * frequency / samplerate",
+                      "children": [
+                        {
+                          "value": "tau * frequency",
+                          "children": [
+                            {
+                              "value": "tau",
+                              "children": []
+                            },
+                            {
+                              "value": "frequency",
+                              "children": []
+                            }
+                          ]
+                        },
+                        {
+                          "value": "samplerate",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "_sin = sin(w0)",
+              "children": [
+                {
+                  "value": "_sin = sin(w0)",
+                  "children": [
+                    {
+                      "value": "_sin",
+                      "children": []
+                    },
+                    {
+                      "value": "sin(w0)",
+                      "children": [
+                        {
+                          "value": "sin",
+                          "children": []
+                        },
+                        {
+                          "value": "(w0)",
+                          "children": [
+                            {
+                              "value": "w0",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "_cos = cos(w0)",
+              "children": [
+                {
+                  "value": "_cos = cos(w0)",
+                  "children": [
+                    {
+                      "value": "_cos",
+                      "children": []
+                    },
+                    {
+                      "value": "cos(w0)",
+                      "children": [
+                        {
+                          "value": "cos",
+                          "children": []
+                        },
+                        {
+                          "value": "(w0)",
+                          "children": [
+                            {
+                              "value": "w0",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "alpha = _sin / (2 * q_factor)",
+              "children": [
+                {
+                  "value": "alpha = _sin / (2 * q_factor)",
+                  "children": [
+                    {
+                      "value": "alpha",
+                      "children": []
+                    },
+                    {
+                      "value": "_sin / (2 * q_factor)",
+                      "children": [
+                        {
+                          "value": "_sin",
+                          "children": []
+                        },
+                        {
+                          "value": "(2 * q_factor)",
+                          "children": [
+                            {
+                              "value": "2 * q_factor",
+                              "children": [
+                                {
+                                  "value": "2",
+                                  "children": []
+                                },
+                                {
+                                  "value": "q_factor",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "b0 = 1 - alpha",
+              "children": [
+                {
+                  "value": "b0 = 1 - alpha",
+                  "children": [
+                    {
+                      "value": "b0",
+                      "children": []
+                    },
+                    {
+                      "value": "1 - alpha",
+                      "children": [
+                        {
+                          "value": "1",
+                          "children": []
+                        },
+                        {
+                          "value": "alpha",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "b1 = -2 * _cos",
+              "children": [
+                {
+                  "value": "b1 = -2 * _cos",
+                  "children": [
+                    {
+                      "value": "b1",
+                      "children": []
+                    },
+                    {
+                      "value": "-2 * _cos",
+                      "children": [
+                        {
+                          "value": "-2",
+                          "children": [
+                            {
+                              "value": "2",
+                              "children": []
+                            }
+                          ]
+                        },
+                        {
+                          "value": "_cos",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "b2 = 1 + alpha",
+              "children": [
+                {
+                  "value": "b2 = 1 + alpha",
+                  "children": [
+                    {
+                      "value": "b2",
+                      "children": []
+                    },
+                    {
+                      "value": "1 + alpha",
+                      "children": [
+                        {
+                          "value": "1",
+                          "children": []
+                        },
+                        {
+                          "value": "alpha",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "filt = IIRFilter(2)",
+              "children": [
+                {
+                  "value": "filt = IIRFilter(2)",
+                  "children": [
+                    {
+                      "value": "filt",
+                      "children": []
+                    },
+                    {
+                      "value": "IIRFilter(2)",
+                      "children": [
+                        {
+                          "value": "IIRFilter",
+                          "children": []
+                        },
+                        {
+                          "value": "(2)",
+                          "children": [
+                            {
+                              "value": "2",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "filt.set_coefficients([b2, b1, b0], [b0, b1, b2])",
+              "children": [
+                {
+                  "value": "filt.set_coefficients([b2, b1, b0], [b0, b1, b2])",
+                  "children": [
+                    {
+                      "value": "filt.set_coefficients",
+                      "children": [
+                        {
+                          "value": "filt",
+                          "children": []
+                        },
+                        {
+                          "value": "set_coefficients",
+                          "children": []
+                        }
+                      ]
+                    },
+                    {
+                      "value": "([b2, b1, b0], [b0, b1, b2])",
+                      "children": [
+                        {
+                          "value": "[b2, b1, b0]",
+                          "children": [
+                            {
+                              "value": "b2",
+                              "children": []
+                            },
+                            {
+                              "value": "b1",
+                              "children": []
+                            },
+                            {
+                              "value": "b0",
+                              "children": []
+                            }
+                          ]
+                        },
+                        {
+                          "value": "[b0, b1, b2]",
+                          "children": [
+                            {
+                              "value": "b0",
+                              "children": []
+                            },
+                            {
+                              "value": "b1",
+                              "children": []
+                            },
+                            {
+                              "value": "b2",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "return filt",
+              "children": [
+                {
+                  "value": "filt",
+                  "children": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "def make_peak(\n    frequency: int,\n    samplerate: int,\n    gain_db: float,\n    q_factor: float = 1 / sqrt(2),\n) -> IIRFilter:\n    \"\"\"\n    Creates a peak filter\n\n    >>> filter = make_peak(1000, 48000, 6)\n    >>> filter.a_coeffs + filter.b_coeffs  # doctest: +NORMALIZE_WHITESPACE\n    [1.0653405327119334, -1.9828897227476208, 0.9346594672880666, 1.1303715025601122,\n     -1.9828897227476208, 0.8696284974398878]\n    \"\"\"\n    w0 = tau * frequency / samplerate\n    _sin = sin(w0)\n    _cos = cos(w0)\n    alpha = _sin / (2 * q_factor)\n    big_a = 10 ** (gain_db / 40)\n\n    b0 = 1 + alpha * big_a\n    b1 = -2 * _cos\n    b2 = 1 - alpha * big_a\n    a0 = 1 + alpha / big_a\n    a1 = -2 * _cos\n    a2 = 1 - alpha / big_a\n\n    filt = IIRFilter(2)\n    filt.set_coefficients([a0, a1, a2], [b0, b1, b2])\n    return filt",
+      "children": [
+        {
+          "value": "make_peak",
+          "children": []
+        },
+        {
+          "value": "(\n    frequency: int,\n    samplerate: int,\n    gain_db: float,\n    q_factor: float = 1 / sqrt(2),\n)",
+          "children": [
+            {
+              "value": "frequency: int",
+              "children": [
+                {
+                  "value": "frequency",
+                  "children": []
+                },
+                {
+                  "value": "int",
+                  "children": [
+                    {
+                      "value": "int",
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "samplerate: int",
+              "children": [
+                {
+                  "value": "samplerate",
+                  "children": []
+                },
+                {
+                  "value": "int",
+                  "children": [
+                    {
+                      "value": "int",
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "gain_db: float",
+              "children": [
+                {
+                  "value": "gain_db",
+                  "children": []
+                },
+                {
+                  "value": "float",
+                  "children": [
+                    {
+                      "value": "float",
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "q_factor: float = 1 / sqrt(2)",
+              "children": [
+                {
+                  "value": "q_factor",
+                  "children": []
+                },
+                {
+                  "value": "float",
+                  "children": [
+                    {
+                      "value": "float",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "value": "1 / sqrt(2)",
+                  "children": [
+                    {
+                      "value": "1",
+                      "children": []
+                    },
+                    {
+                      "value": "sqrt(2)",
+                      "children": [
+                        {
+                          "value": "sqrt",
+                          "children": []
+                        },
+                        {
+                          "value": "(2)",
+                          "children": [
+                            {
+                              "value": "2",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "value": "IIRFilter",
+          "children": [
+            {
+              "value": "IIRFilter",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "\"\"\"\n    Creates a peak filter\n\n    >>> filter = make_peak(1000, 48000, 6)\n    >>> filter.a_coeffs + filter.b_coeffs  # doctest: +NORMALIZE_WHITESPACE\n    [1.0653405327119334, -1.9828897227476208, 0.9346594672880666, 1.1303715025601122,\n     -1.9828897227476208, 0.8696284974398878]\n    \"\"\"\n    w0 = tau * frequency / samplerate\n    _sin = sin(w0)\n    _cos = cos(w0)\n    alpha = _sin / (2 * q_factor)\n    big_a = 10 ** (gain_db / 40)\n\n    b0 = 1 + alpha * big_a\n    b1 = -2 * _cos\n    b2 = 1 - alpha * big_a\n    a0 = 1 + alpha / big_a\n    a1 = -2 * _cos\n    a2 = 1 - alpha / big_a\n\n    filt = IIRFilter(2)\n    filt.set_coefficients([a0, a1, a2], [b0, b1, b2])\n    return filt",
+          "children": [
+            {
+              "value": "\"\"\"\n    Creates a peak filter\n\n    >>> filter = make_peak(1000, 48000, 6)\n    >>> filter.a_coeffs + filter.b_coeffs  # doctest: +NORMALIZE_WHITESPACE\n    [1.0653405327119334, -1.9828897227476208, 0.9346594672880666, 1.1303715025601122,\n     -1.9828897227476208, 0.8696284974398878]\n    \"\"\"",
+              "children": [
+                {
+                  "value": "\"\"\"\n    Creates a peak filter\n\n    >>> filter = make_peak(1000, 48000, 6)\n    >>> filter.a_coeffs + filter.b_coeffs  # doctest: +NORMALIZE_WHITESPACE\n    [1.0653405327119334, -1.9828897227476208, 0.9346594672880666, 1.1303715025601122,\n     -1.9828897227476208, 0.8696284974398878]\n    \"\"\"",
+                  "children": [
+                    {
+                      "value": "\"\"\"",
+                      "children": []
+                    },
+                    {
+                      "value": "Creates a peak filter\n\n    >>> filter = make_peak(1000, 48000, 6)\n    >>> filter.a_coeffs + filter.b_coeffs  # doctest: +NORMALIZE_WHITESPACE\n    [1.0653405327119334, -1.9828897227476208, 0.9346594672880666, 1.1303715025601122,\n     -1.9828897227476208, 0.8696284974398878]",
+                      "children": []
+                    },
+                    {
+                      "value": "\"\"\"",
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "w0 = tau * frequency / samplerate",
+              "children": [
+                {
+                  "value": "w0 = tau * frequency / samplerate",
+                  "children": [
+                    {
+                      "value": "w0",
+                      "children": []
+                    },
+                    {
+                      "value": "tau * frequency / samplerate",
+                      "children": [
+                        {
+                          "value": "tau * frequency",
+                          "children": [
+                            {
+                              "value": "tau",
+                              "children": []
+                            },
+                            {
+                              "value": "frequency",
+                              "children": []
+                            }
+                          ]
+                        },
+                        {
+                          "value": "samplerate",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "_sin = sin(w0)",
+              "children": [
+                {
+                  "value": "_sin = sin(w0)",
+                  "children": [
+                    {
+                      "value": "_sin",
+                      "children": []
+                    },
+                    {
+                      "value": "sin(w0)",
+                      "children": [
+                        {
+                          "value": "sin",
+                          "children": []
+                        },
+                        {
+                          "value": "(w0)",
+                          "children": [
+                            {
+                              "value": "w0",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "_cos = cos(w0)",
+              "children": [
+                {
+                  "value": "_cos = cos(w0)",
+                  "children": [
+                    {
+                      "value": "_cos",
+                      "children": []
+                    },
+                    {
+                      "value": "cos(w0)",
+                      "children": [
+                        {
+                          "value": "cos",
+                          "children": []
+                        },
+                        {
+                          "value": "(w0)",
+                          "children": [
+                            {
+                              "value": "w0",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "alpha = _sin / (2 * q_factor)",
+              "children": [
+                {
+                  "value": "alpha = _sin / (2 * q_factor)",
+                  "children": [
+                    {
+                      "value": "alpha",
+                      "children": []
+                    },
+                    {
+                      "value": "_sin / (2 * q_factor)",
+                      "children": [
+                        {
+                          "value": "_sin",
+                          "children": []
+                        },
+                        {
+                          "value": "(2 * q_factor)",
+                          "children": [
+                            {
+                              "value": "2 * q_factor",
+                              "children": [
+                                {
+                                  "value": "2",
+                                  "children": []
+                                },
+                                {
+                                  "value": "q_factor",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "big_a = 10 ** (gain_db / 40)",
+              "children": [
+                {
+                  "value": "big_a = 10 ** (gain_db / 40)",
+                  "children": [
+                    {
+                      "value": "big_a",
+                      "children": []
+                    },
+                    {
+                      "value": "10 ** (gain_db / 40)",
+                      "children": [
+                        {
+                          "value": "10",
+                          "children": []
+                        },
+                        {
+                          "value": "(gain_db / 40)",
+                          "children": [
+                            {
+                              "value": "gain_db / 40",
+                              "children": [
+                                {
+                                  "value": "gain_db",
+                                  "children": []
+                                },
+                                {
+                                  "value": "40",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "b0 = 1 + alpha * big_a",
+              "children": [
+                {
+                  "value": "b0 = 1 + alpha * big_a",
+                  "children": [
+                    {
+                      "value": "b0",
+                      "children": []
+                    },
+                    {
+                      "value": "1 + alpha * big_a",
+                      "children": [
+                        {
+                          "value": "1",
+                          "children": []
+                        },
+                        {
+                          "value": "alpha * big_a",
+                          "children": [
+                            {
+                              "value": "alpha",
+                              "children": []
+                            },
+                            {
+                              "value": "big_a",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "b1 = -2 * _cos",
+              "children": [
+                {
+                  "value": "b1 = -2 * _cos",
+                  "children": [
+                    {
+                      "value": "b1",
+                      "children": []
+                    },
+                    {
+                      "value": "-2 * _cos",
+                      "children": [
+                        {
+                          "value": "-2",
+                          "children": [
+                            {
+                              "value": "2",
+                              "children": []
+                            }
+                          ]
+                        },
+                        {
+                          "value": "_cos",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "b2 = 1 - alpha * big_a",
+              "children": [
+                {
+                  "value": "b2 = 1 - alpha * big_a",
+                  "children": [
+                    {
+                      "value": "b2",
+                      "children": []
+                    },
+                    {
+                      "value": "1 - alpha * big_a",
+                      "children": [
+                        {
+                          "value": "1",
+                          "children": []
+                        },
+                        {
+                          "value": "alpha * big_a",
+                          "children": [
+                            {
+                              "value": "alpha",
+                              "children": []
+                            },
+                            {
+                              "value": "big_a",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "a0 = 1 + alpha / big_a",
+              "children": [
+                {
+                  "value": "a0 = 1 + alpha / big_a",
+                  "children": [
+                    {
+                      "value": "a0",
+                      "children": []
+                    },
+                    {
+                      "value": "1 + alpha / big_a",
+                      "children": [
+                        {
+                          "value": "1",
+                          "children": []
+                        },
+                        {
+                          "value": "alpha / big_a",
+                          "children": [
+                            {
+                              "value": "alpha",
+                              "children": []
+                            },
+                            {
+                              "value": "big_a",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "a1 = -2 * _cos",
+              "children": [
+                {
+                  "value": "a1 = -2 * _cos",
+                  "children": [
+                    {
+                      "value": "a1",
+                      "children": []
+                    },
+                    {
+                      "value": "-2 * _cos",
+                      "children": [
+                        {
+                          "value": "-2",
+                          "children": [
+                            {
+                              "value": "2",
+                              "children": []
+                            }
+                          ]
+                        },
+                        {
+                          "value": "_cos",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "a2 = 1 - alpha / big_a",
+              "children": [
+                {
+                  "value": "a2 = 1 - alpha / big_a",
+                  "children": [
+                    {
+                      "value": "a2",
+                      "children": []
+                    },
+                    {
+                      "value": "1 - alpha / big_a",
+                      "children": [
+                        {
+                          "value": "1",
+                          "children": []
+                        },
+                        {
+                          "value": "alpha / big_a",
+                          "children": [
+                            {
+                              "value": "alpha",
+                              "children": []
+                            },
+                            {
+                              "value": "big_a",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "filt = IIRFilter(2)",
+              "children": [
+                {
+                  "value": "filt = IIRFilter(2)",
+                  "children": [
+                    {
+                      "value": "filt",
+                      "children": []
+                    },
+                    {
+                      "value": "IIRFilter(2)",
+                      "children": [
+                        {
+                          "value": "IIRFilter",
+                          "children": []
+                        },
+                        {
+                          "value": "(2)",
+                          "children": [
+                            {
+                              "value": "2",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "filt.set_coefficients([a0, a1, a2], [b0, b1, b2])",
+              "children": [
+                {
+                  "value": "filt.set_coefficients([a0, a1, a2], [b0, b1, b2])",
+                  "children": [
+                    {
+                      "value": "filt.set_coefficients",
+                      "children": [
+                        {
+                          "value": "filt",
+                          "children": []
+                        },
+                        {
+                          "value": "set_coefficients",
+                          "children": []
+                        }
+                      ]
+                    },
+                    {
+                      "value": "([a0, a1, a2], [b0, b1, b2])",
+                      "children": [
+                        {
+                          "value": "[a0, a1, a2]",
+                          "children": [
+                            {
+                              "value": "a0",
+                              "children": []
+                            },
+                            {
+                              "value": "a1",
+                              "children": []
+                            },
+                            {
+                              "value": "a2",
+                              "children": []
+                            }
+                          ]
+                        },
+                        {
+                          "value": "[b0, b1, b2]",
+                          "children": [
+                            {
+                              "value": "b0",
+                              "children": []
+                            },
+                            {
+                              "value": "b1",
+                              "children": []
+                            },
+                            {
+                              "value": "b2",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "return filt",
+              "children": [
+                {
+                  "value": "filt",
+                  "children": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "def make_lowshelf(\n    frequency: int,\n    samplerate: int,\n    gain_db: float,\n    q_factor: float = 1 / sqrt(2),\n) -> IIRFilter:\n    \"\"\"\n    Creates a low-shelf filter\n\n    >>> filter = make_lowshelf(1000, 48000, 6)\n    >>> filter.a_coeffs + filter.b_coeffs  # doctest: +NORMALIZE_WHITESPACE\n    [3.0409336710888786, -5.608870992220748, 2.602157875636628, 3.139954022810743,\n     -5.591841778072785, 2.5201667380627257]\n    \"\"\"\n    w0 = tau * frequency / samplerate\n    _sin = sin(w0)\n    _cos = cos(w0)\n    alpha = _sin / (2 * q_factor)\n    big_a = 10 ** (gain_db / 40)\n    pmc = (big_a + 1) - (big_a - 1) * _cos\n    ppmc = (big_a + 1) + (big_a - 1) * _cos\n    mpc = (big_a - 1) - (big_a + 1) * _cos\n    pmpc = (big_a - 1) + (big_a + 1) * _cos\n    aa2 = 2 * sqrt(big_a) * alpha\n\n    b0 = big_a * (pmc + aa2)\n    b1 = 2 * big_a * mpc\n    b2 = big_a * (pmc - aa2)\n    a0 = ppmc + aa2\n    a1 = -2 * pmpc\n    a2 = ppmc - aa2\n\n    filt = IIRFilter(2)\n    filt.set_coefficients([a0, a1, a2], [b0, b1, b2])\n    return filt",
+      "children": [
+        {
+          "value": "make_lowshelf",
+          "children": []
+        },
+        {
+          "value": "(\n    frequency: int,\n    samplerate: int,\n    gain_db: float,\n    q_factor: float = 1 / sqrt(2),\n)",
+          "children": [
+            {
+              "value": "frequency: int",
+              "children": [
+                {
+                  "value": "frequency",
+                  "children": []
+                },
+                {
+                  "value": "int",
+                  "children": [
+                    {
+                      "value": "int",
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "samplerate: int",
+              "children": [
+                {
+                  "value": "samplerate",
+                  "children": []
+                },
+                {
+                  "value": "int",
+                  "children": [
+                    {
+                      "value": "int",
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "gain_db: float",
+              "children": [
+                {
+                  "value": "gain_db",
+                  "children": []
+                },
+                {
+                  "value": "float",
+                  "children": [
+                    {
+                      "value": "float",
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "q_factor: float = 1 / sqrt(2)",
+              "children": [
+                {
+                  "value": "q_factor",
+                  "children": []
+                },
+                {
+                  "value": "float",
+                  "children": [
+                    {
+                      "value": "float",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "value": "1 / sqrt(2)",
+                  "children": [
+                    {
+                      "value": "1",
+                      "children": []
+                    },
+                    {
+                      "value": "sqrt(2)",
+                      "children": [
+                        {
+                          "value": "sqrt",
+                          "children": []
+                        },
+                        {
+                          "value": "(2)",
+                          "children": [
+                            {
+                              "value": "2",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "value": "IIRFilter",
+          "children": [
+            {
+              "value": "IIRFilter",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "\"\"\"\n    Creates a low-shelf filter\n\n    >>> filter = make_lowshelf(1000, 48000, 6)\n    >>> filter.a_coeffs + filter.b_coeffs  # doctest: +NORMALIZE_WHITESPACE\n    [3.0409336710888786, -5.608870992220748, 2.602157875636628, 3.139954022810743,\n     -5.591841778072785, 2.5201667380627257]\n    \"\"\"\n    w0 = tau * frequency / samplerate\n    _sin = sin(w0)\n    _cos = cos(w0)\n    alpha = _sin / (2 * q_factor)\n    big_a = 10 ** (gain_db / 40)\n    pmc = (big_a + 1) - (big_a - 1) * _cos\n    ppmc = (big_a + 1) + (big_a - 1) * _cos\n    mpc = (big_a - 1) - (big_a + 1) * _cos\n    pmpc = (big_a - 1) + (big_a + 1) * _cos\n    aa2 = 2 * sqrt(big_a) * alpha\n\n    b0 = big_a * (pmc + aa2)\n    b1 = 2 * big_a * mpc\n    b2 = big_a * (pmc - aa2)\n    a0 = ppmc + aa2\n    a1 = -2 * pmpc\n    a2 = ppmc - aa2\n\n    filt = IIRFilter(2)\n    filt.set_coefficients([a0, a1, a2], [b0, b1, b2])\n    return filt",
+          "children": [
+            {
+              "value": "\"\"\"\n    Creates a low-shelf filter\n\n    >>> filter = make_lowshelf(1000, 48000, 6)\n    >>> filter.a_coeffs + filter.b_coeffs  # doctest: +NORMALIZE_WHITESPACE\n    [3.0409336710888786, -5.608870992220748, 2.602157875636628, 3.139954022810743,\n     -5.591841778072785, 2.5201667380627257]\n    \"\"\"",
+              "children": [
+                {
+                  "value": "\"\"\"\n    Creates a low-shelf filter\n\n    >>> filter = make_lowshelf(1000, 48000, 6)\n    >>> filter.a_coeffs + filter.b_coeffs  # doctest: +NORMALIZE_WHITESPACE\n    [3.0409336710888786, -5.608870992220748, 2.602157875636628, 3.139954022810743,\n     -5.591841778072785, 2.5201667380627257]\n    \"\"\"",
+                  "children": [
+                    {
+                      "value": "\"\"\"",
+                      "children": []
+                    },
+                    {
+                      "value": "Creates a low-shelf filter\n\n    >>> filter = make_lowshelf(1000, 48000, 6)\n    >>> filter.a_coeffs + filter.b_coeffs  # doctest: +NORMALIZE_WHITESPACE\n    [3.0409336710888786, -5.608870992220748, 2.602157875636628, 3.139954022810743,\n     -5.591841778072785, 2.5201667380627257]",
+                      "children": []
+                    },
+                    {
+                      "value": "\"\"\"",
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "w0 = tau * frequency / samplerate",
+              "children": [
+                {
+                  "value": "w0 = tau * frequency / samplerate",
+                  "children": [
+                    {
+                      "value": "w0",
+                      "children": []
+                    },
+                    {
+                      "value": "tau * frequency / samplerate",
+                      "children": [
+                        {
+                          "value": "tau * frequency",
+                          "children": [
+                            {
+                              "value": "tau",
+                              "children": []
+                            },
+                            {
+                              "value": "frequency",
+                              "children": []
+                            }
+                          ]
+                        },
+                        {
+                          "value": "samplerate",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "_sin = sin(w0)",
+              "children": [
+                {
+                  "value": "_sin = sin(w0)",
+                  "children": [
+                    {
+                      "value": "_sin",
+                      "children": []
+                    },
+                    {
+                      "value": "sin(w0)",
+                      "children": [
+                        {
+                          "value": "sin",
+                          "children": []
+                        },
+                        {
+                          "value": "(w0)",
+                          "children": [
+                            {
+                              "value": "w0",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "_cos = cos(w0)",
+              "children": [
+                {
+                  "value": "_cos = cos(w0)",
+                  "children": [
+                    {
+                      "value": "_cos",
+                      "children": []
+                    },
+                    {
+                      "value": "cos(w0)",
+                      "children": [
+                        {
+                          "value": "cos",
+                          "children": []
+                        },
+                        {
+                          "value": "(w0)",
+                          "children": [
+                            {
+                              "value": "w0",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "alpha = _sin / (2 * q_factor)",
+              "children": [
+                {
+                  "value": "alpha = _sin / (2 * q_factor)",
+                  "children": [
+                    {
+                      "value": "alpha",
+                      "children": []
+                    },
+                    {
+                      "value": "_sin / (2 * q_factor)",
+                      "children": [
+                        {
+                          "value": "_sin",
+                          "children": []
+                        },
+                        {
+                          "value": "(2 * q_factor)",
+                          "children": [
+                            {
+                              "value": "2 * q_factor",
+                              "children": [
+                                {
+                                  "value": "2",
+                                  "children": []
+                                },
+                                {
+                                  "value": "q_factor",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "big_a = 10 ** (gain_db / 40)",
+              "children": [
+                {
+                  "value": "big_a = 10 ** (gain_db / 40)",
+                  "children": [
+                    {
+                      "value": "big_a",
+                      "children": []
+                    },
+                    {
+                      "value": "10 ** (gain_db / 40)",
+                      "children": [
+                        {
+                          "value": "10",
+                          "children": []
+                        },
+                        {
+                          "value": "(gain_db / 40)",
+                          "children": [
+                            {
+                              "value": "gain_db / 40",
+                              "children": [
+                                {
+                                  "value": "gain_db",
+                                  "children": []
+                                },
+                                {
+                                  "value": "40",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "pmc = (big_a + 1) - (big_a - 1) * _cos",
+              "children": [
+                {
+                  "value": "pmc = (big_a + 1) - (big_a - 1) * _cos",
+                  "children": [
+                    {
+                      "value": "pmc",
+                      "children": []
+                    },
+                    {
+                      "value": "(big_a + 1) - (big_a - 1) * _cos",
+                      "children": [
+                        {
+                          "value": "(big_a + 1)",
+                          "children": [
+                            {
+                              "value": "big_a + 1",
+                              "children": [
+                                {
+                                  "value": "big_a",
+                                  "children": []
+                                },
+                                {
+                                  "value": "1",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "value": "(big_a - 1) * _cos",
+                          "children": [
+                            {
+                              "value": "(big_a - 1)",
+                              "children": [
+                                {
+                                  "value": "big_a - 1",
+                                  "children": [
+                                    {
+                                      "value": "big_a",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "1",
+                                      "children": []
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "value": "_cos",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "ppmc = (big_a + 1) + (big_a - 1) * _cos",
+              "children": [
+                {
+                  "value": "ppmc = (big_a + 1) + (big_a - 1) * _cos",
+                  "children": [
+                    {
+                      "value": "ppmc",
+                      "children": []
+                    },
+                    {
+                      "value": "(big_a + 1) + (big_a - 1) * _cos",
+                      "children": [
+                        {
+                          "value": "(big_a + 1)",
+                          "children": [
+                            {
+                              "value": "big_a + 1",
+                              "children": [
+                                {
+                                  "value": "big_a",
+                                  "children": []
+                                },
+                                {
+                                  "value": "1",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "value": "(big_a - 1) * _cos",
+                          "children": [
+                            {
+                              "value": "(big_a - 1)",
+                              "children": [
+                                {
+                                  "value": "big_a - 1",
+                                  "children": [
+                                    {
+                                      "value": "big_a",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "1",
+                                      "children": []
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "value": "_cos",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "mpc = (big_a - 1) - (big_a + 1) * _cos",
+              "children": [
+                {
+                  "value": "mpc = (big_a - 1) - (big_a + 1) * _cos",
+                  "children": [
+                    {
+                      "value": "mpc",
+                      "children": []
+                    },
+                    {
+                      "value": "(big_a - 1) - (big_a + 1) * _cos",
+                      "children": [
+                        {
+                          "value": "(big_a - 1)",
+                          "children": [
+                            {
+                              "value": "big_a - 1",
+                              "children": [
+                                {
+                                  "value": "big_a",
+                                  "children": []
+                                },
+                                {
+                                  "value": "1",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "value": "(big_a + 1) * _cos",
+                          "children": [
+                            {
+                              "value": "(big_a + 1)",
+                              "children": [
+                                {
+                                  "value": "big_a + 1",
+                                  "children": [
+                                    {
+                                      "value": "big_a",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "1",
+                                      "children": []
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "value": "_cos",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "pmpc = (big_a - 1) + (big_a + 1) * _cos",
+              "children": [
+                {
+                  "value": "pmpc = (big_a - 1) + (big_a + 1) * _cos",
+                  "children": [
+                    {
+                      "value": "pmpc",
+                      "children": []
+                    },
+                    {
+                      "value": "(big_a - 1) + (big_a + 1) * _cos",
+                      "children": [
+                        {
+                          "value": "(big_a - 1)",
+                          "children": [
+                            {
+                              "value": "big_a - 1",
+                              "children": [
+                                {
+                                  "value": "big_a",
+                                  "children": []
+                                },
+                                {
+                                  "value": "1",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "value": "(big_a + 1) * _cos",
+                          "children": [
+                            {
+                              "value": "(big_a + 1)",
+                              "children": [
+                                {
+                                  "value": "big_a + 1",
+                                  "children": [
+                                    {
+                                      "value": "big_a",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "1",
+                                      "children": []
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "value": "_cos",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "aa2 = 2 * sqrt(big_a) * alpha",
+              "children": [
+                {
+                  "value": "aa2 = 2 * sqrt(big_a) * alpha",
+                  "children": [
+                    {
+                      "value": "aa2",
+                      "children": []
+                    },
+                    {
+                      "value": "2 * sqrt(big_a) * alpha",
+                      "children": [
+                        {
+                          "value": "2 * sqrt(big_a)",
+                          "children": [
+                            {
+                              "value": "2",
+                              "children": []
+                            },
+                            {
+                              "value": "sqrt(big_a)",
+                              "children": [
+                                {
+                                  "value": "sqrt",
+                                  "children": []
+                                },
+                                {
+                                  "value": "(big_a)",
+                                  "children": [
+                                    {
+                                      "value": "big_a",
+                                      "children": []
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "value": "alpha",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "b0 = big_a * (pmc + aa2)",
+              "children": [
+                {
+                  "value": "b0 = big_a * (pmc + aa2)",
+                  "children": [
+                    {
+                      "value": "b0",
+                      "children": []
+                    },
+                    {
+                      "value": "big_a * (pmc + aa2)",
+                      "children": [
+                        {
+                          "value": "big_a",
+                          "children": []
+                        },
+                        {
+                          "value": "(pmc + aa2)",
+                          "children": [
+                            {
+                              "value": "pmc + aa2",
+                              "children": [
+                                {
+                                  "value": "pmc",
+                                  "children": []
+                                },
+                                {
+                                  "value": "aa2",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "b1 = 2 * big_a * mpc",
+              "children": [
+                {
+                  "value": "b1 = 2 * big_a * mpc",
+                  "children": [
+                    {
+                      "value": "b1",
+                      "children": []
+                    },
+                    {
+                      "value": "2 * big_a * mpc",
+                      "children": [
+                        {
+                          "value": "2 * big_a",
+                          "children": [
+                            {
+                              "value": "2",
+                              "children": []
+                            },
+                            {
+                              "value": "big_a",
+                              "children": []
+                            }
+                          ]
+                        },
+                        {
+                          "value": "mpc",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "b2 = big_a * (pmc - aa2)",
+              "children": [
+                {
+                  "value": "b2 = big_a * (pmc - aa2)",
+                  "children": [
+                    {
+                      "value": "b2",
+                      "children": []
+                    },
+                    {
+                      "value": "big_a * (pmc - aa2)",
+                      "children": [
+                        {
+                          "value": "big_a",
+                          "children": []
+                        },
+                        {
+                          "value": "(pmc - aa2)",
+                          "children": [
+                            {
+                              "value": "pmc - aa2",
+                              "children": [
+                                {
+                                  "value": "pmc",
+                                  "children": []
+                                },
+                                {
+                                  "value": "aa2",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "a0 = ppmc + aa2",
+              "children": [
+                {
+                  "value": "a0 = ppmc + aa2",
+                  "children": [
+                    {
+                      "value": "a0",
+                      "children": []
+                    },
+                    {
+                      "value": "ppmc + aa2",
+                      "children": [
+                        {
+                          "value": "ppmc",
+                          "children": []
+                        },
+                        {
+                          "value": "aa2",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "a1 = -2 * pmpc",
+              "children": [
+                {
+                  "value": "a1 = -2 * pmpc",
+                  "children": [
+                    {
+                      "value": "a1",
+                      "children": []
+                    },
+                    {
+                      "value": "-2 * pmpc",
+                      "children": [
+                        {
+                          "value": "-2",
+                          "children": [
+                            {
+                              "value": "2",
+                              "children": []
+                            }
+                          ]
+                        },
+                        {
+                          "value": "pmpc",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "a2 = ppmc - aa2",
+              "children": [
+                {
+                  "value": "a2 = ppmc - aa2",
+                  "children": [
+                    {
+                      "value": "a2",
+                      "children": []
+                    },
+                    {
+                      "value": "ppmc - aa2",
+                      "children": [
+                        {
+                          "value": "ppmc",
+                          "children": []
+                        },
+                        {
+                          "value": "aa2",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "filt = IIRFilter(2)",
+              "children": [
+                {
+                  "value": "filt = IIRFilter(2)",
+                  "children": [
+                    {
+                      "value": "filt",
+                      "children": []
+                    },
+                    {
+                      "value": "IIRFilter(2)",
+                      "children": [
+                        {
+                          "value": "IIRFilter",
+                          "children": []
+                        },
+                        {
+                          "value": "(2)",
+                          "children": [
+                            {
+                              "value": "2",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "filt.set_coefficients([a0, a1, a2], [b0, b1, b2])",
+              "children": [
+                {
+                  "value": "filt.set_coefficients([a0, a1, a2], [b0, b1, b2])",
+                  "children": [
+                    {
+                      "value": "filt.set_coefficients",
+                      "children": [
+                        {
+                          "value": "filt",
+                          "children": []
+                        },
+                        {
+                          "value": "set_coefficients",
+                          "children": []
+                        }
+                      ]
+                    },
+                    {
+                      "value": "([a0, a1, a2], [b0, b1, b2])",
+                      "children": [
+                        {
+                          "value": "[a0, a1, a2]",
+                          "children": [
+                            {
+                              "value": "a0",
+                              "children": []
+                            },
+                            {
+                              "value": "a1",
+                              "children": []
+                            },
+                            {
+                              "value": "a2",
+                              "children": []
+                            }
+                          ]
+                        },
+                        {
+                          "value": "[b0, b1, b2]",
+                          "children": [
+                            {
+                              "value": "b0",
+                              "children": []
+                            },
+                            {
+                              "value": "b1",
+                              "children": []
+                            },
+                            {
+                              "value": "b2",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "return filt",
+              "children": [
+                {
+                  "value": "filt",
+                  "children": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "def make_highshelf(\n    frequency: int,\n    samplerate: int,\n    gain_db: float,\n    q_factor: float = 1 / sqrt(2),\n) -> IIRFilter:\n    \"\"\"\n    Creates a high-shelf filter\n\n    >>> filter = make_highshelf(1000, 48000, 6)\n    >>> filter.a_coeffs + filter.b_coeffs  # doctest: +NORMALIZE_WHITESPACE\n    [2.2229172136088806, -3.9587208137297303, 1.7841414181566304, 4.295432981120543,\n     -7.922740859457287, 3.6756456963725253]\n    \"\"\"\n    w0 = tau * frequency / samplerate\n    _sin = sin(w0)\n    _cos = cos(w0)\n    alpha = _sin / (2 * q_factor)\n    big_a = 10 ** (gain_db / 40)\n    pmc = (big_a + 1) - (big_a - 1) * _cos\n    ppmc = (big_a + 1) + (big_a - 1) * _cos\n    mpc = (big_a - 1) - (big_a + 1) * _cos\n    pmpc = (big_a - 1) + (big_a + 1) * _cos\n    aa2 = 2 * sqrt(big_a) * alpha\n\n    b0 = big_a * (ppmc + aa2)\n    b1 = -2 * big_a * pmpc\n    b2 = big_a * (ppmc - aa2)\n    a0 = pmc + aa2\n    a1 = 2 * mpc\n    a2 = pmc - aa2\n\n    filt = IIRFilter(2)\n    filt.set_coefficients([a0, a1, a2], [b0, b1, b2])\n    return filt",
+      "children": [
+        {
+          "value": "make_highshelf",
+          "children": []
+        },
+        {
+          "value": "(\n    frequency: int,\n    samplerate: int,\n    gain_db: float,\n    q_factor: float = 1 / sqrt(2),\n)",
+          "children": [
+            {
+              "value": "frequency: int",
+              "children": [
+                {
+                  "value": "frequency",
+                  "children": []
+                },
+                {
+                  "value": "int",
+                  "children": [
+                    {
+                      "value": "int",
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "samplerate: int",
+              "children": [
+                {
+                  "value": "samplerate",
+                  "children": []
+                },
+                {
+                  "value": "int",
+                  "children": [
+                    {
+                      "value": "int",
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "gain_db: float",
+              "children": [
+                {
+                  "value": "gain_db",
+                  "children": []
+                },
+                {
+                  "value": "float",
+                  "children": [
+                    {
+                      "value": "float",
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "q_factor: float = 1 / sqrt(2)",
+              "children": [
+                {
+                  "value": "q_factor",
+                  "children": []
+                },
+                {
+                  "value": "float",
+                  "children": [
+                    {
+                      "value": "float",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "value": "1 / sqrt(2)",
+                  "children": [
+                    {
+                      "value": "1",
+                      "children": []
+                    },
+                    {
+                      "value": "sqrt(2)",
+                      "children": [
+                        {
+                          "value": "sqrt",
+                          "children": []
+                        },
+                        {
+                          "value": "(2)",
+                          "children": [
+                            {
+                              "value": "2",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "value": "IIRFilter",
+          "children": [
+            {
+              "value": "IIRFilter",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "\"\"\"\n    Creates a high-shelf filter\n\n    >>> filter = make_highshelf(1000, 48000, 6)\n    >>> filter.a_coeffs + filter.b_coeffs  # doctest: +NORMALIZE_WHITESPACE\n    [2.2229172136088806, -3.9587208137297303, 1.7841414181566304, 4.295432981120543,\n     -7.922740859457287, 3.6756456963725253]\n    \"\"\"\n    w0 = tau * frequency / samplerate\n    _sin = sin(w0)\n    _cos = cos(w0)\n    alpha = _sin / (2 * q_factor)\n    big_a = 10 ** (gain_db / 40)\n    pmc = (big_a + 1) - (big_a - 1) * _cos\n    ppmc = (big_a + 1) + (big_a - 1) * _cos\n    mpc = (big_a - 1) - (big_a + 1) * _cos\n    pmpc = (big_a - 1) + (big_a + 1) * _cos\n    aa2 = 2 * sqrt(big_a) * alpha\n\n    b0 = big_a * (ppmc + aa2)\n    b1 = -2 * big_a * pmpc\n    b2 = big_a * (ppmc - aa2)\n    a0 = pmc + aa2\n    a1 = 2 * mpc\n    a2 = pmc - aa2\n\n    filt = IIRFilter(2)\n    filt.set_coefficients([a0, a1, a2], [b0, b1, b2])\n    return filt",
+          "children": [
+            {
+              "value": "\"\"\"\n    Creates a high-shelf filter\n\n    >>> filter = make_highshelf(1000, 48000, 6)\n    >>> filter.a_coeffs + filter.b_coeffs  # doctest: +NORMALIZE_WHITESPACE\n    [2.2229172136088806, -3.9587208137297303, 1.7841414181566304, 4.295432981120543,\n     -7.922740859457287, 3.6756456963725253]\n    \"\"\"",
+              "children": [
+                {
+                  "value": "\"\"\"\n    Creates a high-shelf filter\n\n    >>> filter = make_highshelf(1000, 48000, 6)\n    >>> filter.a_coeffs + filter.b_coeffs  # doctest: +NORMALIZE_WHITESPACE\n    [2.2229172136088806, -3.9587208137297303, 1.7841414181566304, 4.295432981120543,\n     -7.922740859457287, 3.6756456963725253]\n    \"\"\"",
+                  "children": [
+                    {
+                      "value": "\"\"\"",
+                      "children": []
+                    },
+                    {
+                      "value": "Creates a high-shelf filter\n\n    >>> filter = make_highshelf(1000, 48000, 6)\n    >>> filter.a_coeffs + filter.b_coeffs  # doctest: +NORMALIZE_WHITESPACE\n    [2.2229172136088806, -3.9587208137297303, 1.7841414181566304, 4.295432981120543,\n     -7.922740859457287, 3.6756456963725253]",
+                      "children": []
+                    },
+                    {
+                      "value": "\"\"\"",
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "w0 = tau * frequency / samplerate",
+              "children": [
+                {
+                  "value": "w0 = tau * frequency / samplerate",
+                  "children": [
+                    {
+                      "value": "w0",
+                      "children": []
+                    },
+                    {
+                      "value": "tau * frequency / samplerate",
+                      "children": [
+                        {
+                          "value": "tau * frequency",
+                          "children": [
+                            {
+                              "value": "tau",
+                              "children": []
+                            },
+                            {
+                              "value": "frequency",
+                              "children": []
+                            }
+                          ]
+                        },
+                        {
+                          "value": "samplerate",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "_sin = sin(w0)",
+              "children": [
+                {
+                  "value": "_sin = sin(w0)",
+                  "children": [
+                    {
+                      "value": "_sin",
+                      "children": []
+                    },
+                    {
+                      "value": "sin(w0)",
+                      "children": [
+                        {
+                          "value": "sin",
+                          "children": []
+                        },
+                        {
+                          "value": "(w0)",
+                          "children": [
+                            {
+                              "value": "w0",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "_cos = cos(w0)",
+              "children": [
+                {
+                  "value": "_cos = cos(w0)",
+                  "children": [
+                    {
+                      "value": "_cos",
+                      "children": []
+                    },
+                    {
+                      "value": "cos(w0)",
+                      "children": [
+                        {
+                          "value": "cos",
+                          "children": []
+                        },
+                        {
+                          "value": "(w0)",
+                          "children": [
+                            {
+                              "value": "w0",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "alpha = _sin / (2 * q_factor)",
+              "children": [
+                {
+                  "value": "alpha = _sin / (2 * q_factor)",
+                  "children": [
+                    {
+                      "value": "alpha",
+                      "children": []
+                    },
+                    {
+                      "value": "_sin / (2 * q_factor)",
+                      "children": [
+                        {
+                          "value": "_sin",
+                          "children": []
+                        },
+                        {
+                          "value": "(2 * q_factor)",
+                          "children": [
+                            {
+                              "value": "2 * q_factor",
+                              "children": [
+                                {
+                                  "value": "2",
+                                  "children": []
+                                },
+                                {
+                                  "value": "q_factor",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "big_a = 10 ** (gain_db / 40)",
+              "children": [
+                {
+                  "value": "big_a = 10 ** (gain_db / 40)",
+                  "children": [
+                    {
+                      "value": "big_a",
+                      "children": []
+                    },
+                    {
+                      "value": "10 ** (gain_db / 40)",
+                      "children": [
+                        {
+                          "value": "10",
+                          "children": []
+                        },
+                        {
+                          "value": "(gain_db / 40)",
+                          "children": [
+                            {
+                              "value": "gain_db / 40",
+                              "children": [
+                                {
+                                  "value": "gain_db",
+                                  "children": []
+                                },
+                                {
+                                  "value": "40",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "pmc = (big_a + 1) - (big_a - 1) * _cos",
+              "children": [
+                {
+                  "value": "pmc = (big_a + 1) - (big_a - 1) * _cos",
+                  "children": [
+                    {
+                      "value": "pmc",
+                      "children": []
+                    },
+                    {
+                      "value": "(big_a + 1) - (big_a - 1) * _cos",
+                      "children": [
+                        {
+                          "value": "(big_a + 1)",
+                          "children": [
+                            {
+                              "value": "big_a + 1",
+                              "children": [
+                                {
+                                  "value": "big_a",
+                                  "children": []
+                                },
+                                {
+                                  "value": "1",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "value": "(big_a - 1) * _cos",
+                          "children": [
+                            {
+                              "value": "(big_a - 1)",
+                              "children": [
+                                {
+                                  "value": "big_a - 1",
+                                  "children": [
+                                    {
+                                      "value": "big_a",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "1",
+                                      "children": []
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "value": "_cos",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "ppmc = (big_a + 1) + (big_a - 1) * _cos",
+              "children": [
+                {
+                  "value": "ppmc = (big_a + 1) + (big_a - 1) * _cos",
+                  "children": [
+                    {
+                      "value": "ppmc",
+                      "children": []
+                    },
+                    {
+                      "value": "(big_a + 1) + (big_a - 1) * _cos",
+                      "children": [
+                        {
+                          "value": "(big_a + 1)",
+                          "children": [
+                            {
+                              "value": "big_a + 1",
+                              "children": [
+                                {
+                                  "value": "big_a",
+                                  "children": []
+                                },
+                                {
+                                  "value": "1",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "value": "(big_a - 1) * _cos",
+                          "children": [
+                            {
+                              "value": "(big_a - 1)",
+                              "children": [
+                                {
+                                  "value": "big_a - 1",
+                                  "children": [
+                                    {
+                                      "value": "big_a",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "1",
+                                      "children": []
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "value": "_cos",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "mpc = (big_a - 1) - (big_a + 1) * _cos",
+              "children": [
+                {
+                  "value": "mpc = (big_a - 1) - (big_a + 1) * _cos",
+                  "children": [
+                    {
+                      "value": "mpc",
+                      "children": []
+                    },
+                    {
+                      "value": "(big_a - 1) - (big_a + 1) * _cos",
+                      "children": [
+                        {
+                          "value": "(big_a - 1)",
+                          "children": [
+                            {
+                              "value": "big_a - 1",
+                              "children": [
+                                {
+                                  "value": "big_a",
+                                  "children": []
+                                },
+                                {
+                                  "value": "1",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "value": "(big_a + 1) * _cos",
+                          "children": [
+                            {
+                              "value": "(big_a + 1)",
+                              "children": [
+                                {
+                                  "value": "big_a + 1",
+                                  "children": [
+                                    {
+                                      "value": "big_a",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "1",
+                                      "children": []
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "value": "_cos",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "pmpc = (big_a - 1) + (big_a + 1) * _cos",
+              "children": [
+                {
+                  "value": "pmpc = (big_a - 1) + (big_a + 1) * _cos",
+                  "children": [
+                    {
+                      "value": "pmpc",
+                      "children": []
+                    },
+                    {
+                      "value": "(big_a - 1) + (big_a + 1) * _cos",
+                      "children": [
+                        {
+                          "value": "(big_a - 1)",
+                          "children": [
+                            {
+                              "value": "big_a - 1",
+                              "children": [
+                                {
+                                  "value": "big_a",
+                                  "children": []
+                                },
+                                {
+                                  "value": "1",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "value": "(big_a + 1) * _cos",
+                          "children": [
+                            {
+                              "value": "(big_a + 1)",
+                              "children": [
+                                {
+                                  "value": "big_a + 1",
+                                  "children": [
+                                    {
+                                      "value": "big_a",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "1",
+                                      "children": []
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "value": "_cos",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "aa2 = 2 * sqrt(big_a) * alpha",
+              "children": [
+                {
+                  "value": "aa2 = 2 * sqrt(big_a) * alpha",
+                  "children": [
+                    {
+                      "value": "aa2",
+                      "children": []
+                    },
+                    {
+                      "value": "2 * sqrt(big_a) * alpha",
+                      "children": [
+                        {
+                          "value": "2 * sqrt(big_a)",
+                          "children": [
+                            {
+                              "value": "2",
+                              "children": []
+                            },
+                            {
+                              "value": "sqrt(big_a)",
+                              "children": [
+                                {
+                                  "value": "sqrt",
+                                  "children": []
+                                },
+                                {
+                                  "value": "(big_a)",
+                                  "children": [
+                                    {
+                                      "value": "big_a",
+                                      "children": []
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "value": "alpha",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "b0 = big_a * (ppmc + aa2)",
+              "children": [
+                {
+                  "value": "b0 = big_a * (ppmc + aa2)",
+                  "children": [
+                    {
+                      "value": "b0",
+                      "children": []
+                    },
+                    {
+                      "value": "big_a * (ppmc + aa2)",
+                      "children": [
+                        {
+                          "value": "big_a",
+                          "children": []
+                        },
+                        {
+                          "value": "(ppmc + aa2)",
+                          "children": [
+                            {
+                              "value": "ppmc + aa2",
+                              "children": [
+                                {
+                                  "value": "ppmc",
+                                  "children": []
+                                },
+                                {
+                                  "value": "aa2",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "b1 = -2 * big_a * pmpc",
+              "children": [
+                {
+                  "value": "b1 = -2 * big_a * pmpc",
+                  "children": [
+                    {
+                      "value": "b1",
+                      "children": []
+                    },
+                    {
+                      "value": "-2 * big_a * pmpc",
+                      "children": [
+                        {
+                          "value": "-2 * big_a",
+                          "children": [
+                            {
+                              "value": "-2",
+                              "children": [
+                                {
+                                  "value": "2",
+                                  "children": []
+                                }
+                              ]
+                            },
+                            {
+                              "value": "big_a",
+                              "children": []
+                            }
+                          ]
+                        },
+                        {
+                          "value": "pmpc",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "b2 = big_a * (ppmc - aa2)",
+              "children": [
+                {
+                  "value": "b2 = big_a * (ppmc - aa2)",
+                  "children": [
+                    {
+                      "value": "b2",
+                      "children": []
+                    },
+                    {
+                      "value": "big_a * (ppmc - aa2)",
+                      "children": [
+                        {
+                          "value": "big_a",
+                          "children": []
+                        },
+                        {
+                          "value": "(ppmc - aa2)",
+                          "children": [
+                            {
+                              "value": "ppmc - aa2",
+                              "children": [
+                                {
+                                  "value": "ppmc",
+                                  "children": []
+                                },
+                                {
+                                  "value": "aa2",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "a0 = pmc + aa2",
+              "children": [
+                {
+                  "value": "a0 = pmc + aa2",
+                  "children": [
+                    {
+                      "value": "a0",
+                      "children": []
+                    },
+                    {
+                      "value": "pmc + aa2",
+                      "children": [
+                        {
+                          "value": "pmc",
+                          "children": []
+                        },
+                        {
+                          "value": "aa2",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "a1 = 2 * mpc",
+              "children": [
+                {
+                  "value": "a1 = 2 * mpc",
+                  "children": [
+                    {
+                      "value": "a1",
+                      "children": []
+                    },
+                    {
+                      "value": "2 * mpc",
+                      "children": [
+                        {
+                          "value": "2",
+                          "children": []
+                        },
+                        {
+                          "value": "mpc",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "a2 = pmc - aa2",
+              "children": [
+                {
+                  "value": "a2 = pmc - aa2",
+                  "children": [
+                    {
+                      "value": "a2",
+                      "children": []
+                    },
+                    {
+                      "value": "pmc - aa2",
+                      "children": [
+                        {
+                          "value": "pmc",
+                          "children": []
+                        },
+                        {
+                          "value": "aa2",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "filt = IIRFilter(2)",
+              "children": [
+                {
+                  "value": "filt = IIRFilter(2)",
+                  "children": [
+                    {
+                      "value": "filt",
+                      "children": []
+                    },
+                    {
+                      "value": "IIRFilter(2)",
+                      "children": [
+                        {
+                          "value": "IIRFilter",
+                          "children": []
+                        },
+                        {
+                          "value": "(2)",
+                          "children": [
+                            {
+                              "value": "2",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "filt.set_coefficients([a0, a1, a2], [b0, b1, b2])",
+              "children": [
+                {
+                  "value": "filt.set_coefficients([a0, a1, a2], [b0, b1, b2])",
+                  "children": [
+                    {
+                      "value": "filt.set_coefficients",
+                      "children": [
+                        {
+                          "value": "filt",
+                          "children": []
+                        },
+                        {
+                          "value": "set_coefficients",
+                          "children": []
+                        }
+                      ]
+                    },
+                    {
+                      "value": "([a0, a1, a2], [b0, b1, b2])",
+                      "children": [
+                        {
+                          "value": "[a0, a1, a2]",
+                          "children": [
+                            {
+                              "value": "a0",
+                              "children": []
+                            },
+                            {
+                              "value": "a1",
+                              "children": []
+                            },
+                            {
+                              "value": "a2",
+                              "children": []
+                            }
+                          ]
+                        },
+                        {
+                          "value": "[b0, b1, b2]",
+                          "children": [
+                            {
+                              "value": "b0",
+                              "children": []
+                            },
+                            {
+                              "value": "b1",
+                              "children": []
+                            },
+                            {
+                              "value": "b2",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "return filt",
+              "children": [
+                {
+                  "value": "filt",
+                  "children": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

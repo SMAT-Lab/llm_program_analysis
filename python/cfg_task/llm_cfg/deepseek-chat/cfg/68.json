@@ -1,0 +1,370 @@
+{
+    "nodes": [
+        {
+            "id": "chunk_0_GlobalBlock_1",
+            "code": "import asyncio\nimport contextlib\nimport logging\nfrom functools import wraps\nfrom typing import Any, Awaitable, Callable, Dict, Optional, TypeVar, Union, cast\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_2",
+            "code": "import ldclient\nfrom fastapi import HTTPException\nfrom ldclient import Context, LDClient\nfrom ldclient.config import Config\nfrom typing_extensions import ParamSpec\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_3",
+            "code": "from .config import SETTINGS\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_4",
+            "code": "logger = logging.getLogger(__name__)\nlogging.basicConfig(level=logging.DEBUG)\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_5",
+            "code": "P = ParamSpec(\"P\")\nT = TypeVar(\"T\")\n"
+        },
+        {
+            "id": "chunk_1_get_client_1",
+            "code": "def get_client() -> LDClient:\n    \"\"\"Get the LaunchDarkly client singleton.\"\"\"\n    return ldclient.get()\n"
+        },
+        {
+            "id": "chunk_2_initialize_launchdarkly_1",
+            "code": "def initialize_launchdarkly() -> None:\n    sdk_key = SETTINGS.launch_darkly_sdk_key\n"
+        },
+        {
+            "id": "chunk_2_initialize_launchdarkly_2",
+            "code": "    logger.debug(\n        f\"Initializing LaunchDarkly with SDK key: {'present' if sdk_key else 'missing'}\"\n    )\n"
+        },
+        {
+            "id": "chunk_2_initialize_launchdarkly_3",
+            "code": "    if not sdk_key:\n        logger.warning(\"LaunchDarkly SDK key not configured\")\n        return\n"
+        },
+        {
+            "id": "chunk_2_initialize_launchdarkly_4",
+            "code": "    config = Config(sdk_key)\n    ldclient.set_config(config)\n"
+        },
+        {
+            "id": "chunk_2_initialize_launchdarkly_5",
+            "code": "    if ldclient.get().is_initialized():\n        logger.info(\"LaunchDarkly client initialized successfully\")\n"
+        },
+        {
+            "id": "chunk_2_initialize_launchdarkly_6",
+            "code": "    else:\n        logger.error(\"LaunchDarkly client failed to initialize\")\n"
+        },
+        {
+            "id": "chunk_3_shutdown_launchdarkly_1",
+            "code": "def shutdown_launchdarkly() -> None:\n    \"\"\"Shutdown the LaunchDarkly client.\"\"\"\n"
+        },
+        {
+            "id": "chunk_3_shutdown_launchdarkly_2",
+            "code": "    if ldclient.get().is_initialized():\n        ldclient.get().close()\n        logger.info(\"LaunchDarkly client closed successfully\")\n"
+        },
+        {
+            "id": "chunk_4_create_context_1",
+            "code": "def create_context(\n    user_id: str, additional_attributes: Optional[Dict[str, Any]] = None\n) -> Context:\n    \"\"\"Create LaunchDarkly context with optional additional attributes.\"\"\"\n    builder = Context.builder(str(user_id)).kind(\"user\")\n"
+        },
+        {
+            "id": "chunk_4_create_context_2",
+            "code": "    if additional_attributes:\n        for key, value in additional_attributes.items():\n            builder.set(key, value)\n"
+        },
+        {
+            "id": "chunk_4_create_context_3",
+            "code": "    return builder.build()\n"
+        },
+        {
+            "id": "chunk_5_feature_flag_1",
+            "code": "def feature_flag(\n    flag_key: str,\n    default: bool = False,\n) -> Callable[\n    [Callable[P, Union[T, Awaitable[T]]]], Callable[P, Union[T, Awaitable[T]]]\n]:\n"
+        },
+        {
+            "id": "chunk_5_feature_flag_2",
+            "code": "    \"\"\"\n    Decorator for feature flag protected endpoints.\n    \"\"\"\n"
+        },
+        {
+            "id": "chunk_5_feature_flag_3",
+            "code": "    def decorator(\n        func: Callable[P, Union[T, Awaitable[T]]],\n    ) -> Callable[P, Union[T, Awaitable[T]]]:\n"
+        },
+        {
+            "id": "chunk_5_feature_flag_4",
+            "code": "        @wraps(func)\n"
+        },
+        {
+            "id": "chunk_5_feature_flag_5",
+            "code": "        async def async_wrapper(*args: P.args, **kwargs: P.kwargs) -> T:\n"
+        },
+        {
+            "id": "chunk_5_feature_flag_6",
+            "code": "            try:\n                user_id = kwargs.get(\"user_id\")\n                if not user_id:\n                    raise ValueError(\"user_id is required\")\n"
+        },
+        {
+            "id": "chunk_5_feature_flag_7",
+            "code": "                if not get_client().is_initialized():\n                    logger.warning(\n                        f\"LaunchDarkly not initialized, using default={default}\"\n                    )\n                    is_enabled = default\n"
+        },
+        {
+            "id": "chunk_5_feature_flag_8",
+            "code": "                else:\n                    context = create_context(str(user_id))\n                    is_enabled = get_client().variation(flag_key, context, default)\n"
+        },
+        {
+            "id": "chunk_5_feature_flag_9",
+            "code": "                if not is_enabled:\n                    raise HTTPException(status_code=404, detail=\"Feature not available\")\n"
+        },
+        {
+            "id": "chunk_5_feature_flag_10",
+            "code": "                result = func(*args, **kwargs)\n                if asyncio.iscoroutine(result):\n                    return await result\n                return cast(T, result)\n"
+        },
+        {
+            "id": "chunk_5_feature_flag_11",
+            "code": "            except Exception as e:\n                logger.error(f\"Error evaluating feature flag {flag_key}: {e}\")\n                raise\n"
+        },
+        {
+            "id": "chunk_5_feature_flag_12",
+            "code": "        @wraps(func)\n        def sync_wrapper(*args: P.args, **kwargs: P.kwargs) -> T:\n"
+        },
+        {
+            "id": "chunk_5_feature_flag_13",
+            "code": "            try:\n                user_id = kwargs.get(\"user_id\")\n                if not user_id:\n                    raise ValueError(\"user_id is required\")\n"
+        },
+        {
+            "id": "chunk_5_feature_flag_14",
+            "code": "                if not get_client().is_initialized():\n                    logger.warning(\n                        f\"LaunchDarkly not initialized, using default={default}\"\n                    )\n                    is_enabled = default\n"
+        },
+        {
+            "id": "chunk_5_feature_flag_15",
+            "code": "                else:\n                    context = create_context(str(user_id))\n                    is_enabled = get_client().variation(flag_key, context, default)\n"
+        },
+        {
+            "id": "chunk_5_feature_flag_16",
+            "code": "                if not is_enabled:\n                    raise HTTPException(status_code=404, detail=\"Feature not available\")\n"
+        },
+        {
+            "id": "chunk_5_feature_flag_17",
+            "code": "                return cast(T, func(*args, **kwargs))\n"
+        },
+        {
+            "id": "chunk_5_feature_flag_18",
+            "code": "            except Exception as e:\n                logger.error(f\"Error evaluating feature flag {flag_key}: {e}\")\n                raise\n"
+        },
+        {
+            "id": "chunk_5_feature_flag_19",
+            "code": "        return cast(\n            Callable[P, Union[T, Awaitable[T]]],\n            async_wrapper if asyncio.iscoroutinefunction(func) else sync_wrapper,\n        )\n"
+        },
+        {
+            "id": "chunk_5_feature_flag_20",
+            "code": "    return decorator\n"
+        },
+        {
+            "id": "chunk_6_percentage_rollout_1",
+            "code": "def percentage_rollout(\n    flag_key: str,\n    default: bool = False,\n) -> Callable[\n    [Callable[P, Union[T, Awaitable[T]]]], Callable[P, Union[T, Awaitable[T]]]\n]:\n    \"\"\"Decorator for percentage-based rollouts.\"\"\"\n"
+        },
+        {
+            "id": "chunk_6_percentage_rollout_2",
+            "code": "    return feature_flag(flag_key, default)\n"
+        },
+        {
+            "id": "chunk_7_beta_feature_1",
+            "code": "def beta_feature(\n    flag_key: Optional[str] = None,\n    unauthorized_response: Any = {\"message\": \"Not available in beta\"},\n) -> Callable[\n    [Callable[P, Union[T, Awaitable[T]]]], Callable[P, Union[T, Awaitable[T]]]\n]:\n"
+        },
+        {
+            "id": "chunk_7_beta_feature_2",
+            "code": "    \"\"\"Decorator for beta features.\"\"\"\n"
+        },
+        {
+            "id": "chunk_7_beta_feature_3",
+            "code": "    actual_key = f\"beta-{flag_key}\" if flag_key else \"beta\"\n    return feature_flag(actual_key, False)\n"
+        },
+        {
+            "id": "chunk_8_mock_flag_variation_1",
+            "code": "@contextlib.contextmanager\ndef mock_flag_variation(flag_key: str, return_value: Any):\n"
+        },
+        {
+            "id": "chunk_8_mock_flag_variation_2",
+            "code": "    \"\"\"Context manager for testing feature flags.\"\"\"\n    original_variation = get_client().variation\n"
+        },
+        {
+            "id": "chunk_8_mock_flag_variation_3",
+            "code": "    get_client().variation = lambda key, context, default: (\n        return_value if key == flag_key else original_variation(key, context, default)\n    )\n"
+        },
+        {
+            "id": "chunk_8_mock_flag_variation_4",
+            "code": "    try:\n        yield\n"
+        },
+        {
+            "id": "chunk_8_mock_flag_variation_5",
+            "code": "    finally:\n        get_client().variation = original_variation\n"
+        }
+    ],
+    "edges": [
+        {
+            "from": "chunk_0_GlobalBlock_1",
+            "to": "chunk_0_GlobalBlock_2"
+        },
+        {
+            "from": "chunk_0_GlobalBlock_2",
+            "to": "chunk_0_GlobalBlock_3"
+        },
+        {
+            "from": "chunk_0_GlobalBlock_3",
+            "to": "chunk_0_GlobalBlock_4"
+        },
+        {
+            "from": "chunk_0_GlobalBlock_4",
+            "to": "chunk_0_GlobalBlock_5"
+        },
+        {
+            "from": "chunk_2_initialize_launchdarkly_1",
+            "to": "chunk_2_initialize_launchdarkly_2"
+        },
+        {
+            "from": "chunk_2_initialize_launchdarkly_2",
+            "to": "chunk_2_initialize_launchdarkly_3"
+        },
+        {
+            "from": "chunk_2_initialize_launchdarkly_3",
+            "to": "chunk_2_initialize_launchdarkly_4"
+        },
+        {
+            "from": "chunk_2_initialize_launchdarkly_4",
+            "to": "chunk_2_initialize_launchdarkly_5"
+        },
+        {
+            "from": "chunk_2_initialize_launchdarkly_5",
+            "to": "chunk_2_initialize_launchdarkly_6"
+        },
+        {
+            "from": "chunk_3_shutdown_launchdarkly_1",
+            "to": "chunk_3_shutdown_launchdarkly_2"
+        },
+        {
+            "from": "chunk_4_create_context_1",
+            "to": "chunk_4_create_context_2"
+        },
+        {
+            "from": "chunk_4_create_context_1",
+            "to": "chunk_4_create_context_3"
+        },
+        {
+            "from": "chunk_4_create_context_2",
+            "to": "chunk_4_create_context_3"
+        },
+        {
+            "from": "chunk_5_feature_flag_1",
+            "to": "chunk_5_feature_flag_2"
+        },
+        {
+            "from": "chunk_5_feature_flag_2",
+            "to": "chunk_5_feature_flag_3"
+        },
+        {
+            "from": "chunk_5_feature_flag_3",
+            "to": "chunk_5_feature_flag_4"
+        },
+        {
+            "from": "chunk_5_feature_flag_4",
+            "to": "chunk_5_feature_flag_5"
+        },
+        {
+            "from": "chunk_5_feature_flag_4",
+            "to": "chunk_5_feature_flag_12"
+        },
+        {
+            "from": "chunk_5_feature_flag_5",
+            "to": "chunk_5_feature_flag_6"
+        },
+        {
+            "from": "chunk_5_feature_flag_6",
+            "to": "chunk_5_feature_flag_7"
+        },
+        {
+            "from": "chunk_5_feature_flag_6",
+            "to": "chunk_5_feature_flag_11"
+        },
+        {
+            "from": "chunk_5_feature_flag_7",
+            "to": "chunk_5_feature_flag_8"
+        },
+        {
+            "from": "chunk_5_feature_flag_7",
+            "to": "chunk_5_feature_flag_9"
+        },
+        {
+            "from": "chunk_5_feature_flag_8",
+            "to": "chunk_5_feature_flag_9"
+        },
+        {
+            "from": "chunk_5_feature_flag_9",
+            "to": "chunk_5_feature_flag_10"
+        },
+        {
+            "from": "chunk_5_feature_flag_9",
+            "to": "chunk_5_feature_flag_11"
+        },
+        {
+            "from": "chunk_5_feature_flag_10",
+            "to": "chunk_5_feature_flag_11"
+        },
+        {
+            "from": "chunk_5_feature_flag_12",
+            "to": "chunk_5_feature_flag_13"
+        },
+        {
+            "from": "chunk_5_feature_flag_13",
+            "to": "chunk_5_feature_flag_14"
+        },
+        {
+            "from": "chunk_5_feature_flag_13",
+            "to": "chunk_5_feature_flag_18"
+        },
+        {
+            "from": "chunk_5_feature_flag_14",
+            "to": "chunk_5_feature_flag_15"
+        },
+        {
+            "from": "chunk_5_feature_flag_14",
+            "to": "chunk_5_feature_flag_16"
+        },
+        {
+            "from": "chunk_5_feature_flag_15",
+            "to": "chunk_5_feature_flag_16"
+        },
+        {
+            "from": "chunk_5_feature_flag_16",
+            "to": "chunk_5_feature_flag_17"
+        },
+        {
+            "from": "chunk_5_feature_flag_16",
+            "to": "chunk_5_feature_flag_18"
+        },
+        {
+            "from": "chunk_5_feature_flag_17",
+            "to": "chunk_5_feature_flag_18"
+        },
+        {
+            "from": "chunk_5_feature_flag_19",
+            "to": "chunk_5_feature_flag_20"
+        },
+        {
+            "from": "chunk_6_percentage_rollout_1",
+            "to": "chunk_6_percentage_rollout_2"
+        },
+        {
+            "from": "chunk_7_beta_feature_1",
+            "to": "chunk_7_beta_feature_2"
+        },
+        {
+            "from": "chunk_7_beta_feature_2",
+            "to": "chunk_7_beta_feature_3"
+        },
+        {
+            "from": "chunk_8_mock_flag_variation_1",
+            "to": "chunk_8_mock_flag_variation_2"
+        },
+        {
+            "from": "chunk_8_mock_flag_variation_2",
+            "to": "chunk_8_mock_flag_variation_3"
+        },
+        {
+            "from": "chunk_8_mock_flag_variation_3",
+            "to": "chunk_8_mock_flag_variation_4"
+        },
+        {
+            "from": "chunk_8_mock_flag_variation_4",
+            "to": "chunk_8_mock_flag_variation_5"
+        }
+    ]
+}

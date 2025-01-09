@@ -1,0 +1,194 @@
+{
+    "nodes": [
+        {
+            "id": "chunk_0_GlobalBlock_1",
+            "code": "import logging\nimport os\nfrom urllib.parse import parse_qs, urlencode, urlparse, urlunparse\n\nfrom apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_EXECUTED\nfrom apscheduler.job import Job as JobObj\nfrom apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore\nfrom apscheduler.schedulers.blocking import BlockingScheduler\nfrom apscheduler.triggers.cron import CronTrigger\nfrom autogpt_libs.utils.cache import thread_cached\nfrom dotenv import load_dotenv\nfrom pydantic import BaseModel\nfrom sqlalchemy import MetaData, create_engine\n\nfrom backend.data.block import BlockInput\nfrom backend.executor.manager import ExecutionManager\nfrom backend.util.service import AppService, expose, get_service_client\nfrom backend.util.settings import Config\n\n\n\n"
+        },
+        {
+            "id": "chunk_1__extract_schema_from_url_1",
+            "code": "def _extract_schema_from_url(database_url) -> tuple[str, str]:\n    \"\"\"\n    Extracts the schema from the DATABASE_URL and returns the schema and cleaned URL.\n    \"\"\"\n"
+        },
+        {
+            "id": "chunk_1__extract_schema_from_url_2",
+            "code": "    parsed_url = urlparse(database_url)\n    query_params = parse_qs(parsed_url.query)\n"
+        },
+        {
+            "id": "chunk_1__extract_schema_from_url_3",
+            "code": "    # Extract the 'schema' parameter\n    schema_list = query_params.pop(\"schema\", None)\n    schema = schema_list[0] if schema_list else \"public\"\n"
+        },
+        {
+            "id": "chunk_1__extract_schema_from_url_4",
+            "code": "    # Reconstruct the query string without the 'schema' parameter\n    new_query = urlencode(query_params, doseq=True)\n    new_parsed_url = parsed_url._replace(query=new_query)\n    database_url_clean = str(urlunparse(new_parsed_url))\n"
+        },
+        {
+            "id": "chunk_1__extract_schema_from_url_5",
+            "code": "    return schema, database_url_clean\n"
+        },
+        {
+            "id": "chunk_2_GlobalBlock_1",
+            "code": "logger = logging.getLogger(__name__)\nconfig = Config()\n"
+        },
+        {
+            "id": "chunk_3_log_1",
+            "code": "def log(msg, **kwargs):\n    logger.info(\"[ExecutionScheduler] \" + msg, **kwargs)\n"
+        },
+        {
+            "id": "chunk_4_job_listener_1",
+            "code": "def job_listener(event):\n    \"\"\"Logs job execution outcomes for better monitoring.\"\"\"\n"
+        },
+        {
+            "id": "chunk_4_job_listener_2",
+            "code": "    if event.exception:\n        log(f\"Job {event.job_id} failed.\")\n"
+        },
+        {
+            "id": "chunk_4_job_listener_3",
+            "code": "    else:\n        log(f\"Job {event.job_id} completed successfully.\")\n"
+        },
+        {
+            "id": "chunk_5_get_execution_client_1",
+            "code": "@thread_cached\n"
+        },
+        {
+            "id": "chunk_5_get_execution_client_2",
+            "code": "def get_execution_client() -> ExecutionManager:\n    return get_service_client(ExecutionManager)\n"
+        },
+        {
+            "id": "chunk_6_execute_graph_1",
+            "code": "def execute_graph(**kwargs):\n    args = JobArgs(**kwargs)\n"
+        },
+        {
+            "id": "chunk_6_execute_graph_2",
+            "code": "    try:\n        log(f\"Executing recurring job for graph #{args.graph_id}\")\n        get_execution_client().add_execution(\n            args.graph_id, args.input_data, args.user_id\n        )\n"
+        },
+        {
+            "id": "chunk_6_execute_graph_3",
+            "code": "    except Exception as e:\n        logger.exception(f\"Error executing graph {args.graph_id}: {e}\")\n"
+        },
+        {
+            "id": "chunk_7_JobArgs_1",
+            "code": "class JobArgs(BaseModel):\n    graph_id: str\n    input_data: BlockInput\n    user_id: str\n    graph_version: int\n    cron: str\n\n"
+        },
+        {
+            "id": "chunk_8_JobInfo_1",
+            "code": "class JobInfo(JobArgs):\n    id: str\n    name: str\n    next_run_time: str\n\n"
+        },
+        {
+            "id": "chunk_8_JobInfo_2",
+            "code": "    @staticmethod\n    def from_db(job_args: JobArgs, job_obj: JobObj) -> \"JobInfo\":\n"
+        },
+        {
+            "id": "chunk_8_JobInfo_3",
+            "code": "        return JobInfo(\n            id=job_obj.id,\n            name=job_obj.name,\n            next_run_time=job_obj.next_run_time.isoformat(),\n            **job_args.model_dump(),\n        )\n"
+        },
+        {
+            "id": "chunk_9_ExecutionScheduler_1",
+            "code": "class ExecutionScheduler(AppService):\n    scheduler: BlockingScheduler\n\n"
+        },
+        {
+            "id": "chunk_9_ExecutionScheduler_2",
+            "code": "    @classmethod\n    def get_port(cls) -> int:\n        return config.execution_scheduler_port\n"
+        },
+        {
+            "id": "chunk_9_ExecutionScheduler_3",
+            "code": "    @property\n    @thread_cached\n    def execution_client(self) -> ExecutionManager:\n        return get_service_client(ExecutionManager)\n"
+        },
+        {
+            "id": "chunk_9_ExecutionScheduler_4",
+            "code": "    def run_service(self):\n        load_dotenv()\n        db_schema, db_url = _extract_schema_from_url(os.getenv(\"DATABASE_URL\"))\n        self.scheduler = BlockingScheduler(\n            jobstores={\n                \"default\": SQLAlchemyJobStore(\n                    engine=create_engine(db_url),\n                    metadata=MetaData(schema=db_schema),\n                )\n            }\n        )\n        self.scheduler.add_listener(job_listener, EVENT_JOB_EXECUTED | EVENT_JOB_ERROR)\n        self.scheduler.start()\n"
+        },
+        {
+            "id": "chunk_9_ExecutionScheduler_5",
+            "code": "    @expose\n    def add_execution_schedule(\n        self,\n        graph_id: str,\n        graph_version: int,\n        cron: str,\n        input_data: BlockInput,\n        user_id: str,\n    ) -> JobInfo:\n        job_args = JobArgs(\n            graph_id=graph_id,\n            input_data=input_data,\n            user_id=user_id,\n            graph_version=graph_version,\n            cron=cron,\n        )\n        job = self.scheduler.add_job(\n            execute_graph,\n            CronTrigger.from_crontab(cron),\n            kwargs=job_args.model_dump(),\n            replace_existing=True,\n        )\n        log(f\"Added job {job.id} with cron schedule '{cron}' input data: {input_data}\")\n        return JobInfo.from_db(job_args, job)\n"
+        },
+        {
+            "id": "chunk_9_ExecutionScheduler_6",
+            "code": "    @expose\n    def delete_schedule(self, schedule_id: str, user_id: str) -> JobInfo:\n        job = self.scheduler.get_job(schedule_id)\n        if not job:\n            log(f\"Job {schedule_id} not found.\")\n            raise ValueError(f\"Job #{schedule_id} not found.\")\n"
+        },
+        {
+            "id": "chunk_9_ExecutionScheduler_7",
+            "code": "        job_args = JobArgs(**job.kwargs)\n        if job_args.user_id != user_id:\n            raise ValueError(\"User ID does not match the job's user ID.\")\n"
+        },
+        {
+            "id": "chunk_9_ExecutionScheduler_8",
+            "code": "        log(f\"Deleting job {schedule_id}\")\n        job.remove()\n\n        return JobInfo.from_db(job_args, job)\n"
+        },
+        {
+            "id": "chunk_9_ExecutionScheduler_9",
+            "code": "    @expose\n    def get_execution_schedules(\n        self, graph_id: str | None = None, user_id: str | None = None\n    ) -> list[JobInfo]:\n        schedules = []\n        for job in self.scheduler.get_jobs():\n            job_args = JobArgs(**job.kwargs)\n            if (\n                job.next_run_time is not None\n                and (graph_id is None or job_args.graph_id == graph_id)\n                and (user_id is None or job_args.user_id == user_id)\n            ):\n                schedules.append(JobInfo.from_db(job_args, job))\n        return schedules\n"
+        }
+    ],
+    "edges": [
+        {
+            "from": "chunk_1__extract_schema_from_url_1",
+            "to": "chunk_1__extract_schema_from_url_2"
+        },
+        {
+            "from": "chunk_1__extract_schema_from_url_2",
+            "to": "chunk_1__extract_schema_from_url_3"
+        },
+        {
+            "from": "chunk_1__extract_schema_from_url_3",
+            "to": "chunk_1__extract_schema_from_url_4"
+        },
+        {
+            "from": "chunk_1__extract_schema_from_url_4",
+            "to": "chunk_1__extract_schema_from_url_5"
+        },
+        {
+            "from": "chunk_4_job_listener_1",
+            "to": "chunk_4_job_listener_2"
+        },
+        {
+            "from": "chunk_4_job_listener_2",
+            "to": "chunk_4_job_listener_3"
+        },
+        {
+            "from": "chunk_5_get_execution_client_1",
+            "to": "chunk_5_get_execution_client_2"
+        },
+        {
+            "from": "chunk_6_execute_graph_1",
+            "to": "chunk_6_execute_graph_2"
+        },
+        {
+            "from": "chunk_6_execute_graph_2",
+            "to": "chunk_6_execute_graph_3"
+        },
+        {
+            "from": "chunk_8_JobInfo_2",
+            "to": "chunk_8_JobInfo_3"
+        },
+        {
+            "from": "chunk_9_ExecutionScheduler_1",
+            "to": "chunk_9_ExecutionScheduler_2"
+        },
+        {
+            "from": "chunk_9_ExecutionScheduler_1",
+            "to": "chunk_9_ExecutionScheduler_3"
+        },
+        {
+            "from": "chunk_9_ExecutionScheduler_1",
+            "to": "chunk_9_ExecutionScheduler_4"
+        },
+        {
+            "from": "chunk_9_ExecutionScheduler_1",
+            "to": "chunk_9_ExecutionScheduler_5"
+        },
+        {
+            "from": "chunk_9_ExecutionScheduler_1",
+            "to": "chunk_9_ExecutionScheduler_6"
+        },
+        {
+            "from": "chunk_9_ExecutionScheduler_1",
+            "to": "chunk_9_ExecutionScheduler_9"
+        },
+        {
+            "from": "chunk_9_ExecutionScheduler_6",
+            "to": "chunk_9_ExecutionScheduler_7"
+        },
+        {
+            "from": "chunk_9_ExecutionScheduler_7",
+            "to": "chunk_9_ExecutionScheduler_8"
+        }
+    ]
+}

@@ -1,0 +1,346 @@
+{
+    "nodes": [
+        {
+            "id": "chunk_0_GlobalBlock_1",
+            "code": "from pydantic import BaseModel\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_2",
+            "code": "from backend.data.block import (\n    Block,\n    BlockCategory,\n    BlockOutput,\n    BlockSchema,\n    BlockWebhookConfig,\n)\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_3",
+            "code": "from backend.data.model import SchemaField\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_4",
+            "code": "from backend.util import settings\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_5",
+            "code": "from backend.util.settings import AppEnvironment, BehaveAs\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_6",
+            "code": "from ._api import (\n    TEST_CREDENTIALS,\n    TEST_CREDENTIALS_INPUT,\n    Slant3DCredentialsField,\n    Slant3DCredentialsInput,\n)\n"
+        },
+        {
+            "id": "chunk_1_Slant3DTriggerBase_1",
+            "code": "class Slant3DTriggerBase:\n    \"\"\"Base class for Slant3D webhook triggers\"\"\"\n\n"
+        },
+        {
+            "id": "chunk_1_Slant3DTriggerBase_2",
+            "code": "    class Input(BlockSchema):\n        credentials: Slant3DCredentialsInput = Slant3DCredentialsField()\n        # Webhook URL is handled by the webhook system\n        payload: dict = SchemaField(hidden=True, default={})\n\n"
+        },
+        {
+            "id": "chunk_1_Slant3DTriggerBase_3",
+            "code": "    class Output(BlockSchema):\n        payload: dict = SchemaField(\n            description=\"The complete webhook payload received from Slant3D\"\n        )\n        order_id: str = SchemaField(description=\"The ID of the affected order\")\n        error: str = SchemaField(\n            description=\"Error message if payload processing failed\"\n        )\n\n"
+        },
+        {
+            "id": "chunk_1_Slant3DTriggerBase_4",
+            "code": "    def run(self, input_data: Input, **kwargs) -> BlockOutput:\n        yield \"payload\", input_data.payload\n        yield \"order_id\", input_data.payload[\"orderId\"]\n\n"
+        },
+        {
+            "id": "chunk_2_Slant3DTriggerBase.Input_1",
+            "code": "    class Input(BlockSchema):\n        credentials: Slant3DCredentialsInput = Slant3DCredentialsField()\n        # Webhook URL is handled by the webhook system\n        payload: dict = SchemaField(hidden=True, default={})\n"
+        },
+        {
+            "id": "chunk_3_Slant3DTriggerBase.Output_1",
+            "code": "    class Output(BlockSchema):\n        payload: dict = SchemaField(\n            description=\"The complete webhook payload received from Slant3D\"\n        )\n        order_id: str = SchemaField(description=\"The ID of the affected order\")\n        error: str = SchemaField(\n            description=\"Error message if payload processing failed\"\n        )\n"
+        },
+        {
+            "id": "chunk_4_Slant3DTriggerBase.run_1",
+            "code": "    def run(self, input_data: Input, **kwargs) -> BlockOutput:\n"
+        },
+        {
+            "id": "chunk_4_Slant3DTriggerBase.run_2",
+            "code": "        yield \"payload\", input_data.payload\n        yield \"order_id\", input_data.payload[\"orderId\"]\n"
+        },
+        {
+            "id": "chunk_5_Slant3DOrderWebhookBlock_1",
+            "code": "class Slant3DOrderWebhookBlock(Slant3DTriggerBase, Block):\n    \"\"\"Block for handling Slant3D order webhooks\"\"\"\n\n"
+        },
+        {
+            "id": "chunk_5_Slant3DOrderWebhookBlock_2",
+            "code": "    class Input(Slant3DTriggerBase.Input):\n        class EventsFilter(BaseModel):\n            \"\"\"\n            Currently Slant3D only supports 'SHIPPED' status updates\n            Could be expanded in the future with more status types\n            \"\"\"\n\n            shipped: bool = True\n\n        events: EventsFilter = SchemaField(\n            title=\"Events\",\n            description=\"Order status events to subscribe to\",\n            default=EventsFilter(shipped=True),\n        )\n"
+        },
+        {
+            "id": "chunk_5_Slant3DOrderWebhookBlock_3",
+            "code": "    class Output(Slant3DTriggerBase.Output):\n        status: str = SchemaField(description=\"The new status of the order\")\n        tracking_number: str = SchemaField(\n            description=\"The tracking number for the shipment\"\n        )\n        carrier_code: str = SchemaField(description=\"The carrier code (e.g., 'usps')\")\n\n"
+        },
+        {
+            "id": "chunk_5_Slant3DOrderWebhookBlock_4",
+            "code": "    def __init__(self):\n        super().__init__(\n            id=\"8a74c2ad-0104-4640-962f-26c6b69e58cd\",\n            description=(\n                \"This block triggers on Slant3D order status updates and outputs \"\n                \"the event details, including tracking information when orders are shipped.\"\n            ),\n            # All webhooks are currently subscribed to for all orders. This works for self hosted, but not for cloud hosted prod\n            disabled=(\n                settings.Settings().config.behave_as == BehaveAs.CLOUD\n                and settings.Settings().config.app_env != AppEnvironment.LOCAL\n            ),\n            categories={BlockCategory.DEVELOPER_TOOLS},\n            input_schema=self.Input,\n            output_schema=self.Output,\n            webhook_config=BlockWebhookConfig(\n                provider=\"slant3d\",\n                webhook_type=\"orders\",  # Only one type for now\n                resource_format=\"\",  # No resource format needed\n                event_filter_input=\"events\",\n                event_format=\"order.{event}\",\n            ),\n            test_input={\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n                \"events\": {\"shipped\": True},\n                \"payload\": {\n                    \"orderId\": \"1234567890\",\n                    \"status\": \"SHIPPED\",\n                    \"trackingNumber\": \"ABCDEF123456\",\n                    \"carrierCode\": \"usps\",\n                },\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[\n                (\n                    \"payload\",\n                    {\n                        \"orderId\": \"1234567890\",\n                        \"status\": \"SHIPPED\",\n                        \"trackingNumber\": \"ABCDEF123456\",\n                        \"carrierCode\": \"usps\",\n                    },\n                ),\n                (\"order_id\", \"1234567890\"),\n                (\"status\", \"SHIPPED\"),\n                (\"tracking_number\", \"ABCDEF123456\"),\n                (\"carrier_code\", \"usps\"),\n            ],\n        )\n"
+        },
+        {
+            "id": "chunk_5_Slant3DOrderWebhookBlock_5",
+            "code": "    def run(self, input_data: Input, **kwargs) -> BlockOutput:  # type: ignore\n        yield from super().run(input_data, **kwargs)\n"
+        },
+        {
+            "id": "chunk_5_Slant3DOrderWebhookBlock_6",
+            "code": "        # Extract and normalize values from the payload\n        yield \"status\", input_data.payload[\"status\"]\n        yield \"tracking_number\", input_data.payload[\"trackingNumber\"]\n        yield \"carrier_code\", input_data.payload[\"carrierCode\"]\n"
+        },
+        {
+            "id": "chunk_6_Slant3DOrderWebhookBlock.Input_1",
+            "code": "    class Input(Slant3DTriggerBase.Input):\n"
+        },
+        {
+            "id": "chunk_6_Slant3DOrderWebhookBlock.Input_2",
+            "code": "        class EventsFilter(BaseModel):\n            \"\"\"\n            Currently Slant3D only supports 'SHIPPED' status updates\n            Could be expanded in the future with more status types\n            \"\"\"\n"
+        },
+        {
+            "id": "chunk_6_Slant3DOrderWebhookBlock.Input_3",
+            "code": "            shipped: bool = True\n"
+        },
+        {
+            "id": "chunk_6_Slant3DOrderWebhookBlock.Input_4",
+            "code": "        events: EventsFilter = SchemaField(\n            title=\"Events\",\n            description=\"Order status events to subscribe to\",\n            default=EventsFilter(shipped=True),\n        )\n"
+        },
+        {
+            "id": "chunk_7_Slant3DOrderWebhookBlock.Input.EventsFilter_1",
+            "code": "        class EventsFilter(BaseModel):\n"
+        },
+        {
+            "id": "chunk_7_Slant3DOrderWebhookBlock.Input.EventsFilter_2",
+            "code": "            \"\"\"\n            Currently Slant3D only supports 'SHIPPED' status updates\n            Could be expanded in the future with more status types\n            \"\"\"\n"
+        },
+        {
+            "id": "chunk_7_Slant3DOrderWebhookBlock.Input.EventsFilter_3",
+            "code": "\n"
+        },
+        {
+            "id": "chunk_7_Slant3DOrderWebhookBlock.Input.EventsFilter_4",
+            "code": "            shipped: bool = True\n"
+        },
+        {
+            "id": "chunk_7_Slant3DOrderWebhookBlock.Input.EventsFilter_5",
+            "code": "\n\n"
+        },
+        {
+            "id": "chunk_8_Slant3DOrderWebhookBlock.Output_1",
+            "code": "    class Output(Slant3DTriggerBase.Output):\n        status: str = SchemaField(description=\"The new status of the order\")\n"
+        },
+        {
+            "id": "chunk_8_Slant3DOrderWebhookBlock.Output_2",
+            "code": "        tracking_number: str = SchemaField(\n            description=\"The tracking number for the shipment\"\n        )\n"
+        },
+        {
+            "id": "chunk_8_Slant3DOrderWebhookBlock.Output_3",
+            "code": "        carrier_code: str = SchemaField(description=\"The carrier code (e.g., 'usps')\")\n"
+        },
+        {
+            "id": "chunk_9_Slant3DOrderWebhookBlock.__init___1",
+            "code": "    def __init__(self):\n        super().__init__(\n"
+        },
+        {
+            "id": "chunk_9_Slant3DOrderWebhookBlock.__init___2",
+            "code": "            id=\"8a74c2ad-0104-4640-962f-26c6b69e58cd\",\n            description=(\n                \"This block triggers on Slant3D order status updates and outputs \"\n                \"the event details, including tracking information when orders are shipped.\"\n            ),\n"
+        },
+        {
+            "id": "chunk_9_Slant3DOrderWebhookBlock.__init___3",
+            "code": "            # All webhooks are currently subscribed to for all orders. This works for self hosted, but not for cloud hosted prod\n"
+        },
+        {
+            "id": "chunk_9_Slant3DOrderWebhookBlock.__init___4",
+            "code": "            disabled=(\n                settings.Settings().config.behave_as == BehaveAs.CLOUD\n                and settings.Settings().config.app_env != AppEnvironment.LOCAL\n"
+        },
+        {
+            "id": "chunk_9_Slant3DOrderWebhookBlock.__init___5",
+            "code": "            ),\n"
+        },
+        {
+            "id": "chunk_9_Slant3DOrderWebhookBlock.__init___6",
+            "code": "            categories={BlockCategory.DEVELOPER_TOOLS},\n"
+        },
+        {
+            "id": "chunk_9_Slant3DOrderWebhookBlock.__init___7",
+            "code": "            input_schema=self.Input,\n            output_schema=self.Output,\n"
+        },
+        {
+            "id": "chunk_9_Slant3DOrderWebhookBlock.__init___8",
+            "code": "            webhook_config=BlockWebhookConfig(\n                provider=\"slant3d\",\n                webhook_type=\"orders\",  # Only one type for now\n                resource_format=\"\",  # No resource format needed\n                event_filter_input=\"events\",\n                event_format=\"order.{event}\",\n            ),\n"
+        },
+        {
+            "id": "chunk_9_Slant3DOrderWebhookBlock.__init___9",
+            "code": "            test_input={\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n                \"events\": {\"shipped\": True},\n                \"payload\": {\n                    \"orderId\": \"1234567890\",\n                    \"status\": \"SHIPPED\",\n                    \"trackingNumber\": \"ABCDEF123456\",\n                    \"carrierCode\": \"usps\",\n                },\n"
+        },
+        {
+            "id": "chunk_9_Slant3DOrderWebhookBlock.__init___10",
+            "code": "            },\n"
+        },
+        {
+            "id": "chunk_9_Slant3DOrderWebhookBlock.__init___11",
+            "code": "            test_credentials=TEST_CREDENTIALS,\n"
+        },
+        {
+            "id": "chunk_9_Slant3DOrderWebhookBlock.__init___12",
+            "code": "            test_output=[\n                (\n                    \"payload\",\n                    {\n                        \"orderId\": \"1234567890\",\n                        \"status\": \"SHIPPED\",\n                        \"trackingNumber\": \"ABCDEF123456\",\n                        \"carrierCode\": \"usps\",\n                    },\n                ),\n                (\"order_id\", \"1234567890\"),\n                (\"status\", \"SHIPPED\"),\n                (\"tracking_number\", \"ABCDEF123456\"),\n                (\"carrier_code\", \"usps\"),\n            ],\n"
+        },
+        {
+            "id": "chunk_9_Slant3DOrderWebhookBlock.__init___13",
+            "code": "        )\n"
+        },
+        {
+            "id": "chunk_9_Slant3DOrderWebhookBlock.__init___14",
+            "code": "\n\n"
+        },
+        {
+            "id": "chunk_10_Slant3DOrderWebhookBlock.run_1",
+            "code": "    def run(self, input_data: Input, **kwargs) -> BlockOutput:  # type: ignore\n        yield from super().run(input_data, **kwargs)\n"
+        },
+        {
+            "id": "chunk_10_Slant3DOrderWebhookBlock.run_2",
+            "code": "        # Extract and normalize values from the payload\n        yield \"status\", input_data.payload[\"status\"]\n        yield \"tracking_number\", input_data.payload[\"trackingNumber\"]\n        yield \"carrier_code\", input_data.payload[\"carrierCode\"]\n"
+        }
+    ],
+    "edges": [
+        {
+            "from": "chunk_0_GlobalBlock_1",
+            "to": "chunk_0_GlobalBlock_2"
+        },
+        {
+            "from": "chunk_0_GlobalBlock_2",
+            "to": "chunk_0_GlobalBlock_3"
+        },
+        {
+            "from": "chunk_0_GlobalBlock_3",
+            "to": "chunk_0_GlobalBlock_4"
+        },
+        {
+            "from": "chunk_0_GlobalBlock_4",
+            "to": "chunk_0_GlobalBlock_5"
+        },
+        {
+            "from": "chunk_0_GlobalBlock_5",
+            "to": "chunk_0_GlobalBlock_6"
+        },
+        {
+            "from": "chunk_1_Slant3DTriggerBase_1",
+            "to": "chunk_1_Slant3DTriggerBase_2"
+        },
+        {
+            "from": "chunk_1_Slant3DTriggerBase_1",
+            "to": "chunk_1_Slant3DTriggerBase_3"
+        },
+        {
+            "from": "chunk_1_Slant3DTriggerBase_1",
+            "to": "chunk_1_Slant3DTriggerBase_4"
+        },
+        {
+            "from": "chunk_4_Slant3DTriggerBase.run_1",
+            "to": "chunk_4_Slant3DTriggerBase.run_2"
+        },
+        {
+            "from": "chunk_5_Slant3DOrderWebhookBlock_1",
+            "to": "chunk_5_Slant3DOrderWebhookBlock_2"
+        },
+        {
+            "from": "chunk_5_Slant3DOrderWebhookBlock_1",
+            "to": "chunk_5_Slant3DOrderWebhookBlock_3"
+        },
+        {
+            "from": "chunk_5_Slant3DOrderWebhookBlock_1",
+            "to": "chunk_5_Slant3DOrderWebhookBlock_4"
+        },
+        {
+            "from": "chunk_5_Slant3DOrderWebhookBlock_4",
+            "to": "chunk_5_Slant3DOrderWebhookBlock_5"
+        },
+        {
+            "from": "chunk_5_Slant3DOrderWebhookBlock_5",
+            "to": "chunk_5_Slant3DOrderWebhookBlock_6"
+        },
+        {
+            "from": "chunk_6_Slant3DOrderWebhookBlock.Input_1",
+            "to": "chunk_6_Slant3DOrderWebhookBlock.Input_2"
+        },
+        {
+            "from": "chunk_6_Slant3DOrderWebhookBlock.Input_2",
+            "to": "chunk_6_Slant3DOrderWebhookBlock.Input_3"
+        },
+        {
+            "from": "chunk_6_Slant3DOrderWebhookBlock.Input_3",
+            "to": "chunk_6_Slant3DOrderWebhookBlock.Input_4"
+        },
+        {
+            "from": "chunk_7_Slant3DOrderWebhookBlock.Input.EventsFilter_1",
+            "to": "chunk_7_Slant3DOrderWebhookBlock.Input.EventsFilter_2"
+        },
+        {
+            "from": "chunk_7_Slant3DOrderWebhookBlock.Input.EventsFilter_2",
+            "to": "chunk_7_Slant3DOrderWebhookBlock.Input.EventsFilter_3"
+        },
+        {
+            "from": "chunk_7_Slant3DOrderWebhookBlock.Input.EventsFilter_3",
+            "to": "chunk_7_Slant3DOrderWebhookBlock.Input.EventsFilter_4"
+        },
+        {
+            "from": "chunk_7_Slant3DOrderWebhookBlock.Input.EventsFilter_4",
+            "to": "chunk_7_Slant3DOrderWebhookBlock.Input.EventsFilter_5"
+        },
+        {
+            "from": "chunk_8_Slant3DOrderWebhookBlock.Output_1",
+            "to": "chunk_8_Slant3DOrderWebhookBlock.Output_2"
+        },
+        {
+            "from": "chunk_8_Slant3DOrderWebhookBlock.Output_2",
+            "to": "chunk_8_Slant3DOrderWebhookBlock.Output_3"
+        },
+        {
+            "from": "chunk_9_Slant3DOrderWebhookBlock.__init___1",
+            "to": "chunk_9_Slant3DOrderWebhookBlock.__init___2"
+        },
+        {
+            "from": "chunk_9_Slant3DOrderWebhookBlock.__init___2",
+            "to": "chunk_9_Slant3DOrderWebhookBlock.__init___3"
+        },
+        {
+            "from": "chunk_9_Slant3DOrderWebhookBlock.__init___3",
+            "to": "chunk_9_Slant3DOrderWebhookBlock.__init___4"
+        },
+        {
+            "from": "chunk_9_Slant3DOrderWebhookBlock.__init___4",
+            "to": "chunk_9_Slant3DOrderWebhookBlock.__init___5"
+        },
+        {
+            "from": "chunk_9_Slant3DOrderWebhookBlock.__init___5",
+            "to": "chunk_9_Slant3DOrderWebhookBlock.__init___6"
+        },
+        {
+            "from": "chunk_9_Slant3DOrderWebhookBlock.__init___6",
+            "to": "chunk_9_Slant3DOrderWebhookBlock.__init___7"
+        },
+        {
+            "from": "chunk_9_Slant3DOrderWebhookBlock.__init___7",
+            "to": "chunk_9_Slant3DOrderWebhookBlock.__init___8"
+        },
+        {
+            "from": "chunk_9_Slant3DOrderWebhookBlock.__init___8",
+            "to": "chunk_9_Slant3DOrderWebhookBlock.__init___9"
+        },
+        {
+            "from": "chunk_9_Slant3DOrderWebhookBlock.__init___9",
+            "to": "chunk_9_Slant3DOrderWebhookBlock.__init___10"
+        },
+        {
+            "from": "chunk_9_Slant3DOrderWebhookBlock.__init___10",
+            "to": "chunk_9_Slant3DOrderWebhookBlock.__init___11"
+        },
+        {
+            "from": "chunk_9_Slant3DOrderWebhookBlock.__init___11",
+            "to": "chunk_9_Slant3DOrderWebhookBlock.__init___12"
+        },
+        {
+            "from": "chunk_9_Slant3DOrderWebhookBlock.__init___12",
+            "to": "chunk_9_Slant3DOrderWebhookBlock.__init___13"
+        },
+        {
+            "from": "chunk_9_Slant3DOrderWebhookBlock.__init___13",
+            "to": "chunk_9_Slant3DOrderWebhookBlock.__init___14"
+        },
+        {
+            "from": "chunk_10_Slant3DOrderWebhookBlock.run_1",
+            "to": "chunk_10_Slant3DOrderWebhookBlock.run_2"
+        }
+    ]
+}

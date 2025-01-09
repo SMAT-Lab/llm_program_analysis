@@ -1,0 +1,378 @@
+{
+  "nodes": [
+    {
+      "id": "n0",
+      "code": "import asyncio\nfrom typing import Literal\n\nimport aiohttp\nimport discord\nfrom pydantic import SecretStr\n\n\nfrom backend.data.block import Block, BlockCategory, BlockOutput, BlockSchema\nfrom backend.data.model import (\n    APIKeyCredentials,\n    CredentialsField,\n    CredentialsMetaInput,\n    SchemaField,\n)\nfrom backend.integrations.providers import ProviderName\n\nDiscordCredentials = CredentialsMetaInput[\n    Literal[ProviderName.DISCORD], Literal[\"api_key\"]\n]\n\ndef DiscordCredentialsField() -> DiscordCredentials:\n    return CredentialsField(description=\"Discord bot token\")\n\nTEST_CREDENTIALS = APIKeyCredentials(\n    id=\"01234567-89ab-cdef-0123-456789abcdef\",\n    provider=\"discord\",\n    api_key=SecretStr(\"test_api_key\"),\n    title=\"Mock Discord API key\",\n    expires_at=None,\n)\n\nTEST_CREDENTIALS_INPUT = {\n    \"provider\": TEST_CREDENTIALS.provider,\n    \"id\": TEST_CREDENTIALS.id,\n    \"type\": TEST_CREDENTIALS.type,\n    \"title\": TEST_CREDENTIALS.type,\n}\n"
+    },
+    {
+      "id": "n1",
+      "code": "def DiscordCredentialsField() -> DiscordCredentials:\n    return CredentialsField(description=\"Discord bot token\")\n"
+    },
+    {
+      "id": "n2",
+      "code": "class ReadDiscordMessagesBlock(Block):\n\n    class Input(BlockSchema):\n        credentials: DiscordCredentials = DiscordCredentialsField()\n\n    class Output(BlockSchema):\n        message_content: str = SchemaField(\n            description=\"The content of the message received\"\n        )\n        channel_name: str = SchemaField(\n            description=\"The name of the channel the message was received from\"\n        )\n        username: str = SchemaField(\n            description=\"The username of the user who sent the message\"\n        )\n\n    def __init__(self):\n        super().__init__(\n            id=\"df06086a-d5ac-4abb-9996-2ad0acb2eff7\",\n            input_schema=ReadDiscordMessagesBlock.Input,  # Assign input schema\n            output_schema=ReadDiscordMessagesBlock.Output,  # Assign output schema\n            description=\"Reads messages from a Discord channel using a bot token.\",\n            categories={BlockCategory.SOCIAL},\n            test_input={\n                \"continuous_read\": False,\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[\n                (\n                    \"message_content\",\n                    \"Hello!\\n\\nFile from user: example.txt\\nContent: This is the content of the file.\",\n                ),\n                (\"channel_name\", \"general\"),\n                (\"username\", \"test_user\"),\n            ],\n            test_mock={\n                \"run_bot\": lambda token: asyncio.Future()  # Create a Future object for mocking\n            },\n        )\n\n    async def run_bot(self, token: SecretStr):\n        intents = discord.Intents.default()\n        intents.message_content = True\n\n\n        client = discord.Client(intents=intents)\n\n        self.output_data = None\n        self.channel_name = None\n        self.username = None\n\n\n        @client.event\n        async def on_ready():\n            print(f\"Logged in as {client.user}\")\n\n\n        @client.event\n        async def on_message(message):\n            if message.author == client.user:\n                return\n\n            self.output_data = message.content\n            self.channel_name = message.channel.name\n            self.username = message.author.name\n\n\n            if message.attachments:\n                attachment = message.attachments[0]  # Process the first attachment\n                if attachment.filename.endswith((\".txt\", \".py\")):\n                    async with aiohttp.ClientSession() as session:\n                        async with session.get(attachment.url) as response:\n                            file_content = await response.text()\n                            self.output_data += f\"\\n\\nFile from user: {attachment.filename}\\nContent: {file_content}\"\n\n            await client.close()\n\n        await client.start(token.get_secret_value())\n"
+    },
+    {
+      "id": "n3",
+      "code": "    def run(\n        self, input_data: Input, *, credentials: APIKeyCredentials, **kwargs\n    ) -> BlockOutput:\n        while True:\n            for output_name, output_value in self.__run(input_data, credentials):\n                yield output_name, output_value\n            break\n\n    def __run(self, input_data: Input, credentials: APIKeyCredentials) -> BlockOutput:\n        try:\n            loop = asyncio.get_event_loop()\n            future = self.run_bot(credentials.api_key)\n\n\n            if isinstance(future, asyncio.Future):\n                future.set_result(\n                    {\n                        \"output_data\": \"Hello!\\n\\nFile from user: example.txt\\nContent: This is the content of the file.\",\n                        \"channel_name\": \"general\",\n                        \"username\": \"test_user\",\n                    }\n                )\n\n            result = loop.run_until_complete(future)\n\n\n            if isinstance(result, dict):\n                self.output_data = result.get(\"output_data\")\n                self.channel_name = result.get(\"channel_name\")\n                self.username = result.get(\"username\")\n\n            if (\n                self.output_data is None\n                or self.channel_name is None\n                or self.username is None\n            ):\n                raise ValueError(\"No message, channel name, or username received.\")\n\n            yield \"message_content\", self.output_data\n            yield \"channel_name\", self.channel_name\n            yield \"username\", self.username\n"
+    },
+    {
+      "id": "n4",
+      "code": "        except discord.errors.LoginFailure as login_err:\n            raise ValueError(f\"Login error occurred: {login_err}\")\n"
+    },
+    {
+      "id": "n5",
+      "code": "        except Exception as e:\n            raise ValueError(f\"An error occurred: {e}\")\n"
+    },
+    {
+      "id": "n6",
+      "code": "    def __init__(self):\n        super().__init__(\n            id=\"df06086a-d5ac-4abb-9996-2ad0acb2eff7\",\n            input_schema=ReadDiscordMessagesBlock.Input,  # Assign input schema\n            output_schema=ReadDiscordMessagesBlock.Output,  # Assign output schema\n            description=\"Reads messages from a Discord channel using a bot token.\",\n            categories={BlockCategory.SOCIAL},\n            test_input={\n                \"continuous_read\": False,\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[\n                (\n                    \"message_content\",\n                    \"Hello!\\n\\nFile from user: example.txt\\nContent: This is the content of the file.\",\n                ),\n                (\"channel_name\", \"general\"),\n                (\"username\", \"test_user\"),\n            ],\n            test_mock={\n                \"run_bot\": lambda token: asyncio.Future()  # Create a Future object for mocking\n            },\n        )\n"
+    },
+    {
+      "id": "n7",
+      "code": "    async def run_bot(self, token: SecretStr):\n\n        intents = discord.Intents.default()\n        intents.message_content = True\n\n        client = discord.Client(intents=intents)\n\n        self.output_data = None\n        self.channel_name = None\n        self.username = None\n"
+    },
+    {
+      "id": "n8",
+      "code": "        @client.event\n        async def on_ready():\n\n            print(f\"Logged in as {client.user}\")\n"
+    },
+    {
+      "id": "n9",
+      "code": "        @client.event\n        async def on_message(message):\n\n            if message.author == client.user:\n                return\n"
+    },
+    {
+      "id": "n10",
+      "code": "            self.output_data = message.content\n            self.channel_name = message.channel.name\n            self.username = message.author.name\n\n            if message.attachments:\n                attachment = message.attachments[0]  # Process the first attachment\n"
+    },
+    {
+      "id": "n11",
+      "code": "                if attachment.filename.endswith((\".txt\", \".py\")):\n                    async with aiohttp.ClientSession() as session:\n                        async with session.get(attachment.url) as response:\n                            file_content = await response.text()\n                            self.output_data += f\"\\n\\nFile from user: {attachment.filename}\\nContent: {file_content}\"\n"
+    },
+    {
+      "id": "n12",
+      "code": "            await client.close()\n"
+    },
+    {
+      "id": "n13",
+      "code": "        await client.start(token.get_secret_value())\n"
+    },
+    {
+      "id": "n14",
+      "code": "    def run(\n        self, input_data: Input, *, credentials: APIKeyCredentials, **kwargs\n    ) -> BlockOutput:\n\n        while True:\n            for output_name, output_value in self.__run(input_data, credentials):\n                yield output_name, output_value\n            break\n"
+    },
+    {
+      "id": "n15",
+      "code": "    def __run(self, input_data: Input, credentials: APIKeyCredentials) -> BlockOutput:\n        try:\n\n            loop = asyncio.get_event_loop()\n            future = self.run_bot(credentials.api_key)\n\n\n            # If it's a Future (mock), set the result\n            if isinstance(future, asyncio.Future):\n"
+    },
+    {
+      "id": "n16",
+      "code": "                future.set_result(\n                    {\n                        \"output_data\": \"Hello!\\n\\nFile from user: example.txt\\nContent: This is the content of the file.\",\n                        \"channel_name\": \"general\",\n                        \"username\": \"test_user\",\n                    }\n                )\n"
+    },
+    {
+      "id": "n17",
+      "code": "\n            result = loop.run_until_complete(future)\n\n\n            # For testing purposes, use the mocked result\n\n            if isinstance(result, dict):\n                self.output_data = result.get(\"output_data\")\n                self.channel_name = result.get(\"channel_name\")\n                self.username = result.get(\"username\")\n\n\n            if (\n                self.output_data is None\n                or self.channel_name is None\n                or self.username is None\n            ):\n"
+    },
+    {
+      "id": "n18",
+      "code": "                raise ValueError(\"No message, channel name, or username received.\")\n"
+    },
+    {
+      "id": "n19",
+      "code": "\n            yield \"message_content\", self.output_data\n            yield \"channel_name\", self.channel_name\n            yield \"username\", self.username\n\n"
+    },
+    {
+      "id": "n20",
+      "code": "        except discord.errors.LoginFailure as login_err:\n            raise ValueError(f\"Login error occurred: {login_err}\")\n"
+    },
+    {
+      "id": "n21",
+      "code": "        except Exception as e:\n            raise ValueError(f\"An error occurred: {e}\")\n"
+    },
+    {
+      "id": "n22",
+      "code": "        async def on_ready():\n            print(f\"Logged in as {client.user}\")\n"
+    },
+    {
+      "id": "n23",
+      "code": "        async def on_message(message):\n            if message.author == client.user:\n                return\n\n            self.output_data = message.content\n            self.channel_name = message.channel.name\n            self.username = message.author.name\n"
+    },
+    {
+      "id": "n24",
+      "code": "            if message.attachments:\n                attachment = message.attachments[0]  # Process the first attachment\n"
+    },
+    {
+      "id": "n25",
+      "code": "                if attachment.filename.endswith((\".txt\", \".py\")):\n                    async with aiohttp.ClientSession() as session:\n                        async with session.get(attachment.url) as response:\n                            file_content = await response.text()\n                            self.output_data += f\"\\n\\nFile from user: {attachment.filename}\\nContent: {file_content}\"\n"
+    },
+    {
+      "id": "n26",
+      "code": "            await client.close()\n"
+    },
+    {
+      "id": "n27",
+      "code": "class SendDiscordMessageBlock(Block):\n    class Input(BlockSchema):\n        credentials: DiscordCredentials = DiscordCredentialsField()\n\n        message_content: str = SchemaField(\n            description=\"The content of the message received\"\n        )\n\n        channel_name: str = SchemaField(\n            description=\"The name of the channel the message was received from\"\n        )\n\n    class Output(BlockSchema):\n        status: str = SchemaField(\n            description=\"The status of the operation (e.g., 'Message sent', 'Error')\"\n        )\n\n    def __init__(self):\n        super().__init__(\n            id=\"d0822ab5-9f8a-44a3-8971-531dd0178b6b\",\n            input_schema=SendDiscordMessageBlock.Input,  # Assign input schema\n            output_schema=SendDiscordMessageBlock.Output,  # Assign output schema\n            description=\"Sends a message to a Discord channel using a bot token.\",\n            categories={BlockCategory.SOCIAL},\n            test_input={\n                \"channel_name\": \"general\",\n                \"message_content\": \"Hello, Discord!\",\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n            },\n            test_output=[(\"status\", \"Message sent\")],\n            test_mock={\n                \"send_message\": lambda token, channel_name, message_content: asyncio.Future()\n            },\n            test_credentials=TEST_CREDENTIALS,\n        )\n"
+    },
+    {
+      "id": "n28",
+      "code": "    async def send_message(self, token: str, channel_name: str, message_content: str):\n        intents = discord.Intents.default()\n        intents.guilds = True  # Required for fetching guild/channel information\n        client = discord.Client(intents=intents)\n\n        @client.event\n        async def on_ready():\n            print(f\"Logged in as {client.user}\")\n\n            for guild in client.guilds:\n                for channel in guild.text_channels:\n                    if channel.name == channel_name:\n"
+    },
+    {
+      "id": "n29",
+      "code": "                        # Split message into chunks if it exceeds 2000 characters\n                        for chunk in self.chunk_message(message_content):\n                            await channel.send(chunk)\n                        self.output_data = \"Message sent\"\n                        await client.close()\n                        return\n"
+    },
+    {
+      "id": "n30",
+      "code": "            self.output_data = \"Channel not found\"\n            await client.close()\n"
+    },
+    {
+      "id": "n31",
+      "code": "        await client.start(token)\n"
+    },
+    {
+      "id": "n32",
+      "code": "    def chunk_message(self, message: str, limit: int = 2000) -> list:\n        \"\"\"Splits a message into chunks not exceeding the Discord limit.\"\"\"\n        return [message[i : i + limit] for i in range(0, len(message), limit)]\n"
+    },
+    {
+      "id": "n33",
+      "code": "    def run(\n        self, input_data: Input, *, credentials: APIKeyCredentials, **kwargs\n    ) -> BlockOutput:\n        try:\n\n            loop = asyncio.get_event_loop()\n            future = self.send_message(\n                credentials.api_key.get_secret_value(),\n                input_data.channel_name,\n                input_data.message_content,\n            )\n\n            # If it's a Future (mock), set the result\n            if isinstance(future, asyncio.Future):\n                future.set_result(\"Message sent\")\n\n            result = loop.run_until_complete(future)\n\n            # For testing purposes, use the mocked result\n            if isinstance(result, str):\n                self.output_data = result\n\n            if self.output_data is None:\n                raise ValueError(\"No status message received.\")\n\n            yield \"status\", self.output_data\n"
+    },
+    {
+      "id": "n34",
+      "code": "        except discord.errors.LoginFailure as login_err:\n            raise ValueError(f\"Login error occurred: {login_err}\")\n"
+    },
+    {
+      "id": "n35",
+      "code": "        except Exception as e:\n            raise ValueError(f\"An error occurred: {e}\")\n"
+    },
+    {
+      "id": "n36",
+      "code": "    def __init__(self):\n        super().__init__(\n            id=\"d0822ab5-9f8a-44a3-8971-531dd0178b6b\",\n            input_schema=SendDiscordMessageBlock.Input,  # Assign input schema\n            output_schema=SendDiscordMessageBlock.Output,  # Assign output schema\n            description=\"Sends a message to a Discord channel using a bot token.\",\n            categories={BlockCategory.SOCIAL},\n            test_input={\n                \"channel_name\": \"general\",\n                \"message_content\": \"Hello, Discord!\",\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n            },\n            test_output=[(\"status\", \"Message sent\")],\n            test_mock={\n                \"send_message\": lambda token, channel_name, message_content: asyncio.Future()\n            },\n            test_credentials=TEST_CREDENTIALS,\n        )\n"
+    },
+    {
+      "id": "n37",
+      "code": "    async def send_message(self, token: str, channel_name: str, message_content: str):\n        intents = discord.Intents.default()\n        intents.guilds = True  # Required for fetching guild/channel information\n        client = discord.Client(intents=intents)\n\n        await client.start(token)\n"
+    },
+    {
+      "id": "n38",
+      "code": "        @client.event\n        async def on_ready():\n            print(f\"Logged in as {client.user}\")\n"
+    },
+    {
+      "id": "n39",
+      "code": "            for guild in client.guilds:\n                for channel in guild.text_channels:\n"
+    },
+    {
+      "id": "n40",
+      "code": "                    if channel.name == channel_name:\n                        # Split message into chunks if it exceeds 2000 characters\n                        for chunk in self.chunk_message(message_content):\n                            await channel.send(chunk)\n                        self.output_data = \"Message sent\"\n                        await client.close()\n                        return\n"
+    },
+    {
+      "id": "n41",
+      "code": "            self.output_data = \"Channel not found\"\n            await client.close()\n"
+    },
+    {
+      "id": "n42",
+      "code": "    def chunk_message(self, message: str, limit: int = 2000) -> list:\n        \"\"\"Splits a message into chunks not exceeding the Discord limit.\"\"\"\n        return [message[i : i + limit] for i in range(0, len(message), limit)]\n"
+    },
+    {
+      "id": "n43",
+      "code": "    def run(\n        self, input_data: Input, *, credentials: APIKeyCredentials, **kwargs\n    ) -> BlockOutput:\n\n        try:\n            loop = asyncio.get_event_loop()\n\n            future = self.send_message(\n                credentials.api_key.get_secret_value(),\n                input_data.channel_name,\n                input_data.message_content,\n            )\n\n            # If it's a Future (mock), set the result\n            if isinstance(future, asyncio.Future):\n"
+    },
+    {
+      "id": "n44",
+      "code": "                future.set_result(\"Message sent\")\n"
+    },
+    {
+      "id": "n45",
+      "code": "            result = loop.run_until_complete(future)\n\n            # For testing purposes, use the mocked result\n            if isinstance(result, str):\n"
+    },
+    {
+      "id": "n46",
+      "code": "                self.output_data = result\n"
+    },
+    {
+      "id": "n47",
+      "code": "            if self.output_data is None:\n                raise ValueError(\"No status message received.\")\n"
+    },
+    {
+      "id": "n48",
+      "code": "            yield \"status\", self.output_data\n"
+    },
+    {
+      "id": "n49",
+      "code": "        except discord.errors.LoginFailure as login_err:\n            raise ValueError(f\"Login error occurred: {login_err}\")\n"
+    },
+    {
+      "id": "n50",
+      "code": "        except Exception as e:\n            raise ValueError(f\"An error occurred: {e}\")\n"
+    },
+    {
+      "id": "n51",
+      "code": "        async def on_ready():\n            print(f\"Logged in as {client.user}\")\n\n            for guild in client.guilds:\n                for channel in guild.text_channels:\n"
+    },
+    {
+      "id": "n52",
+      "code": "                    if channel.name == channel_name:\n"
+    },
+    {
+      "id": "n53",
+      "code": "                        # Split message into chunks if it exceeds 2000 characters\n                        for chunk in self.chunk_message(message_content):\n\n                            await channel.send(chunk)\n                        self.output_data = \"Message sent\"\n                        await client.close()\n                        return\n"
+    },
+    {
+      "id": "n54",
+      "code": "            self.output_data = \"Channel not found\"\n            await client.close()\n"
+    }
+  ],
+  "edges": [
+    {
+      "source": "n52",
+      "target": "n53"
+    },
+    {
+      "source": "n17",
+      "target": "n18"
+    },
+    {
+      "source": "n47",
+      "target": "n49"
+    },
+    {
+      "source": "n44",
+      "target": "n45"
+    },
+    {
+      "source": "n10",
+      "target": "n11"
+    },
+    {
+      "source": "n17",
+      "target": "n19"
+    },
+    {
+      "source": "n51",
+      "target": "n54"
+    },
+    {
+      "source": "n23",
+      "target": "n24"
+    },
+    {
+      "source": "n27",
+      "target": "n33"
+    },
+    {
+      "source": "n16",
+      "target": "n17"
+    },
+    {
+      "source": "n43",
+      "target": "n44"
+    },
+    {
+      "source": "n24",
+      "target": "n25"
+    },
+    {
+      "source": "n7",
+      "target": "n8"
+    },
+    {
+      "source": "n23",
+      "target": "n26"
+    },
+    {
+      "source": "n15",
+      "target": "n16"
+    },
+    {
+      "source": "n30",
+      "target": "n31"
+    },
+    {
+      "source": "n27",
+      "target": "n32"
+    },
+    {
+      "source": "n47",
+      "target": "n48"
+    },
+    {
+      "source": "n51",
+      "target": "n52"
+    },
+    {
+      "source": "n46",
+      "target": "n47"
+    },
+    {
+      "source": "n9",
+      "target": "n10"
+    },
+    {
+      "source": "n28",
+      "target": "n30"
+    },
+    {
+      "source": "n9",
+      "target": "n12"
+    },
+    {
+      "source": "n45",
+      "target": "n46"
+    },
+    {
+      "source": "n11",
+      "target": "n12"
+    },
+    {
+      "source": "n10",
+      "target": "n12"
+    },
+    {
+      "source": "n45",
+      "target": "n47"
+    },
+    {
+      "source": "n28",
+      "target": "n29"
+    },
+    {
+      "source": "n7",
+      "target": "n9"
+    },
+    {
+      "source": "n29",
+      "target": "n31"
+    },
+    {
+      "source": "n52",
+      "target": "n54"
+    },
+    {
+      "source": "n25",
+      "target": "n26"
+    },
+    {
+      "source": "n24",
+      "target": "n26"
+    },
+    {
+      "source": "n43",
+      "target": "n45"
+    },
+    {
+      "source": "n27",
+      "target": "n28"
+    },
+    {
+      "source": "n39",
+      "target": "n40"
+    },
+    {
+      "source": "n39",
+      "target": "n41"
+    },
+    {
+      "source": "n15",
+      "target": "n17"
+    }
+  ]
+}

@@ -1,0 +1,3917 @@
+{
+  "value": "import contextlib\nimport logging\nimport typing\n\nimport fastapi\nimport fastapi.responses\nimport starlette.middleware.cors\nimport uvicorn\nfrom autogpt_libs.feature_flag.client import (\n    initialize_launchdarkly,\n    shutdown_launchdarkly,\n)\n\nimport backend.data.block\nimport backend.data.db\nimport backend.data.graph\nimport backend.data.user\nimport backend.server.routers.v1\nimport backend.server.v2.library.routes\nimport backend.server.v2.store.routes\nimport backend.util.service\nimport backend.util.settings\n\nsettings = backend.util.settings.Settings()\nlogger = logging.getLogger(__name__)\n\nlogging.getLogger(\"autogpt_libs\").setLevel(logging.INFO)\n\n\n@contextlib.contextmanager\ndef launch_darkly_context():\n    if settings.config.app_env != backend.util.settings.AppEnvironment.LOCAL:\n        initialize_launchdarkly()\n        try:\n            yield\n        finally:\n            shutdown_launchdarkly()\n    else:\n        yield\n\n\n@contextlib.asynccontextmanager\nasync def lifespan_context(app: fastapi.FastAPI):\n    await backend.data.db.connect()\n    await backend.data.block.initialize_blocks()\n    await backend.data.user.migrate_and_encrypt_user_integrations()\n    await backend.data.graph.fix_llm_provider_credentials()\n    with launch_darkly_context():\n        yield\n    await backend.data.db.disconnect()\n\n\ndocs_url = (\n    \"/docs\"\n    if settings.config.app_env == backend.util.settings.AppEnvironment.LOCAL\n    else None\n)\n\napp = fastapi.FastAPI(\n    title=\"AutoGPT Agent Server\",\n    description=(\n        \"This server is used to execute agents that are created by the \"\n        \"AutoGPT system.\"\n    ),\n    summary=\"AutoGPT Agent Server\",\n    version=\"0.1\",\n    lifespan=lifespan_context,\n    docs_url=docs_url,\n)\n\n\ndef handle_internal_http_error(status_code: int = 500, log_error: bool = True):\n    def handler(request: fastapi.Request, exc: Exception):\n        if log_error:\n            logger.exception(f\"{request.method} {request.url.path} failed: {exc}\")\n        return fastapi.responses.JSONResponse(\n            content={\n                \"message\": f\"{request.method} {request.url.path} failed\",\n                \"detail\": str(exc),\n            },\n            status_code=status_code,\n        )\n\n    return handler\n\n\napp.add_exception_handler(ValueError, handle_internal_http_error(400))\napp.add_exception_handler(Exception, handle_internal_http_error(500))\napp.include_router(backend.server.routers.v1.v1_router, tags=[\"v1\"], prefix=\"/api\")\napp.include_router(\n    backend.server.v2.store.routes.router, tags=[\"v2\"], prefix=\"/api/store\"\n)\napp.include_router(\n    backend.server.v2.library.routes.router, tags=[\"v2\"], prefix=\"/api/library\"\n)\n\n\n@app.get(path=\"/health\", tags=[\"health\"], dependencies=[])\nasync def health():\n    return {\"status\": \"healthy\"}\n\n\nclass AgentServer(backend.util.service.AppProcess):\n    def run(self):\n        server_app = starlette.middleware.cors.CORSMiddleware(\n            app=app,\n            allow_origins=settings.config.backend_cors_allow_origins,\n            allow_credentials=True,\n            allow_methods=[\"*\"],  # Allows all methods\n            allow_headers=[\"*\"],  # Allows all headers\n        )\n        uvicorn.run(\n            server_app,\n            host=backend.util.settings.Config().agent_api_host,\n            port=backend.util.settings.Config().agent_api_port,\n        )\n\n    @staticmethod\n    async def test_execute_graph(\n        graph_id: str, node_input: dict[typing.Any, typing.Any], user_id: str\n    ):\n        return backend.server.routers.v1.execute_graph(graph_id, node_input, user_id)\n\n    @staticmethod\n    async def test_create_graph(\n        create_graph: backend.server.routers.v1.CreateGraph,\n        user_id: str,\n    ):\n        return await backend.server.routers.v1.create_new_graph(create_graph, user_id)\n\n    @staticmethod\n    async def test_get_graph_run_status(graph_exec_id: str, user_id: str):\n        execution = await backend.data.graph.get_execution(\n            user_id=user_id, execution_id=graph_exec_id\n        )\n        if not execution:\n            raise ValueError(f\"Execution {graph_exec_id} not found\")\n        return execution.status\n\n    @staticmethod\n    async def test_get_graph_run_node_execution_results(\n        graph_id: str, graph_exec_id: str, user_id: str\n    ):\n        return await backend.server.routers.v1.get_graph_run_node_execution_results(\n            graph_id, graph_exec_id, user_id\n        )\n\n    @staticmethod\n    async def test_delete_graph(graph_id: str, user_id: str):\n        return await backend.server.routers.v1.delete_graph(graph_id, user_id)\n\n    def set_test_dependency_overrides(self, overrides: dict):\n        app.dependency_overrides.update(overrides)",
+  "children": [
+    {
+      "value": "import contextlib",
+      "children": [
+        {
+          "value": "contextlib",
+          "children": [
+            {
+              "value": "contextlib",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "import logging",
+      "children": [
+        {
+          "value": "logging",
+          "children": [
+            {
+              "value": "logging",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "import typing",
+      "children": [
+        {
+          "value": "typing",
+          "children": [
+            {
+              "value": "typing",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "import fastapi",
+      "children": [
+        {
+          "value": "fastapi",
+          "children": [
+            {
+              "value": "fastapi",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "import fastapi.responses",
+      "children": [
+        {
+          "value": "fastapi.responses",
+          "children": [
+            {
+              "value": "fastapi",
+              "children": []
+            },
+            {
+              "value": "responses",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "import starlette.middleware.cors",
+      "children": [
+        {
+          "value": "starlette.middleware.cors",
+          "children": [
+            {
+              "value": "starlette",
+              "children": []
+            },
+            {
+              "value": "middleware",
+              "children": []
+            },
+            {
+              "value": "cors",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "import uvicorn",
+      "children": [
+        {
+          "value": "uvicorn",
+          "children": [
+            {
+              "value": "uvicorn",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "from autogpt_libs.feature_flag.client import (\n    initialize_launchdarkly,\n    shutdown_launchdarkly,\n)",
+      "children": [
+        {
+          "value": "autogpt_libs.feature_flag.client",
+          "children": [
+            {
+              "value": "autogpt_libs",
+              "children": []
+            },
+            {
+              "value": "feature_flag",
+              "children": []
+            },
+            {
+              "value": "client",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "initialize_launchdarkly",
+          "children": [
+            {
+              "value": "initialize_launchdarkly",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "shutdown_launchdarkly",
+          "children": [
+            {
+              "value": "shutdown_launchdarkly",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "import backend.data.block",
+      "children": [
+        {
+          "value": "backend.data.block",
+          "children": [
+            {
+              "value": "backend",
+              "children": []
+            },
+            {
+              "value": "data",
+              "children": []
+            },
+            {
+              "value": "block",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "import backend.data.db",
+      "children": [
+        {
+          "value": "backend.data.db",
+          "children": [
+            {
+              "value": "backend",
+              "children": []
+            },
+            {
+              "value": "data",
+              "children": []
+            },
+            {
+              "value": "db",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "import backend.data.graph",
+      "children": [
+        {
+          "value": "backend.data.graph",
+          "children": [
+            {
+              "value": "backend",
+              "children": []
+            },
+            {
+              "value": "data",
+              "children": []
+            },
+            {
+              "value": "graph",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "import backend.data.user",
+      "children": [
+        {
+          "value": "backend.data.user",
+          "children": [
+            {
+              "value": "backend",
+              "children": []
+            },
+            {
+              "value": "data",
+              "children": []
+            },
+            {
+              "value": "user",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "import backend.server.routers.v1",
+      "children": [
+        {
+          "value": "backend.server.routers.v1",
+          "children": [
+            {
+              "value": "backend",
+              "children": []
+            },
+            {
+              "value": "server",
+              "children": []
+            },
+            {
+              "value": "routers",
+              "children": []
+            },
+            {
+              "value": "v1",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "import backend.server.v2.library.routes",
+      "children": [
+        {
+          "value": "backend.server.v2.library.routes",
+          "children": [
+            {
+              "value": "backend",
+              "children": []
+            },
+            {
+              "value": "server",
+              "children": []
+            },
+            {
+              "value": "v2",
+              "children": []
+            },
+            {
+              "value": "library",
+              "children": []
+            },
+            {
+              "value": "routes",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "import backend.server.v2.store.routes",
+      "children": [
+        {
+          "value": "backend.server.v2.store.routes",
+          "children": [
+            {
+              "value": "backend",
+              "children": []
+            },
+            {
+              "value": "server",
+              "children": []
+            },
+            {
+              "value": "v2",
+              "children": []
+            },
+            {
+              "value": "store",
+              "children": []
+            },
+            {
+              "value": "routes",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "import backend.util.service",
+      "children": [
+        {
+          "value": "backend.util.service",
+          "children": [
+            {
+              "value": "backend",
+              "children": []
+            },
+            {
+              "value": "util",
+              "children": []
+            },
+            {
+              "value": "service",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "import backend.util.settings",
+      "children": [
+        {
+          "value": "backend.util.settings",
+          "children": [
+            {
+              "value": "backend",
+              "children": []
+            },
+            {
+              "value": "util",
+              "children": []
+            },
+            {
+              "value": "settings",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "settings = backend.util.settings.Settings()",
+      "children": [
+        {
+          "value": "settings = backend.util.settings.Settings()",
+          "children": [
+            {
+              "value": "settings",
+              "children": []
+            },
+            {
+              "value": "backend.util.settings.Settings()",
+              "children": [
+                {
+                  "value": "backend.util.settings.Settings",
+                  "children": [
+                    {
+                      "value": "backend.util.settings",
+                      "children": [
+                        {
+                          "value": "backend.util",
+                          "children": [
+                            {
+                              "value": "backend",
+                              "children": []
+                            },
+                            {
+                              "value": "util",
+                              "children": []
+                            }
+                          ]
+                        },
+                        {
+                          "value": "settings",
+                          "children": []
+                        }
+                      ]
+                    },
+                    {
+                      "value": "Settings",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "value": "()",
+                  "children": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "logger = logging.getLogger(__name__)",
+      "children": [
+        {
+          "value": "logger = logging.getLogger(__name__)",
+          "children": [
+            {
+              "value": "logger",
+              "children": []
+            },
+            {
+              "value": "logging.getLogger(__name__)",
+              "children": [
+                {
+                  "value": "logging.getLogger",
+                  "children": [
+                    {
+                      "value": "logging",
+                      "children": []
+                    },
+                    {
+                      "value": "getLogger",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "value": "(__name__)",
+                  "children": [
+                    {
+                      "value": "__name__",
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "logging.getLogger(\"autogpt_libs\").setLevel(logging.INFO)",
+      "children": [
+        {
+          "value": "logging.getLogger(\"autogpt_libs\").setLevel(logging.INFO)",
+          "children": [
+            {
+              "value": "logging.getLogger(\"autogpt_libs\").setLevel",
+              "children": [
+                {
+                  "value": "logging.getLogger(\"autogpt_libs\")",
+                  "children": [
+                    {
+                      "value": "logging.getLogger",
+                      "children": [
+                        {
+                          "value": "logging",
+                          "children": []
+                        },
+                        {
+                          "value": "getLogger",
+                          "children": []
+                        }
+                      ]
+                    },
+                    {
+                      "value": "(\"autogpt_libs\")",
+                      "children": [
+                        {
+                          "value": "\"autogpt_libs\"",
+                          "children": [
+                            {
+                              "value": "\"",
+                              "children": []
+                            },
+                            {
+                              "value": "autogpt_libs",
+                              "children": []
+                            },
+                            {
+                              "value": "\"",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "value": "setLevel",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "value": "(logging.INFO)",
+              "children": [
+                {
+                  "value": "logging.INFO",
+                  "children": [
+                    {
+                      "value": "logging",
+                      "children": []
+                    },
+                    {
+                      "value": "INFO",
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "@contextlib.contextmanager\ndef launch_darkly_context():\n    if settings.config.app_env != backend.util.settings.AppEnvironment.LOCAL:\n        initialize_launchdarkly()\n        try:\n            yield\n        finally:\n            shutdown_launchdarkly()\n    else:\n        yield",
+      "children": [
+        {
+          "value": "@contextlib.contextmanager",
+          "children": [
+            {
+              "value": "contextlib.contextmanager",
+              "children": [
+                {
+                  "value": "contextlib",
+                  "children": []
+                },
+                {
+                  "value": "contextmanager",
+                  "children": []
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "value": "def launch_darkly_context():\n    if settings.config.app_env != backend.util.settings.AppEnvironment.LOCAL:\n        initialize_launchdarkly()\n        try:\n            yield\n        finally:\n            shutdown_launchdarkly()\n    else:\n        yield",
+          "children": [
+            {
+              "value": "launch_darkly_context",
+              "children": []
+            },
+            {
+              "value": "()",
+              "children": []
+            },
+            {
+              "value": "if settings.config.app_env != backend.util.settings.AppEnvironment.LOCAL:\n        initialize_launchdarkly()\n        try:\n            yield\n        finally:\n            shutdown_launchdarkly()\n    else:\n        yield",
+              "children": [
+                {
+                  "value": "if settings.config.app_env != backend.util.settings.AppEnvironment.LOCAL:\n        initialize_launchdarkly()\n        try:\n            yield\n        finally:\n            shutdown_launchdarkly()\n    else:\n        yield",
+                  "children": [
+                    {
+                      "value": "settings.config.app_env != backend.util.settings.AppEnvironment.LOCAL",
+                      "children": [
+                        {
+                          "value": "settings.config.app_env",
+                          "children": [
+                            {
+                              "value": "settings.config",
+                              "children": [
+                                {
+                                  "value": "settings",
+                                  "children": []
+                                },
+                                {
+                                  "value": "config",
+                                  "children": []
+                                }
+                              ]
+                            },
+                            {
+                              "value": "app_env",
+                              "children": []
+                            }
+                          ]
+                        },
+                        {
+                          "value": "backend.util.settings.AppEnvironment.LOCAL",
+                          "children": [
+                            {
+                              "value": "backend.util.settings.AppEnvironment",
+                              "children": [
+                                {
+                                  "value": "backend.util.settings",
+                                  "children": [
+                                    {
+                                      "value": "backend.util",
+                                      "children": [
+                                        {
+                                          "value": "backend",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "util",
+                                          "children": []
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "value": "settings",
+                                      "children": []
+                                    }
+                                  ]
+                                },
+                                {
+                                  "value": "AppEnvironment",
+                                  "children": []
+                                }
+                              ]
+                            },
+                            {
+                              "value": "LOCAL",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "initialize_launchdarkly()\n        try:\n            yield\n        finally:\n            shutdown_launchdarkly()",
+                      "children": [
+                        {
+                          "value": "initialize_launchdarkly()",
+                          "children": [
+                            {
+                              "value": "initialize_launchdarkly()",
+                              "children": [
+                                {
+                                  "value": "initialize_launchdarkly",
+                                  "children": []
+                                },
+                                {
+                                  "value": "()",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "value": "try:\n            yield\n        finally:\n            shutdown_launchdarkly()",
+                          "children": [
+                            {
+                              "value": "yield",
+                              "children": [
+                                {
+                                  "value": "yield",
+                                  "children": [
+                                    {
+                                      "value": "yield",
+                                      "children": []
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "value": "finally:\n            shutdown_launchdarkly()",
+                              "children": [
+                                {
+                                  "value": "shutdown_launchdarkly()",
+                                  "children": [
+                                    {
+                                      "value": "shutdown_launchdarkly()",
+                                      "children": [
+                                        {
+                                          "value": "shutdown_launchdarkly()",
+                                          "children": [
+                                            {
+                                              "value": "shutdown_launchdarkly",
+                                              "children": []
+                                            },
+                                            {
+                                              "value": "()",
+                                              "children": []
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "else:\n        yield",
+                      "children": [
+                        {
+                          "value": "yield",
+                          "children": [
+                            {
+                              "value": "yield",
+                              "children": [
+                                {
+                                  "value": "yield",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "@contextlib.asynccontextmanager\nasync def lifespan_context(app: fastapi.FastAPI):\n    await backend.data.db.connect()\n    await backend.data.block.initialize_blocks()\n    await backend.data.user.migrate_and_encrypt_user_integrations()\n    await backend.data.graph.fix_llm_provider_credentials()\n    with launch_darkly_context():\n        yield\n    await backend.data.db.disconnect()",
+      "children": [
+        {
+          "value": "@contextlib.asynccontextmanager",
+          "children": [
+            {
+              "value": "contextlib.asynccontextmanager",
+              "children": [
+                {
+                  "value": "contextlib",
+                  "children": []
+                },
+                {
+                  "value": "asynccontextmanager",
+                  "children": []
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "value": "async def lifespan_context(app: fastapi.FastAPI):\n    await backend.data.db.connect()\n    await backend.data.block.initialize_blocks()\n    await backend.data.user.migrate_and_encrypt_user_integrations()\n    await backend.data.graph.fix_llm_provider_credentials()\n    with launch_darkly_context():\n        yield\n    await backend.data.db.disconnect()",
+          "children": [
+            {
+              "value": "lifespan_context",
+              "children": []
+            },
+            {
+              "value": "(app: fastapi.FastAPI)",
+              "children": [
+                {
+                  "value": "app: fastapi.FastAPI",
+                  "children": [
+                    {
+                      "value": "app",
+                      "children": []
+                    },
+                    {
+                      "value": "fastapi.FastAPI",
+                      "children": [
+                        {
+                          "value": "fastapi.FastAPI",
+                          "children": [
+                            {
+                              "value": "fastapi",
+                              "children": []
+                            },
+                            {
+                              "value": "FastAPI",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "await backend.data.db.connect()\n    await backend.data.block.initialize_blocks()\n    await backend.data.user.migrate_and_encrypt_user_integrations()\n    await backend.data.graph.fix_llm_provider_credentials()\n    with launch_darkly_context():\n        yield\n    await backend.data.db.disconnect()",
+              "children": [
+                {
+                  "value": "await backend.data.db.connect()",
+                  "children": [
+                    {
+                      "value": "await backend.data.db.connect()",
+                      "children": [
+                        {
+                          "value": "backend.data.db.connect()",
+                          "children": [
+                            {
+                              "value": "backend.data.db.connect",
+                              "children": [
+                                {
+                                  "value": "backend.data.db",
+                                  "children": [
+                                    {
+                                      "value": "backend.data",
+                                      "children": [
+                                        {
+                                          "value": "backend",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "data",
+                                          "children": []
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "value": "db",
+                                      "children": []
+                                    }
+                                  ]
+                                },
+                                {
+                                  "value": "connect",
+                                  "children": []
+                                }
+                              ]
+                            },
+                            {
+                              "value": "()",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "value": "await backend.data.block.initialize_blocks()",
+                  "children": [
+                    {
+                      "value": "await backend.data.block.initialize_blocks()",
+                      "children": [
+                        {
+                          "value": "backend.data.block.initialize_blocks()",
+                          "children": [
+                            {
+                              "value": "backend.data.block.initialize_blocks",
+                              "children": [
+                                {
+                                  "value": "backend.data.block",
+                                  "children": [
+                                    {
+                                      "value": "backend.data",
+                                      "children": [
+                                        {
+                                          "value": "backend",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "data",
+                                          "children": []
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "value": "block",
+                                      "children": []
+                                    }
+                                  ]
+                                },
+                                {
+                                  "value": "initialize_blocks",
+                                  "children": []
+                                }
+                              ]
+                            },
+                            {
+                              "value": "()",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "value": "await backend.data.user.migrate_and_encrypt_user_integrations()",
+                  "children": [
+                    {
+                      "value": "await backend.data.user.migrate_and_encrypt_user_integrations()",
+                      "children": [
+                        {
+                          "value": "backend.data.user.migrate_and_encrypt_user_integrations()",
+                          "children": [
+                            {
+                              "value": "backend.data.user.migrate_and_encrypt_user_integrations",
+                              "children": [
+                                {
+                                  "value": "backend.data.user",
+                                  "children": [
+                                    {
+                                      "value": "backend.data",
+                                      "children": [
+                                        {
+                                          "value": "backend",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "data",
+                                          "children": []
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "value": "user",
+                                      "children": []
+                                    }
+                                  ]
+                                },
+                                {
+                                  "value": "migrate_and_encrypt_user_integrations",
+                                  "children": []
+                                }
+                              ]
+                            },
+                            {
+                              "value": "()",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "value": "await backend.data.graph.fix_llm_provider_credentials()",
+                  "children": [
+                    {
+                      "value": "await backend.data.graph.fix_llm_provider_credentials()",
+                      "children": [
+                        {
+                          "value": "backend.data.graph.fix_llm_provider_credentials()",
+                          "children": [
+                            {
+                              "value": "backend.data.graph.fix_llm_provider_credentials",
+                              "children": [
+                                {
+                                  "value": "backend.data.graph",
+                                  "children": [
+                                    {
+                                      "value": "backend.data",
+                                      "children": [
+                                        {
+                                          "value": "backend",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "data",
+                                          "children": []
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "value": "graph",
+                                      "children": []
+                                    }
+                                  ]
+                                },
+                                {
+                                  "value": "fix_llm_provider_credentials",
+                                  "children": []
+                                }
+                              ]
+                            },
+                            {
+                              "value": "()",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "value": "with launch_darkly_context():\n        yield",
+                  "children": [
+                    {
+                      "value": "launch_darkly_context()",
+                      "children": [
+                        {
+                          "value": "launch_darkly_context()",
+                          "children": [
+                            {
+                              "value": "launch_darkly_context()",
+                              "children": [
+                                {
+                                  "value": "launch_darkly_context",
+                                  "children": []
+                                },
+                                {
+                                  "value": "()",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "yield",
+                      "children": [
+                        {
+                          "value": "yield",
+                          "children": [
+                            {
+                              "value": "yield",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "value": "await backend.data.db.disconnect()",
+                  "children": [
+                    {
+                      "value": "await backend.data.db.disconnect()",
+                      "children": [
+                        {
+                          "value": "backend.data.db.disconnect()",
+                          "children": [
+                            {
+                              "value": "backend.data.db.disconnect",
+                              "children": [
+                                {
+                                  "value": "backend.data.db",
+                                  "children": [
+                                    {
+                                      "value": "backend.data",
+                                      "children": [
+                                        {
+                                          "value": "backend",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "data",
+                                          "children": []
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "value": "db",
+                                      "children": []
+                                    }
+                                  ]
+                                },
+                                {
+                                  "value": "disconnect",
+                                  "children": []
+                                }
+                              ]
+                            },
+                            {
+                              "value": "()",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "docs_url = (\n    \"/docs\"\n    if settings.config.app_env == backend.util.settings.AppEnvironment.LOCAL\n    else None\n)",
+      "children": [
+        {
+          "value": "docs_url = (\n    \"/docs\"\n    if settings.config.app_env == backend.util.settings.AppEnvironment.LOCAL\n    else None\n)",
+          "children": [
+            {
+              "value": "docs_url",
+              "children": []
+            },
+            {
+              "value": "(\n    \"/docs\"\n    if settings.config.app_env == backend.util.settings.AppEnvironment.LOCAL\n    else None\n)",
+              "children": [
+                {
+                  "value": "\"/docs\"\n    if settings.config.app_env == backend.util.settings.AppEnvironment.LOCAL\n    else None",
+                  "children": [
+                    {
+                      "value": "\"/docs\"",
+                      "children": [
+                        {
+                          "value": "\"",
+                          "children": []
+                        },
+                        {
+                          "value": "/docs",
+                          "children": []
+                        },
+                        {
+                          "value": "\"",
+                          "children": []
+                        }
+                      ]
+                    },
+                    {
+                      "value": "settings.config.app_env == backend.util.settings.AppEnvironment.LOCAL",
+                      "children": [
+                        {
+                          "value": "settings.config.app_env",
+                          "children": [
+                            {
+                              "value": "settings.config",
+                              "children": [
+                                {
+                                  "value": "settings",
+                                  "children": []
+                                },
+                                {
+                                  "value": "config",
+                                  "children": []
+                                }
+                              ]
+                            },
+                            {
+                              "value": "app_env",
+                              "children": []
+                            }
+                          ]
+                        },
+                        {
+                          "value": "backend.util.settings.AppEnvironment.LOCAL",
+                          "children": [
+                            {
+                              "value": "backend.util.settings.AppEnvironment",
+                              "children": [
+                                {
+                                  "value": "backend.util.settings",
+                                  "children": [
+                                    {
+                                      "value": "backend.util",
+                                      "children": [
+                                        {
+                                          "value": "backend",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "util",
+                                          "children": []
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "value": "settings",
+                                      "children": []
+                                    }
+                                  ]
+                                },
+                                {
+                                  "value": "AppEnvironment",
+                                  "children": []
+                                }
+                              ]
+                            },
+                            {
+                              "value": "LOCAL",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "None",
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "app = fastapi.FastAPI(\n    title=\"AutoGPT Agent Server\",\n    description=(\n        \"This server is used to execute agents that are created by the \"\n        \"AutoGPT system.\"\n    ),\n    summary=\"AutoGPT Agent Server\",\n    version=\"0.1\",\n    lifespan=lifespan_context,\n    docs_url=docs_url,\n)",
+      "children": [
+        {
+          "value": "app = fastapi.FastAPI(\n    title=\"AutoGPT Agent Server\",\n    description=(\n        \"This server is used to execute agents that are created by the \"\n        \"AutoGPT system.\"\n    ),\n    summary=\"AutoGPT Agent Server\",\n    version=\"0.1\",\n    lifespan=lifespan_context,\n    docs_url=docs_url,\n)",
+          "children": [
+            {
+              "value": "app",
+              "children": []
+            },
+            {
+              "value": "fastapi.FastAPI(\n    title=\"AutoGPT Agent Server\",\n    description=(\n        \"This server is used to execute agents that are created by the \"\n        \"AutoGPT system.\"\n    ),\n    summary=\"AutoGPT Agent Server\",\n    version=\"0.1\",\n    lifespan=lifespan_context,\n    docs_url=docs_url,\n)",
+              "children": [
+                {
+                  "value": "fastapi.FastAPI",
+                  "children": [
+                    {
+                      "value": "fastapi",
+                      "children": []
+                    },
+                    {
+                      "value": "FastAPI",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "value": "(\n    title=\"AutoGPT Agent Server\",\n    description=(\n        \"This server is used to execute agents that are created by the \"\n        \"AutoGPT system.\"\n    ),\n    summary=\"AutoGPT Agent Server\",\n    version=\"0.1\",\n    lifespan=lifespan_context,\n    docs_url=docs_url,\n)",
+                  "children": [
+                    {
+                      "value": "title=\"AutoGPT Agent Server\"",
+                      "children": [
+                        {
+                          "value": "title",
+                          "children": []
+                        },
+                        {
+                          "value": "\"AutoGPT Agent Server\"",
+                          "children": [
+                            {
+                              "value": "\"",
+                              "children": []
+                            },
+                            {
+                              "value": "AutoGPT Agent Server",
+                              "children": []
+                            },
+                            {
+                              "value": "\"",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "description=(\n        \"This server is used to execute agents that are created by the \"\n        \"AutoGPT system.\"\n    )",
+                      "children": [
+                        {
+                          "value": "description",
+                          "children": []
+                        },
+                        {
+                          "value": "(\n        \"This server is used to execute agents that are created by the \"\n        \"AutoGPT system.\"\n    )",
+                          "children": [
+                            {
+                              "value": "\"This server is used to execute agents that are created by the \"\n        \"AutoGPT system.\"",
+                              "children": [
+                                {
+                                  "value": "\"This server is used to execute agents that are created by the \"",
+                                  "children": [
+                                    {
+                                      "value": "\"",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "This server is used to execute agents that are created by the",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "\"",
+                                      "children": []
+                                    }
+                                  ]
+                                },
+                                {
+                                  "value": "\"AutoGPT system.\"",
+                                  "children": [
+                                    {
+                                      "value": "\"",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "AutoGPT system.",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "\"",
+                                      "children": []
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "summary=\"AutoGPT Agent Server\"",
+                      "children": [
+                        {
+                          "value": "summary",
+                          "children": []
+                        },
+                        {
+                          "value": "\"AutoGPT Agent Server\"",
+                          "children": [
+                            {
+                              "value": "\"",
+                              "children": []
+                            },
+                            {
+                              "value": "AutoGPT Agent Server",
+                              "children": []
+                            },
+                            {
+                              "value": "\"",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "version=\"0.1\"",
+                      "children": [
+                        {
+                          "value": "version",
+                          "children": []
+                        },
+                        {
+                          "value": "\"0.1\"",
+                          "children": [
+                            {
+                              "value": "\"",
+                              "children": []
+                            },
+                            {
+                              "value": "0.1",
+                              "children": []
+                            },
+                            {
+                              "value": "\"",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "lifespan=lifespan_context",
+                      "children": [
+                        {
+                          "value": "lifespan",
+                          "children": []
+                        },
+                        {
+                          "value": "lifespan_context",
+                          "children": []
+                        }
+                      ]
+                    },
+                    {
+                      "value": "docs_url=docs_url",
+                      "children": [
+                        {
+                          "value": "docs_url",
+                          "children": []
+                        },
+                        {
+                          "value": "docs_url",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "def handle_internal_http_error(status_code: int = 500, log_error: bool = True):\n    def handler(request: fastapi.Request, exc: Exception):\n        if log_error:\n            logger.exception(f\"{request.method} {request.url.path} failed: {exc}\")\n        return fastapi.responses.JSONResponse(\n            content={\n                \"message\": f\"{request.method} {request.url.path} failed\",\n                \"detail\": str(exc),\n            },\n            status_code=status_code,\n        )\n\n    return handler",
+      "children": [
+        {
+          "value": "handle_internal_http_error",
+          "children": []
+        },
+        {
+          "value": "(status_code: int = 500, log_error: bool = True)",
+          "children": [
+            {
+              "value": "status_code: int = 500",
+              "children": [
+                {
+                  "value": "status_code",
+                  "children": []
+                },
+                {
+                  "value": "int",
+                  "children": [
+                    {
+                      "value": "int",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "value": "500",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "value": "log_error: bool = True",
+              "children": [
+                {
+                  "value": "log_error",
+                  "children": []
+                },
+                {
+                  "value": "bool",
+                  "children": [
+                    {
+                      "value": "bool",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "value": "True",
+                  "children": []
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "value": "def handler(request: fastapi.Request, exc: Exception):\n        if log_error:\n            logger.exception(f\"{request.method} {request.url.path} failed: {exc}\")\n        return fastapi.responses.JSONResponse(\n            content={\n                \"message\": f\"{request.method} {request.url.path} failed\",\n                \"detail\": str(exc),\n            },\n            status_code=status_code,\n        )\n\n    return handler",
+          "children": [
+            {
+              "value": "def handler(request: fastapi.Request, exc: Exception):\n        if log_error:\n            logger.exception(f\"{request.method} {request.url.path} failed: {exc}\")\n        return fastapi.responses.JSONResponse(\n            content={\n                \"message\": f\"{request.method} {request.url.path} failed\",\n                \"detail\": str(exc),\n            },\n            status_code=status_code,\n        )",
+              "children": [
+                {
+                  "value": "handler",
+                  "children": []
+                },
+                {
+                  "value": "(request: fastapi.Request, exc: Exception)",
+                  "children": [
+                    {
+                      "value": "request: fastapi.Request",
+                      "children": [
+                        {
+                          "value": "request",
+                          "children": []
+                        },
+                        {
+                          "value": "fastapi.Request",
+                          "children": [
+                            {
+                              "value": "fastapi.Request",
+                              "children": [
+                                {
+                                  "value": "fastapi",
+                                  "children": []
+                                },
+                                {
+                                  "value": "Request",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "exc: Exception",
+                      "children": [
+                        {
+                          "value": "exc",
+                          "children": []
+                        },
+                        {
+                          "value": "Exception",
+                          "children": [
+                            {
+                              "value": "Exception",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "value": "if log_error:\n            logger.exception(f\"{request.method} {request.url.path} failed: {exc}\")\n        return fastapi.responses.JSONResponse(\n            content={\n                \"message\": f\"{request.method} {request.url.path} failed\",\n                \"detail\": str(exc),\n            },\n            status_code=status_code,\n        )",
+                  "children": [
+                    {
+                      "value": "if log_error:\n            logger.exception(f\"{request.method} {request.url.path} failed: {exc}\")",
+                      "children": [
+                        {
+                          "value": "log_error",
+                          "children": []
+                        },
+                        {
+                          "value": "logger.exception(f\"{request.method} {request.url.path} failed: {exc}\")",
+                          "children": [
+                            {
+                              "value": "logger.exception(f\"{request.method} {request.url.path} failed: {exc}\")",
+                              "children": [
+                                {
+                                  "value": "logger.exception(f\"{request.method} {request.url.path} failed: {exc}\")",
+                                  "children": [
+                                    {
+                                      "value": "logger.exception",
+                                      "children": [
+                                        {
+                                          "value": "logger",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "exception",
+                                          "children": []
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "value": "(f\"{request.method} {request.url.path} failed: {exc}\")",
+                                      "children": [
+                                        {
+                                          "value": "f\"{request.method} {request.url.path} failed: {exc}\"",
+                                          "children": [
+                                            {
+                                              "value": "f\"",
+                                              "children": []
+                                            },
+                                            {
+                                              "value": "{request.method}",
+                                              "children": [
+                                                {
+                                                  "value": "request.method",
+                                                  "children": [
+                                                    {
+                                                      "value": "request",
+                                                      "children": []
+                                                    },
+                                                    {
+                                                      "value": "method",
+                                                      "children": []
+                                                    }
+                                                  ]
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "value": "",
+                                              "children": []
+                                            },
+                                            {
+                                              "value": "{request.url.path}",
+                                              "children": [
+                                                {
+                                                  "value": "request.url.path",
+                                                  "children": [
+                                                    {
+                                                      "value": "request.url",
+                                                      "children": [
+                                                        {
+                                                          "value": "request",
+                                                          "children": []
+                                                        },
+                                                        {
+                                                          "value": "url",
+                                                          "children": []
+                                                        }
+                                                      ]
+                                                    },
+                                                    {
+                                                      "value": "path",
+                                                      "children": []
+                                                    }
+                                                  ]
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "value": "failed:",
+                                              "children": []
+                                            },
+                                            {
+                                              "value": "{exc}",
+                                              "children": [
+                                                {
+                                                  "value": "exc",
+                                                  "children": []
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "value": "\"",
+                                              "children": []
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "return fastapi.responses.JSONResponse(\n            content={\n                \"message\": f\"{request.method} {request.url.path} failed\",\n                \"detail\": str(exc),\n            },\n            status_code=status_code,\n        )",
+                      "children": [
+                        {
+                          "value": "fastapi.responses.JSONResponse(\n            content={\n                \"message\": f\"{request.method} {request.url.path} failed\",\n                \"detail\": str(exc),\n            },\n            status_code=status_code,\n        )",
+                          "children": [
+                            {
+                              "value": "fastapi.responses.JSONResponse",
+                              "children": [
+                                {
+                                  "value": "fastapi.responses",
+                                  "children": [
+                                    {
+                                      "value": "fastapi",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "responses",
+                                      "children": []
+                                    }
+                                  ]
+                                },
+                                {
+                                  "value": "JSONResponse",
+                                  "children": []
+                                }
+                              ]
+                            },
+                            {
+                              "value": "(\n            content={\n                \"message\": f\"{request.method} {request.url.path} failed\",\n                \"detail\": str(exc),\n            },\n            status_code=status_code,\n        )",
+                              "children": [
+                                {
+                                  "value": "content={\n                \"message\": f\"{request.method} {request.url.path} failed\",\n                \"detail\": str(exc),\n            }",
+                                  "children": [
+                                    {
+                                      "value": "content",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "{\n                \"message\": f\"{request.method} {request.url.path} failed\",\n                \"detail\": str(exc),\n            }",
+                                      "children": [
+                                        {
+                                          "value": "\"message\": f\"{request.method} {request.url.path} failed\"",
+                                          "children": [
+                                            {
+                                              "value": "\"message\"",
+                                              "children": [
+                                                {
+                                                  "value": "\"",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "message",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "\"",
+                                                  "children": []
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "value": "f\"{request.method} {request.url.path} failed\"",
+                                              "children": [
+                                                {
+                                                  "value": "f\"",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "{request.method}",
+                                                  "children": [
+                                                    {
+                                                      "value": "request.method",
+                                                      "children": [
+                                                        {
+                                                          "value": "request",
+                                                          "children": []
+                                                        },
+                                                        {
+                                                          "value": "method",
+                                                          "children": []
+                                                        }
+                                                      ]
+                                                    }
+                                                  ]
+                                                },
+                                                {
+                                                  "value": "",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "{request.url.path}",
+                                                  "children": [
+                                                    {
+                                                      "value": "request.url.path",
+                                                      "children": [
+                                                        {
+                                                          "value": "request.url",
+                                                          "children": [
+                                                            {
+                                                              "value": "request",
+                                                              "children": []
+                                                            },
+                                                            {
+                                                              "value": "url",
+                                                              "children": []
+                                                            }
+                                                          ]
+                                                        },
+                                                        {
+                                                          "value": "path",
+                                                          "children": []
+                                                        }
+                                                      ]
+                                                    }
+                                                  ]
+                                                },
+                                                {
+                                                  "value": "failed",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "\"",
+                                                  "children": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "value": "\"detail\": str(exc)",
+                                          "children": [
+                                            {
+                                              "value": "\"detail\"",
+                                              "children": [
+                                                {
+                                                  "value": "\"",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "detail",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "\"",
+                                                  "children": []
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "value": "str(exc)",
+                                              "children": [
+                                                {
+                                                  "value": "str",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "(exc)",
+                                                  "children": [
+                                                    {
+                                                      "value": "exc",
+                                                      "children": []
+                                                    }
+                                                  ]
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                },
+                                {
+                                  "value": "status_code=status_code",
+                                  "children": [
+                                    {
+                                      "value": "status_code",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "status_code",
+                                      "children": []
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "return handler",
+              "children": [
+                {
+                  "value": "handler",
+                  "children": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "app.add_exception_handler(ValueError, handle_internal_http_error(400))",
+      "children": [
+        {
+          "value": "app.add_exception_handler(ValueError, handle_internal_http_error(400))",
+          "children": [
+            {
+              "value": "app.add_exception_handler",
+              "children": [
+                {
+                  "value": "app",
+                  "children": []
+                },
+                {
+                  "value": "add_exception_handler",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "value": "(ValueError, handle_internal_http_error(400))",
+              "children": [
+                {
+                  "value": "ValueError",
+                  "children": []
+                },
+                {
+                  "value": "handle_internal_http_error(400)",
+                  "children": [
+                    {
+                      "value": "handle_internal_http_error",
+                      "children": []
+                    },
+                    {
+                      "value": "(400)",
+                      "children": [
+                        {
+                          "value": "400",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "app.add_exception_handler(Exception, handle_internal_http_error(500))",
+      "children": [
+        {
+          "value": "app.add_exception_handler(Exception, handle_internal_http_error(500))",
+          "children": [
+            {
+              "value": "app.add_exception_handler",
+              "children": [
+                {
+                  "value": "app",
+                  "children": []
+                },
+                {
+                  "value": "add_exception_handler",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "value": "(Exception, handle_internal_http_error(500))",
+              "children": [
+                {
+                  "value": "Exception",
+                  "children": []
+                },
+                {
+                  "value": "handle_internal_http_error(500)",
+                  "children": [
+                    {
+                      "value": "handle_internal_http_error",
+                      "children": []
+                    },
+                    {
+                      "value": "(500)",
+                      "children": [
+                        {
+                          "value": "500",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "app.include_router(backend.server.routers.v1.v1_router, tags=[\"v1\"], prefix=\"/api\")",
+      "children": [
+        {
+          "value": "app.include_router(backend.server.routers.v1.v1_router, tags=[\"v1\"], prefix=\"/api\")",
+          "children": [
+            {
+              "value": "app.include_router",
+              "children": [
+                {
+                  "value": "app",
+                  "children": []
+                },
+                {
+                  "value": "include_router",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "value": "(backend.server.routers.v1.v1_router, tags=[\"v1\"], prefix=\"/api\")",
+              "children": [
+                {
+                  "value": "backend.server.routers.v1.v1_router",
+                  "children": [
+                    {
+                      "value": "backend.server.routers.v1",
+                      "children": [
+                        {
+                          "value": "backend.server.routers",
+                          "children": [
+                            {
+                              "value": "backend.server",
+                              "children": [
+                                {
+                                  "value": "backend",
+                                  "children": []
+                                },
+                                {
+                                  "value": "server",
+                                  "children": []
+                                }
+                              ]
+                            },
+                            {
+                              "value": "routers",
+                              "children": []
+                            }
+                          ]
+                        },
+                        {
+                          "value": "v1",
+                          "children": []
+                        }
+                      ]
+                    },
+                    {
+                      "value": "v1_router",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "value": "tags=[\"v1\"]",
+                  "children": [
+                    {
+                      "value": "tags",
+                      "children": []
+                    },
+                    {
+                      "value": "[\"v1\"]",
+                      "children": [
+                        {
+                          "value": "\"v1\"",
+                          "children": [
+                            {
+                              "value": "\"",
+                              "children": []
+                            },
+                            {
+                              "value": "v1",
+                              "children": []
+                            },
+                            {
+                              "value": "\"",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "value": "prefix=\"/api\"",
+                  "children": [
+                    {
+                      "value": "prefix",
+                      "children": []
+                    },
+                    {
+                      "value": "\"/api\"",
+                      "children": [
+                        {
+                          "value": "\"",
+                          "children": []
+                        },
+                        {
+                          "value": "/api",
+                          "children": []
+                        },
+                        {
+                          "value": "\"",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "app.include_router(\n    backend.server.v2.store.routes.router, tags=[\"v2\"], prefix=\"/api/store\"\n)",
+      "children": [
+        {
+          "value": "app.include_router(\n    backend.server.v2.store.routes.router, tags=[\"v2\"], prefix=\"/api/store\"\n)",
+          "children": [
+            {
+              "value": "app.include_router",
+              "children": [
+                {
+                  "value": "app",
+                  "children": []
+                },
+                {
+                  "value": "include_router",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "value": "(\n    backend.server.v2.store.routes.router, tags=[\"v2\"], prefix=\"/api/store\"\n)",
+              "children": [
+                {
+                  "value": "backend.server.v2.store.routes.router",
+                  "children": [
+                    {
+                      "value": "backend.server.v2.store.routes",
+                      "children": [
+                        {
+                          "value": "backend.server.v2.store",
+                          "children": [
+                            {
+                              "value": "backend.server.v2",
+                              "children": [
+                                {
+                                  "value": "backend.server",
+                                  "children": [
+                                    {
+                                      "value": "backend",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "server",
+                                      "children": []
+                                    }
+                                  ]
+                                },
+                                {
+                                  "value": "v2",
+                                  "children": []
+                                }
+                              ]
+                            },
+                            {
+                              "value": "store",
+                              "children": []
+                            }
+                          ]
+                        },
+                        {
+                          "value": "routes",
+                          "children": []
+                        }
+                      ]
+                    },
+                    {
+                      "value": "router",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "value": "tags=[\"v2\"]",
+                  "children": [
+                    {
+                      "value": "tags",
+                      "children": []
+                    },
+                    {
+                      "value": "[\"v2\"]",
+                      "children": [
+                        {
+                          "value": "\"v2\"",
+                          "children": [
+                            {
+                              "value": "\"",
+                              "children": []
+                            },
+                            {
+                              "value": "v2",
+                              "children": []
+                            },
+                            {
+                              "value": "\"",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "value": "prefix=\"/api/store\"",
+                  "children": [
+                    {
+                      "value": "prefix",
+                      "children": []
+                    },
+                    {
+                      "value": "\"/api/store\"",
+                      "children": [
+                        {
+                          "value": "\"",
+                          "children": []
+                        },
+                        {
+                          "value": "/api/store",
+                          "children": []
+                        },
+                        {
+                          "value": "\"",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "app.include_router(\n    backend.server.v2.library.routes.router, tags=[\"v2\"], prefix=\"/api/library\"\n)",
+      "children": [
+        {
+          "value": "app.include_router(\n    backend.server.v2.library.routes.router, tags=[\"v2\"], prefix=\"/api/library\"\n)",
+          "children": [
+            {
+              "value": "app.include_router",
+              "children": [
+                {
+                  "value": "app",
+                  "children": []
+                },
+                {
+                  "value": "include_router",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "value": "(\n    backend.server.v2.library.routes.router, tags=[\"v2\"], prefix=\"/api/library\"\n)",
+              "children": [
+                {
+                  "value": "backend.server.v2.library.routes.router",
+                  "children": [
+                    {
+                      "value": "backend.server.v2.library.routes",
+                      "children": [
+                        {
+                          "value": "backend.server.v2.library",
+                          "children": [
+                            {
+                              "value": "backend.server.v2",
+                              "children": [
+                                {
+                                  "value": "backend.server",
+                                  "children": [
+                                    {
+                                      "value": "backend",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "server",
+                                      "children": []
+                                    }
+                                  ]
+                                },
+                                {
+                                  "value": "v2",
+                                  "children": []
+                                }
+                              ]
+                            },
+                            {
+                              "value": "library",
+                              "children": []
+                            }
+                          ]
+                        },
+                        {
+                          "value": "routes",
+                          "children": []
+                        }
+                      ]
+                    },
+                    {
+                      "value": "router",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "value": "tags=[\"v2\"]",
+                  "children": [
+                    {
+                      "value": "tags",
+                      "children": []
+                    },
+                    {
+                      "value": "[\"v2\"]",
+                      "children": [
+                        {
+                          "value": "\"v2\"",
+                          "children": [
+                            {
+                              "value": "\"",
+                              "children": []
+                            },
+                            {
+                              "value": "v2",
+                              "children": []
+                            },
+                            {
+                              "value": "\"",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "value": "prefix=\"/api/library\"",
+                  "children": [
+                    {
+                      "value": "prefix",
+                      "children": []
+                    },
+                    {
+                      "value": "\"/api/library\"",
+                      "children": [
+                        {
+                          "value": "\"",
+                          "children": []
+                        },
+                        {
+                          "value": "/api/library",
+                          "children": []
+                        },
+                        {
+                          "value": "\"",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "@app.get(path=\"/health\", tags=[\"health\"], dependencies=[])\nasync def health():\n    return {\"status\": \"healthy\"}",
+      "children": [
+        {
+          "value": "@app.get(path=\"/health\", tags=[\"health\"], dependencies=[])",
+          "children": [
+            {
+              "value": "app.get(path=\"/health\", tags=[\"health\"], dependencies=[])",
+              "children": [
+                {
+                  "value": "app.get",
+                  "children": [
+                    {
+                      "value": "app",
+                      "children": []
+                    },
+                    {
+                      "value": "get",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "value": "(path=\"/health\", tags=[\"health\"], dependencies=[])",
+                  "children": [
+                    {
+                      "value": "path=\"/health\"",
+                      "children": [
+                        {
+                          "value": "path",
+                          "children": []
+                        },
+                        {
+                          "value": "\"/health\"",
+                          "children": [
+                            {
+                              "value": "\"",
+                              "children": []
+                            },
+                            {
+                              "value": "/health",
+                              "children": []
+                            },
+                            {
+                              "value": "\"",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "tags=[\"health\"]",
+                      "children": [
+                        {
+                          "value": "tags",
+                          "children": []
+                        },
+                        {
+                          "value": "[\"health\"]",
+                          "children": [
+                            {
+                              "value": "\"health\"",
+                              "children": [
+                                {
+                                  "value": "\"",
+                                  "children": []
+                                },
+                                {
+                                  "value": "health",
+                                  "children": []
+                                },
+                                {
+                                  "value": "\"",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "dependencies=[]",
+                      "children": [
+                        {
+                          "value": "dependencies",
+                          "children": []
+                        },
+                        {
+                          "value": "[]",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "value": "async def health():\n    return {\"status\": \"healthy\"}",
+          "children": [
+            {
+              "value": "health",
+              "children": []
+            },
+            {
+              "value": "()",
+              "children": []
+            },
+            {
+              "value": "return {\"status\": \"healthy\"}",
+              "children": [
+                {
+                  "value": "return {\"status\": \"healthy\"}",
+                  "children": [
+                    {
+                      "value": "{\"status\": \"healthy\"}",
+                      "children": [
+                        {
+                          "value": "\"status\": \"healthy\"",
+                          "children": [
+                            {
+                              "value": "\"status\"",
+                              "children": [
+                                {
+                                  "value": "\"",
+                                  "children": []
+                                },
+                                {
+                                  "value": "status",
+                                  "children": []
+                                },
+                                {
+                                  "value": "\"",
+                                  "children": []
+                                }
+                              ]
+                            },
+                            {
+                              "value": "\"healthy\"",
+                              "children": [
+                                {
+                                  "value": "\"",
+                                  "children": []
+                                },
+                                {
+                                  "value": "healthy",
+                                  "children": []
+                                },
+                                {
+                                  "value": "\"",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "class AgentServer(backend.util.service.AppProcess):\n    def run(self):\n        server_app = starlette.middleware.cors.CORSMiddleware(\n            app=app,\n            allow_origins=settings.config.backend_cors_allow_origins,\n            allow_credentials=True,\n            allow_methods=[\"*\"],  # Allows all methods\n            allow_headers=[\"*\"],  # Allows all headers\n        )\n        uvicorn.run(\n            server_app,\n            host=backend.util.settings.Config().agent_api_host,\n            port=backend.util.settings.Config().agent_api_port,\n        )\n\n    @staticmethod\n    async def test_execute_graph(\n        graph_id: str, node_input: dict[typing.Any, typing.Any], user_id: str\n    ):\n        return backend.server.routers.v1.execute_graph(graph_id, node_input, user_id)\n\n    @staticmethod\n    async def test_create_graph(\n        create_graph: backend.server.routers.v1.CreateGraph,\n        user_id: str,\n    ):\n        return await backend.server.routers.v1.create_new_graph(create_graph, user_id)\n\n    @staticmethod\n    async def test_get_graph_run_status(graph_exec_id: str, user_id: str):\n        execution = await backend.data.graph.get_execution(\n            user_id=user_id, execution_id=graph_exec_id\n        )\n        if not execution:\n            raise ValueError(f\"Execution {graph_exec_id} not found\")\n        return execution.status\n\n    @staticmethod\n    async def test_get_graph_run_node_execution_results(\n        graph_id: str, graph_exec_id: str, user_id: str\n    ):\n        return await backend.server.routers.v1.get_graph_run_node_execution_results(\n            graph_id, graph_exec_id, user_id\n        )\n\n    @staticmethod\n    async def test_delete_graph(graph_id: str, user_id: str):\n        return await backend.server.routers.v1.delete_graph(graph_id, user_id)\n\n    def set_test_dependency_overrides(self, overrides: dict):\n        app.dependency_overrides.update(overrides)",
+      "children": [
+        {
+          "value": "AgentServer",
+          "children": []
+        },
+        {
+          "value": "(backend.util.service.AppProcess)",
+          "children": [
+            {
+              "value": "backend.util.service.AppProcess",
+              "children": [
+                {
+                  "value": "backend.util.service",
+                  "children": [
+                    {
+                      "value": "backend.util",
+                      "children": [
+                        {
+                          "value": "backend",
+                          "children": []
+                        },
+                        {
+                          "value": "util",
+                          "children": []
+                        }
+                      ]
+                    },
+                    {
+                      "value": "service",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "value": "AppProcess",
+                  "children": []
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "value": "def run(self):\n        server_app = starlette.middleware.cors.CORSMiddleware(\n            app=app,\n            allow_origins=settings.config.backend_cors_allow_origins,\n            allow_credentials=True,\n            allow_methods=[\"*\"],  # Allows all methods\n            allow_headers=[\"*\"],  # Allows all headers\n        )\n        uvicorn.run(\n            server_app,\n            host=backend.util.settings.Config().agent_api_host,\n            port=backend.util.settings.Config().agent_api_port,\n        )\n\n    @staticmethod\n    async def test_execute_graph(\n        graph_id: str, node_input: dict[typing.Any, typing.Any], user_id: str\n    ):\n        return backend.server.routers.v1.execute_graph(graph_id, node_input, user_id)\n\n    @staticmethod\n    async def test_create_graph(\n        create_graph: backend.server.routers.v1.CreateGraph,\n        user_id: str,\n    ):\n        return await backend.server.routers.v1.create_new_graph(create_graph, user_id)\n\n    @staticmethod\n    async def test_get_graph_run_status(graph_exec_id: str, user_id: str):\n        execution = await backend.data.graph.get_execution(\n            user_id=user_id, execution_id=graph_exec_id\n        )\n        if not execution:\n            raise ValueError(f\"Execution {graph_exec_id} not found\")\n        return execution.status\n\n    @staticmethod\n    async def test_get_graph_run_node_execution_results(\n        graph_id: str, graph_exec_id: str, user_id: str\n    ):\n        return await backend.server.routers.v1.get_graph_run_node_execution_results(\n            graph_id, graph_exec_id, user_id\n        )\n\n    @staticmethod\n    async def test_delete_graph(graph_id: str, user_id: str):\n        return await backend.server.routers.v1.delete_graph(graph_id, user_id)\n\n    def set_test_dependency_overrides(self, overrides: dict):\n        app.dependency_overrides.update(overrides)",
+          "children": [
+            {
+              "value": "def run(self):\n        server_app = starlette.middleware.cors.CORSMiddleware(\n            app=app,\n            allow_origins=settings.config.backend_cors_allow_origins,\n            allow_credentials=True,\n            allow_methods=[\"*\"],  # Allows all methods\n            allow_headers=[\"*\"],  # Allows all headers\n        )\n        uvicorn.run(\n            server_app,\n            host=backend.util.settings.Config().agent_api_host,\n            port=backend.util.settings.Config().agent_api_port,\n        )",
+              "children": [
+                {
+                  "value": "run",
+                  "children": []
+                },
+                {
+                  "value": "(self)",
+                  "children": [
+                    {
+                      "value": "self",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "value": "server_app = starlette.middleware.cors.CORSMiddleware(\n            app=app,\n            allow_origins=settings.config.backend_cors_allow_origins,\n            allow_credentials=True,\n            allow_methods=[\"*\"],  # Allows all methods\n            allow_headers=[\"*\"],  # Allows all headers\n        )\n        uvicorn.run(\n            server_app,\n            host=backend.util.settings.Config().agent_api_host,\n            port=backend.util.settings.Config().agent_api_port,\n        )",
+                  "children": [
+                    {
+                      "value": "server_app = starlette.middleware.cors.CORSMiddleware(\n            app=app,\n            allow_origins=settings.config.backend_cors_allow_origins,\n            allow_credentials=True,\n            allow_methods=[\"*\"],  # Allows all methods\n            allow_headers=[\"*\"],  # Allows all headers\n        )",
+                      "children": [
+                        {
+                          "value": "server_app = starlette.middleware.cors.CORSMiddleware(\n            app=app,\n            allow_origins=settings.config.backend_cors_allow_origins,\n            allow_credentials=True,\n            allow_methods=[\"*\"],  # Allows all methods\n            allow_headers=[\"*\"],  # Allows all headers\n        )",
+                          "children": [
+                            {
+                              "value": "server_app",
+                              "children": []
+                            },
+                            {
+                              "value": "starlette.middleware.cors.CORSMiddleware(\n            app=app,\n            allow_origins=settings.config.backend_cors_allow_origins,\n            allow_credentials=True,\n            allow_methods=[\"*\"],  # Allows all methods\n            allow_headers=[\"*\"],  # Allows all headers\n        )",
+                              "children": [
+                                {
+                                  "value": "starlette.middleware.cors.CORSMiddleware",
+                                  "children": [
+                                    {
+                                      "value": "starlette.middleware.cors",
+                                      "children": [
+                                        {
+                                          "value": "starlette.middleware",
+                                          "children": [
+                                            {
+                                              "value": "starlette",
+                                              "children": []
+                                            },
+                                            {
+                                              "value": "middleware",
+                                              "children": []
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "value": "cors",
+                                          "children": []
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "value": "CORSMiddleware",
+                                      "children": []
+                                    }
+                                  ]
+                                },
+                                {
+                                  "value": "(\n            app=app,\n            allow_origins=settings.config.backend_cors_allow_origins,\n            allow_credentials=True,\n            allow_methods=[\"*\"],  # Allows all methods\n            allow_headers=[\"*\"],  # Allows all headers\n        )",
+                                  "children": [
+                                    {
+                                      "value": "app=app",
+                                      "children": [
+                                        {
+                                          "value": "app",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "app",
+                                          "children": []
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "value": "allow_origins=settings.config.backend_cors_allow_origins",
+                                      "children": [
+                                        {
+                                          "value": "allow_origins",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "settings.config.backend_cors_allow_origins",
+                                          "children": [
+                                            {
+                                              "value": "settings.config",
+                                              "children": [
+                                                {
+                                                  "value": "settings",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "config",
+                                                  "children": []
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "value": "backend_cors_allow_origins",
+                                              "children": []
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "value": "allow_credentials=True",
+                                      "children": [
+                                        {
+                                          "value": "allow_credentials",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "True",
+                                          "children": []
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "value": "allow_methods=[\"*\"]",
+                                      "children": [
+                                        {
+                                          "value": "allow_methods",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "[\"*\"]",
+                                          "children": [
+                                            {
+                                              "value": "\"*\"",
+                                              "children": [
+                                                {
+                                                  "value": "\"",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "*",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "\"",
+                                                  "children": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "value": "# Allows all methods",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "allow_headers=[\"*\"]",
+                                      "children": [
+                                        {
+                                          "value": "allow_headers",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "[\"*\"]",
+                                          "children": [
+                                            {
+                                              "value": "\"*\"",
+                                              "children": [
+                                                {
+                                                  "value": "\"",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "*",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "\"",
+                                                  "children": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "value": "# Allows all headers",
+                                      "children": []
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "uvicorn.run(\n            server_app,\n            host=backend.util.settings.Config().agent_api_host,\n            port=backend.util.settings.Config().agent_api_port,\n        )",
+                      "children": [
+                        {
+                          "value": "uvicorn.run(\n            server_app,\n            host=backend.util.settings.Config().agent_api_host,\n            port=backend.util.settings.Config().agent_api_port,\n        )",
+                          "children": [
+                            {
+                              "value": "uvicorn.run",
+                              "children": [
+                                {
+                                  "value": "uvicorn",
+                                  "children": []
+                                },
+                                {
+                                  "value": "run",
+                                  "children": []
+                                }
+                              ]
+                            },
+                            {
+                              "value": "(\n            server_app,\n            host=backend.util.settings.Config().agent_api_host,\n            port=backend.util.settings.Config().agent_api_port,\n        )",
+                              "children": [
+                                {
+                                  "value": "server_app",
+                                  "children": []
+                                },
+                                {
+                                  "value": "host=backend.util.settings.Config().agent_api_host",
+                                  "children": [
+                                    {
+                                      "value": "host",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "backend.util.settings.Config().agent_api_host",
+                                      "children": [
+                                        {
+                                          "value": "backend.util.settings.Config()",
+                                          "children": [
+                                            {
+                                              "value": "backend.util.settings.Config",
+                                              "children": [
+                                                {
+                                                  "value": "backend.util.settings",
+                                                  "children": [
+                                                    {
+                                                      "value": "backend.util",
+                                                      "children": [
+                                                        {
+                                                          "value": "backend",
+                                                          "children": []
+                                                        },
+                                                        {
+                                                          "value": "util",
+                                                          "children": []
+                                                        }
+                                                      ]
+                                                    },
+                                                    {
+                                                      "value": "settings",
+                                                      "children": []
+                                                    }
+                                                  ]
+                                                },
+                                                {
+                                                  "value": "Config",
+                                                  "children": []
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "value": "()",
+                                              "children": []
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "value": "agent_api_host",
+                                          "children": []
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                },
+                                {
+                                  "value": "port=backend.util.settings.Config().agent_api_port",
+                                  "children": [
+                                    {
+                                      "value": "port",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "backend.util.settings.Config().agent_api_port",
+                                      "children": [
+                                        {
+                                          "value": "backend.util.settings.Config()",
+                                          "children": [
+                                            {
+                                              "value": "backend.util.settings.Config",
+                                              "children": [
+                                                {
+                                                  "value": "backend.util.settings",
+                                                  "children": [
+                                                    {
+                                                      "value": "backend.util",
+                                                      "children": [
+                                                        {
+                                                          "value": "backend",
+                                                          "children": []
+                                                        },
+                                                        {
+                                                          "value": "util",
+                                                          "children": []
+                                                        }
+                                                      ]
+                                                    },
+                                                    {
+                                                      "value": "settings",
+                                                      "children": []
+                                                    }
+                                                  ]
+                                                },
+                                                {
+                                                  "value": "Config",
+                                                  "children": []
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "value": "()",
+                                              "children": []
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "value": "agent_api_port",
+                                          "children": []
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "@staticmethod\n    async def test_execute_graph(\n        graph_id: str, node_input: dict[typing.Any, typing.Any], user_id: str\n    ):\n        return backend.server.routers.v1.execute_graph(graph_id, node_input, user_id)",
+              "children": [
+                {
+                  "value": "@staticmethod",
+                  "children": [
+                    {
+                      "value": "staticmethod",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "value": "async def test_execute_graph(\n        graph_id: str, node_input: dict[typing.Any, typing.Any], user_id: str\n    ):\n        return backend.server.routers.v1.execute_graph(graph_id, node_input, user_id)",
+                  "children": [
+                    {
+                      "value": "test_execute_graph",
+                      "children": []
+                    },
+                    {
+                      "value": "(\n        graph_id: str, node_input: dict[typing.Any, typing.Any], user_id: str\n    )",
+                      "children": [
+                        {
+                          "value": "graph_id: str",
+                          "children": [
+                            {
+                              "value": "graph_id",
+                              "children": []
+                            },
+                            {
+                              "value": "str",
+                              "children": [
+                                {
+                                  "value": "str",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "value": "node_input: dict[typing.Any, typing.Any]",
+                          "children": [
+                            {
+                              "value": "node_input",
+                              "children": []
+                            },
+                            {
+                              "value": "dict[typing.Any, typing.Any]",
+                              "children": [
+                                {
+                                  "value": "dict[typing.Any, typing.Any]",
+                                  "children": [
+                                    {
+                                      "value": "dict",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "[typing.Any, typing.Any]",
+                                      "children": [
+                                        {
+                                          "value": "typing.Any",
+                                          "children": [
+                                            {
+                                              "value": "typing.Any",
+                                              "children": [
+                                                {
+                                                  "value": "typing",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "Any",
+                                                  "children": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "value": "typing.Any",
+                                          "children": [
+                                            {
+                                              "value": "typing.Any",
+                                              "children": [
+                                                {
+                                                  "value": "typing",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "Any",
+                                                  "children": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "value": "user_id: str",
+                          "children": [
+                            {
+                              "value": "user_id",
+                              "children": []
+                            },
+                            {
+                              "value": "str",
+                              "children": [
+                                {
+                                  "value": "str",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "return backend.server.routers.v1.execute_graph(graph_id, node_input, user_id)",
+                      "children": [
+                        {
+                          "value": "return backend.server.routers.v1.execute_graph(graph_id, node_input, user_id)",
+                          "children": [
+                            {
+                              "value": "backend.server.routers.v1.execute_graph(graph_id, node_input, user_id)",
+                              "children": [
+                                {
+                                  "value": "backend.server.routers.v1.execute_graph",
+                                  "children": [
+                                    {
+                                      "value": "backend.server.routers.v1",
+                                      "children": [
+                                        {
+                                          "value": "backend.server.routers",
+                                          "children": [
+                                            {
+                                              "value": "backend.server",
+                                              "children": [
+                                                {
+                                                  "value": "backend",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "server",
+                                                  "children": []
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "value": "routers",
+                                              "children": []
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "value": "v1",
+                                          "children": []
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "value": "execute_graph",
+                                      "children": []
+                                    }
+                                  ]
+                                },
+                                {
+                                  "value": "(graph_id, node_input, user_id)",
+                                  "children": [
+                                    {
+                                      "value": "graph_id",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "node_input",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "user_id",
+                                      "children": []
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "@staticmethod\n    async def test_create_graph(\n        create_graph: backend.server.routers.v1.CreateGraph,\n        user_id: str,\n    ):\n        return await backend.server.routers.v1.create_new_graph(create_graph, user_id)",
+              "children": [
+                {
+                  "value": "@staticmethod",
+                  "children": [
+                    {
+                      "value": "staticmethod",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "value": "async def test_create_graph(\n        create_graph: backend.server.routers.v1.CreateGraph,\n        user_id: str,\n    ):\n        return await backend.server.routers.v1.create_new_graph(create_graph, user_id)",
+                  "children": [
+                    {
+                      "value": "test_create_graph",
+                      "children": []
+                    },
+                    {
+                      "value": "(\n        create_graph: backend.server.routers.v1.CreateGraph,\n        user_id: str,\n    )",
+                      "children": [
+                        {
+                          "value": "create_graph: backend.server.routers.v1.CreateGraph",
+                          "children": [
+                            {
+                              "value": "create_graph",
+                              "children": []
+                            },
+                            {
+                              "value": "backend.server.routers.v1.CreateGraph",
+                              "children": [
+                                {
+                                  "value": "backend.server.routers.v1.CreateGraph",
+                                  "children": [
+                                    {
+                                      "value": "backend.server.routers.v1",
+                                      "children": [
+                                        {
+                                          "value": "backend.server.routers",
+                                          "children": [
+                                            {
+                                              "value": "backend.server",
+                                              "children": [
+                                                {
+                                                  "value": "backend",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "server",
+                                                  "children": []
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "value": "routers",
+                                              "children": []
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "value": "v1",
+                                          "children": []
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "value": "CreateGraph",
+                                      "children": []
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "value": "user_id: str",
+                          "children": [
+                            {
+                              "value": "user_id",
+                              "children": []
+                            },
+                            {
+                              "value": "str",
+                              "children": [
+                                {
+                                  "value": "str",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "return await backend.server.routers.v1.create_new_graph(create_graph, user_id)",
+                      "children": [
+                        {
+                          "value": "return await backend.server.routers.v1.create_new_graph(create_graph, user_id)",
+                          "children": [
+                            {
+                              "value": "await backend.server.routers.v1.create_new_graph(create_graph, user_id)",
+                              "children": [
+                                {
+                                  "value": "backend.server.routers.v1.create_new_graph(create_graph, user_id)",
+                                  "children": [
+                                    {
+                                      "value": "backend.server.routers.v1.create_new_graph",
+                                      "children": [
+                                        {
+                                          "value": "backend.server.routers.v1",
+                                          "children": [
+                                            {
+                                              "value": "backend.server.routers",
+                                              "children": [
+                                                {
+                                                  "value": "backend.server",
+                                                  "children": [
+                                                    {
+                                                      "value": "backend",
+                                                      "children": []
+                                                    },
+                                                    {
+                                                      "value": "server",
+                                                      "children": []
+                                                    }
+                                                  ]
+                                                },
+                                                {
+                                                  "value": "routers",
+                                                  "children": []
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "value": "v1",
+                                              "children": []
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "value": "create_new_graph",
+                                          "children": []
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "value": "(create_graph, user_id)",
+                                      "children": [
+                                        {
+                                          "value": "create_graph",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "user_id",
+                                          "children": []
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "@staticmethod\n    async def test_get_graph_run_status(graph_exec_id: str, user_id: str):\n        execution = await backend.data.graph.get_execution(\n            user_id=user_id, execution_id=graph_exec_id\n        )\n        if not execution:\n            raise ValueError(f\"Execution {graph_exec_id} not found\")\n        return execution.status",
+              "children": [
+                {
+                  "value": "@staticmethod",
+                  "children": [
+                    {
+                      "value": "staticmethod",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "value": "async def test_get_graph_run_status(graph_exec_id: str, user_id: str):\n        execution = await backend.data.graph.get_execution(\n            user_id=user_id, execution_id=graph_exec_id\n        )\n        if not execution:\n            raise ValueError(f\"Execution {graph_exec_id} not found\")\n        return execution.status",
+                  "children": [
+                    {
+                      "value": "test_get_graph_run_status",
+                      "children": []
+                    },
+                    {
+                      "value": "(graph_exec_id: str, user_id: str)",
+                      "children": [
+                        {
+                          "value": "graph_exec_id: str",
+                          "children": [
+                            {
+                              "value": "graph_exec_id",
+                              "children": []
+                            },
+                            {
+                              "value": "str",
+                              "children": [
+                                {
+                                  "value": "str",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "value": "user_id: str",
+                          "children": [
+                            {
+                              "value": "user_id",
+                              "children": []
+                            },
+                            {
+                              "value": "str",
+                              "children": [
+                                {
+                                  "value": "str",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "execution = await backend.data.graph.get_execution(\n            user_id=user_id, execution_id=graph_exec_id\n        )\n        if not execution:\n            raise ValueError(f\"Execution {graph_exec_id} not found\")\n        return execution.status",
+                      "children": [
+                        {
+                          "value": "execution = await backend.data.graph.get_execution(\n            user_id=user_id, execution_id=graph_exec_id\n        )",
+                          "children": [
+                            {
+                              "value": "execution = await backend.data.graph.get_execution(\n            user_id=user_id, execution_id=graph_exec_id\n        )",
+                              "children": [
+                                {
+                                  "value": "execution",
+                                  "children": []
+                                },
+                                {
+                                  "value": "await backend.data.graph.get_execution(\n            user_id=user_id, execution_id=graph_exec_id\n        )",
+                                  "children": [
+                                    {
+                                      "value": "backend.data.graph.get_execution(\n            user_id=user_id, execution_id=graph_exec_id\n        )",
+                                      "children": [
+                                        {
+                                          "value": "backend.data.graph.get_execution",
+                                          "children": [
+                                            {
+                                              "value": "backend.data.graph",
+                                              "children": [
+                                                {
+                                                  "value": "backend.data",
+                                                  "children": [
+                                                    {
+                                                      "value": "backend",
+                                                      "children": []
+                                                    },
+                                                    {
+                                                      "value": "data",
+                                                      "children": []
+                                                    }
+                                                  ]
+                                                },
+                                                {
+                                                  "value": "graph",
+                                                  "children": []
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "value": "get_execution",
+                                              "children": []
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "value": "(\n            user_id=user_id, execution_id=graph_exec_id\n        )",
+                                          "children": [
+                                            {
+                                              "value": "user_id=user_id",
+                                              "children": [
+                                                {
+                                                  "value": "user_id",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "user_id",
+                                                  "children": []
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "value": "execution_id=graph_exec_id",
+                                              "children": [
+                                                {
+                                                  "value": "execution_id",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "graph_exec_id",
+                                                  "children": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "value": "if not execution:\n            raise ValueError(f\"Execution {graph_exec_id} not found\")",
+                          "children": [
+                            {
+                              "value": "not execution",
+                              "children": [
+                                {
+                                  "value": "execution",
+                                  "children": []
+                                }
+                              ]
+                            },
+                            {
+                              "value": "raise ValueError(f\"Execution {graph_exec_id} not found\")",
+                              "children": [
+                                {
+                                  "value": "raise ValueError(f\"Execution {graph_exec_id} not found\")",
+                                  "children": [
+                                    {
+                                      "value": "ValueError(f\"Execution {graph_exec_id} not found\")",
+                                      "children": [
+                                        {
+                                          "value": "ValueError",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "(f\"Execution {graph_exec_id} not found\")",
+                                          "children": [
+                                            {
+                                              "value": "f\"Execution {graph_exec_id} not found\"",
+                                              "children": [
+                                                {
+                                                  "value": "f\"",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "Execution",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "{graph_exec_id}",
+                                                  "children": [
+                                                    {
+                                                      "value": "graph_exec_id",
+                                                      "children": []
+                                                    }
+                                                  ]
+                                                },
+                                                {
+                                                  "value": "not found",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "\"",
+                                                  "children": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "value": "return execution.status",
+                          "children": [
+                            {
+                              "value": "execution.status",
+                              "children": [
+                                {
+                                  "value": "execution",
+                                  "children": []
+                                },
+                                {
+                                  "value": "status",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "@staticmethod\n    async def test_get_graph_run_node_execution_results(\n        graph_id: str, graph_exec_id: str, user_id: str\n    ):\n        return await backend.server.routers.v1.get_graph_run_node_execution_results(\n            graph_id, graph_exec_id, user_id\n        )",
+              "children": [
+                {
+                  "value": "@staticmethod",
+                  "children": [
+                    {
+                      "value": "staticmethod",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "value": "async def test_get_graph_run_node_execution_results(\n        graph_id: str, graph_exec_id: str, user_id: str\n    ):\n        return await backend.server.routers.v1.get_graph_run_node_execution_results(\n            graph_id, graph_exec_id, user_id\n        )",
+                  "children": [
+                    {
+                      "value": "test_get_graph_run_node_execution_results",
+                      "children": []
+                    },
+                    {
+                      "value": "(\n        graph_id: str, graph_exec_id: str, user_id: str\n    )",
+                      "children": [
+                        {
+                          "value": "graph_id: str",
+                          "children": [
+                            {
+                              "value": "graph_id",
+                              "children": []
+                            },
+                            {
+                              "value": "str",
+                              "children": [
+                                {
+                                  "value": "str",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "value": "graph_exec_id: str",
+                          "children": [
+                            {
+                              "value": "graph_exec_id",
+                              "children": []
+                            },
+                            {
+                              "value": "str",
+                              "children": [
+                                {
+                                  "value": "str",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "value": "user_id: str",
+                          "children": [
+                            {
+                              "value": "user_id",
+                              "children": []
+                            },
+                            {
+                              "value": "str",
+                              "children": [
+                                {
+                                  "value": "str",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "return await backend.server.routers.v1.get_graph_run_node_execution_results(\n            graph_id, graph_exec_id, user_id\n        )",
+                      "children": [
+                        {
+                          "value": "return await backend.server.routers.v1.get_graph_run_node_execution_results(\n            graph_id, graph_exec_id, user_id\n        )",
+                          "children": [
+                            {
+                              "value": "await backend.server.routers.v1.get_graph_run_node_execution_results(\n            graph_id, graph_exec_id, user_id\n        )",
+                              "children": [
+                                {
+                                  "value": "backend.server.routers.v1.get_graph_run_node_execution_results(\n            graph_id, graph_exec_id, user_id\n        )",
+                                  "children": [
+                                    {
+                                      "value": "backend.server.routers.v1.get_graph_run_node_execution_results",
+                                      "children": [
+                                        {
+                                          "value": "backend.server.routers.v1",
+                                          "children": [
+                                            {
+                                              "value": "backend.server.routers",
+                                              "children": [
+                                                {
+                                                  "value": "backend.server",
+                                                  "children": [
+                                                    {
+                                                      "value": "backend",
+                                                      "children": []
+                                                    },
+                                                    {
+                                                      "value": "server",
+                                                      "children": []
+                                                    }
+                                                  ]
+                                                },
+                                                {
+                                                  "value": "routers",
+                                                  "children": []
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "value": "v1",
+                                              "children": []
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "value": "get_graph_run_node_execution_results",
+                                          "children": []
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "value": "(\n            graph_id, graph_exec_id, user_id\n        )",
+                                      "children": [
+                                        {
+                                          "value": "graph_id",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "graph_exec_id",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "user_id",
+                                          "children": []
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "@staticmethod\n    async def test_delete_graph(graph_id: str, user_id: str):\n        return await backend.server.routers.v1.delete_graph(graph_id, user_id)",
+              "children": [
+                {
+                  "value": "@staticmethod",
+                  "children": [
+                    {
+                      "value": "staticmethod",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "value": "async def test_delete_graph(graph_id: str, user_id: str):\n        return await backend.server.routers.v1.delete_graph(graph_id, user_id)",
+                  "children": [
+                    {
+                      "value": "test_delete_graph",
+                      "children": []
+                    },
+                    {
+                      "value": "(graph_id: str, user_id: str)",
+                      "children": [
+                        {
+                          "value": "graph_id: str",
+                          "children": [
+                            {
+                              "value": "graph_id",
+                              "children": []
+                            },
+                            {
+                              "value": "str",
+                              "children": [
+                                {
+                                  "value": "str",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "value": "user_id: str",
+                          "children": [
+                            {
+                              "value": "user_id",
+                              "children": []
+                            },
+                            {
+                              "value": "str",
+                              "children": [
+                                {
+                                  "value": "str",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "return await backend.server.routers.v1.delete_graph(graph_id, user_id)",
+                      "children": [
+                        {
+                          "value": "return await backend.server.routers.v1.delete_graph(graph_id, user_id)",
+                          "children": [
+                            {
+                              "value": "await backend.server.routers.v1.delete_graph(graph_id, user_id)",
+                              "children": [
+                                {
+                                  "value": "backend.server.routers.v1.delete_graph(graph_id, user_id)",
+                                  "children": [
+                                    {
+                                      "value": "backend.server.routers.v1.delete_graph",
+                                      "children": [
+                                        {
+                                          "value": "backend.server.routers.v1",
+                                          "children": [
+                                            {
+                                              "value": "backend.server.routers",
+                                              "children": [
+                                                {
+                                                  "value": "backend.server",
+                                                  "children": [
+                                                    {
+                                                      "value": "backend",
+                                                      "children": []
+                                                    },
+                                                    {
+                                                      "value": "server",
+                                                      "children": []
+                                                    }
+                                                  ]
+                                                },
+                                                {
+                                                  "value": "routers",
+                                                  "children": []
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "value": "v1",
+                                              "children": []
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "value": "delete_graph",
+                                          "children": []
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "value": "(graph_id, user_id)",
+                                      "children": [
+                                        {
+                                          "value": "graph_id",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "user_id",
+                                          "children": []
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "def set_test_dependency_overrides(self, overrides: dict):\n        app.dependency_overrides.update(overrides)",
+              "children": [
+                {
+                  "value": "set_test_dependency_overrides",
+                  "children": []
+                },
+                {
+                  "value": "(self, overrides: dict)",
+                  "children": [
+                    {
+                      "value": "self",
+                      "children": []
+                    },
+                    {
+                      "value": "overrides: dict",
+                      "children": [
+                        {
+                          "value": "overrides",
+                          "children": []
+                        },
+                        {
+                          "value": "dict",
+                          "children": [
+                            {
+                              "value": "dict",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "value": "app.dependency_overrides.update(overrides)",
+                  "children": [
+                    {
+                      "value": "app.dependency_overrides.update(overrides)",
+                      "children": [
+                        {
+                          "value": "app.dependency_overrides.update(overrides)",
+                          "children": [
+                            {
+                              "value": "app.dependency_overrides.update",
+                              "children": [
+                                {
+                                  "value": "app.dependency_overrides",
+                                  "children": [
+                                    {
+                                      "value": "app",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "dependency_overrides",
+                                      "children": []
+                                    }
+                                  ]
+                                },
+                                {
+                                  "value": "update",
+                                  "children": []
+                                }
+                              ]
+                            },
+                            {
+                              "value": "(overrides)",
+                              "children": [
+                                {
+                                  "value": "overrides",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

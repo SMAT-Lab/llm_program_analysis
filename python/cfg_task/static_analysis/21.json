@@ -1,0 +1,1211 @@
+{
+  "nodes": [
+    {
+      "id": "n0",
+      "type": "block",
+      "statements": [
+        "import asyncio",
+        "import logging",
+        "from collections import defaultdict",
+        "from typing import TYPE_CHECKING, Annotated, Any, Sequence",
+        "import pydantic",
+        "from autogpt_libs.auth.middleware import auth_middleware",
+        "from autogpt_libs.feature_flag.client import feature_flag",
+        "from autogpt_libs.utils.cache import thread_cached",
+        "from fastapi import APIRouter, Depends, HTTPException",
+        "from typing_extensions import Optional, TypedDict",
+        "import backend.data.block",
+        "import backend.server.integrations.router",
+        "import backend.server.routers.analytics",
+        "from backend.data import execution as execution_db",
+        "from backend.data import graph as graph_db",
+        "from backend.data.api_key import APIKeyError, APIKeyNotFoundError, APIKeyPermissionError, APIKeyWithoutHash, generate_api_key, get_api_key_by_id, list_user_api_keys, revoke_api_key, suspend_api_key, update_api_key_permissions",
+        "from backend.data.block import BlockInput, CompletedBlockOutput",
+        "from backend.data.credit import get_block_costs, get_user_credit_model",
+        "from backend.data.user import get_or_create_user",
+        "from backend.executor import ExecutionManager, ExecutionScheduler, scheduler",
+        "from backend.integrations.creds_manager import IntegrationCredentialsManager",
+        "from backend.integrations.webhooks.graph_lifecycle_hooks import on_graph_activate, on_graph_deactivate",
+        "from backend.server.model import CreateAPIKeyRequest, CreateAPIKeyResponse, CreateGraph, SetGraphActiveVersion, UpdatePermissionsRequest",
+        "from backend.server.utils import get_user_id",
+        "from backend.util.service import get_service_client",
+        "from backend.util.settings import Settings",
+        "TYPE_CHECKING"
+      ],
+      "code": "import asyncio\nimport logging\nfrom collections import defaultdict\nfrom typing import TYPE_CHECKING, Annotated, Any, Sequence\nimport pydantic\nfrom autogpt_libs.auth.middleware import auth_middleware\nfrom autogpt_libs.feature_flag.client import feature_flag\nfrom autogpt_libs.utils.cache import thread_cached\nfrom fastapi import APIRouter, Depends, HTTPException\nfrom typing_extensions import Optional, TypedDict\nimport backend.data.block\nimport backend.server.integrations.router\nimport backend.server.routers.analytics\nfrom backend.data import execution as execution_db\nfrom backend.data import graph as graph_db\nfrom backend.data.api_key import APIKeyError, APIKeyNotFoundError, APIKeyPermissionError, APIKeyWithoutHash, generate_api_key, get_api_key_by_id, list_user_api_keys, revoke_api_key, suspend_api_key, update_api_key_permissions\nfrom backend.data.block import BlockInput, CompletedBlockOutput\nfrom backend.data.credit import get_block_costs, get_user_credit_model\nfrom backend.data.user import get_or_create_user\nfrom backend.executor import ExecutionManager, ExecutionScheduler, scheduler\nfrom backend.integrations.creds_manager import IntegrationCredentialsManager\nfrom backend.integrations.webhooks.graph_lifecycle_hooks import on_graph_activate, on_graph_deactivate\nfrom backend.server.model import CreateAPIKeyRequest, CreateAPIKeyResponse, CreateGraph, SetGraphActiveVersion, UpdatePermissionsRequest\nfrom backend.server.utils import get_user_id\nfrom backend.util.service import get_service_client\nfrom backend.util.settings import Settings\nTYPE_CHECKING"
+    },
+    {
+      "id": "n1",
+      "type": "block",
+      "statements": [
+        "from backend.data.model import Credentials"
+      ],
+      "code": "from backend.data.model import Credentials"
+    },
+    {
+      "id": "n2",
+      "type": "block",
+      "statements": [],
+      "code": ""
+    },
+    {
+      "id": "n3",
+      "type": "block",
+      "statements": [
+        "@thread_cached\ndef execution_manager_client() -> ExecutionManager:\n    return get_service_client(ExecutionManager)",
+        "return get_service_client(ExecutionManager)"
+      ],
+      "code": "@thread_cached\ndef execution_manager_client() -> ExecutionManager:\n    return get_service_client(ExecutionManager)\nreturn get_service_client(ExecutionManager)"
+    },
+    {
+      "id": "n4",
+      "type": "block",
+      "statements": [
+        "@thread_cached\ndef execution_scheduler_client() -> ExecutionScheduler:\n    return get_service_client(ExecutionScheduler)",
+        "return get_service_client(ExecutionScheduler)"
+      ],
+      "code": "@thread_cached\ndef execution_scheduler_client() -> ExecutionScheduler:\n    return get_service_client(ExecutionScheduler)\nreturn get_service_client(ExecutionScheduler)"
+    },
+    {
+      "id": "n5",
+      "type": "block",
+      "statements": [
+        "settings = Settings()",
+        "logger = logging.getLogger(__name__)",
+        "integration_creds_manager = IntegrationCredentialsManager()",
+        "_user_credit_model = get_user_credit_model()",
+        "v1_router = APIRouter()",
+        "v1_router.include_router(backend.server.integrations.router.router)",
+        "v1_router.include_router(backend.server.routers.analytics.router)",
+        "@v1_router.post('/auth/user', tags=['auth'], dependencies=[Depends(auth_middleware)])\nasync def get_or_create_user_route(user_data: dict=Depends(auth_middleware)):\n    user = await get_or_create_user(user_data)\n    return user.model_dump()",
+        "user = await get_or_create_user(user_data)",
+        "return user.model_dump()"
+      ],
+      "code": "settings = Settings()\nlogger = logging.getLogger(__name__)\nintegration_creds_manager = IntegrationCredentialsManager()\n_user_credit_model = get_user_credit_model()\nv1_router = APIRouter()\nv1_router.include_router(backend.server.integrations.router.router)\nv1_router.include_router(backend.server.routers.analytics.router)\n@v1_router.post('/auth/user', tags=['auth'], dependencies=[Depends(auth_middleware)])\nasync def get_or_create_user_route(user_data: dict=Depends(auth_middleware)):\n    user = await get_or_create_user(user_data)\n    return user.model_dump()\nuser = await get_or_create_user(user_data)\nreturn user.model_dump()"
+    },
+    {
+      "id": "n6",
+      "type": "block",
+      "statements": [
+        "@v1_router.get(path='/blocks', tags=['blocks'], dependencies=[Depends(auth_middleware)])\ndef get_graph_blocks() -> Sequence[dict[Any, Any]]:\n    blocks = [block() for block in backend.data.block.get_blocks().values()]\n    costs = get_block_costs()\n    return [{**b.to_dict(), 'costs': costs.get(b.id, [])} for b in blocks]",
+        "blocks = [block() for block in backend.data.block.get_blocks().values()]",
+        "costs = get_block_costs()",
+        "return [{**b.to_dict(), 'costs': costs.get(b.id, [])} for b in blocks]"
+      ],
+      "code": "@v1_router.get(path='/blocks', tags=['blocks'], dependencies=[Depends(auth_middleware)])\ndef get_graph_blocks() -> Sequence[dict[Any, Any]]:\n    blocks = [block() for block in backend.data.block.get_blocks().values()]\n    costs = get_block_costs()\n    return [{**b.to_dict(), 'costs': costs.get(b.id, [])} for b in blocks]\nblocks = [block() for block in backend.data.block.get_blocks().values()]\ncosts = get_block_costs()\nreturn [{**b.to_dict(), 'costs': costs.get(b.id, [])} for b in blocks]"
+    },
+    {
+      "id": "n7",
+      "type": "block",
+      "statements": [
+        "@v1_router.post(path='/blocks/{block_id}/execute', tags=['blocks'], dependencies=[Depends(auth_middleware)])\ndef execute_graph_block(block_id: str, data: BlockInput) -> CompletedBlockOutput:\n    obj = backend.data.block.get_block(block_id)\n    if not obj:\n        raise HTTPException(status_code=404, detail=f'Block #{block_id} not found.')\n    output = defaultdict(list)\n    for (name, data) in obj.execute(data):\n        output[name].append(data)\n    return output",
+        "obj = backend.data.block.get_block(block_id)",
+        "not obj"
+      ],
+      "code": "@v1_router.post(path='/blocks/{block_id}/execute', tags=['blocks'], dependencies=[Depends(auth_middleware)])\ndef execute_graph_block(block_id: str, data: BlockInput) -> CompletedBlockOutput:\n    obj = backend.data.block.get_block(block_id)\n    if not obj:\n        raise HTTPException(status_code=404, detail=f'Block #{block_id} not found.')\n    output = defaultdict(list)\n    for (name, data) in obj.execute(data):\n        output[name].append(data)\n    return output\nobj = backend.data.block.get_block(block_id)\nnot obj"
+    },
+    {
+      "id": "n8",
+      "type": "block",
+      "statements": [
+        "raise HTTPException(status_code=404, detail=f'Block #{block_id} not found.')"
+      ],
+      "code": "raise HTTPException(status_code=404, detail=f'Block #{block_id} not found.')"
+    },
+    {
+      "id": "n9",
+      "type": "block",
+      "statements": [],
+      "code": ""
+    },
+    {
+      "id": "n10",
+      "type": "block",
+      "statements": [
+        "output = defaultdict(list)"
+      ],
+      "code": "output = defaultdict(list)"
+    },
+    {
+      "id": "n11",
+      "type": "block",
+      "statements": [
+        "(name, data)",
+        "obj.execute(data)"
+      ],
+      "code": "(name, data)\nobj.execute(data)"
+    },
+    {
+      "id": "n12",
+      "type": "block",
+      "statements": [
+        "output[name].append(data)"
+      ],
+      "code": "output[name].append(data)"
+    },
+    {
+      "id": "n13",
+      "type": "block",
+      "statements": [
+        "return output"
+      ],
+      "code": "return output"
+    },
+    {
+      "id": "n14",
+      "type": "block",
+      "statements": [
+        "@v1_router.get(path='/credits', dependencies=[Depends(auth_middleware)])\nasync def get_user_credits(user_id: Annotated[str, Depends(get_user_id)]) -> dict[str, int]:\n    return {'credits': max(await _user_credit_model.get_or_refill_credit(user_id), 0)}",
+        "return {'credits': max(await _user_credit_model.get_or_refill_credit(user_id), 0)}"
+      ],
+      "code": "@v1_router.get(path='/credits', dependencies=[Depends(auth_middleware)])\nasync def get_user_credits(user_id: Annotated[str, Depends(get_user_id)]) -> dict[str, int]:\n    return {'credits': max(await _user_credit_model.get_or_refill_credit(user_id), 0)}\nreturn {'credits': max(await _user_credit_model.get_or_refill_credit(user_id), 0)}"
+    },
+    {
+      "id": "n15",
+      "type": "block",
+      "statements": [
+        "class DeleteGraphResponse(TypedDict):\n    version_counts: int",
+        "version_counts: int",
+        "@v1_router.get(path='/graphs', tags=['graphs'], dependencies=[Depends(auth_middleware)])\nasync def get_graphs(user_id: Annotated[str, Depends(get_user_id)]) -> Sequence[graph_db.GraphModel]:\n    return await graph_db.get_graphs(filter_by='active', user_id=user_id)",
+        "return await graph_db.get_graphs(filter_by='active', user_id=user_id)"
+      ],
+      "code": "class DeleteGraphResponse(TypedDict):\n    version_counts: int\nversion_counts: int\n@v1_router.get(path='/graphs', tags=['graphs'], dependencies=[Depends(auth_middleware)])\nasync def get_graphs(user_id: Annotated[str, Depends(get_user_id)]) -> Sequence[graph_db.GraphModel]:\n    return await graph_db.get_graphs(filter_by='active', user_id=user_id)\nreturn await graph_db.get_graphs(filter_by='active', user_id=user_id)"
+    },
+    {
+      "id": "n16",
+      "type": "block",
+      "statements": [
+        "@v1_router.get(path='/graphs/{graph_id}', tags=['graphs'], dependencies=[Depends(auth_middleware)])\n@v1_router.get(path='/graphs/{graph_id}/versions/{version}', tags=['graphs'], dependencies=[Depends(auth_middleware)])\nasync def get_graph(graph_id: str, user_id: Annotated[str, Depends(get_user_id)], version: int | None=None, hide_credentials: bool=False) -> graph_db.GraphModel:\n    graph = await graph_db.get_graph(graph_id, version, user_id=user_id, for_export=hide_credentials)\n    if not graph:\n        raise HTTPException(status_code=404, detail=f'Graph #{graph_id} not found.')\n    return graph",
+        "graph = await graph_db.get_graph(graph_id, version, user_id=user_id, for_export=hide_credentials)",
+        "not graph"
+      ],
+      "code": "@v1_router.get(path='/graphs/{graph_id}', tags=['graphs'], dependencies=[Depends(auth_middleware)])\n@v1_router.get(path='/graphs/{graph_id}/versions/{version}', tags=['graphs'], dependencies=[Depends(auth_middleware)])\nasync def get_graph(graph_id: str, user_id: Annotated[str, Depends(get_user_id)], version: int | None=None, hide_credentials: bool=False) -> graph_db.GraphModel:\n    graph = await graph_db.get_graph(graph_id, version, user_id=user_id, for_export=hide_credentials)\n    if not graph:\n        raise HTTPException(status_code=404, detail=f'Graph #{graph_id} not found.')\n    return graph\ngraph = await graph_db.get_graph(graph_id, version, user_id=user_id, for_export=hide_credentials)\nnot graph"
+    },
+    {
+      "id": "n17",
+      "type": "block",
+      "statements": [
+        "raise HTTPException(status_code=404, detail=f'Graph #{graph_id} not found.')"
+      ],
+      "code": "raise HTTPException(status_code=404, detail=f'Graph #{graph_id} not found.')"
+    },
+    {
+      "id": "n18",
+      "type": "block",
+      "statements": [],
+      "code": ""
+    },
+    {
+      "id": "n19",
+      "type": "block",
+      "statements": [
+        "return graph"
+      ],
+      "code": "return graph"
+    },
+    {
+      "id": "n20",
+      "type": "block",
+      "statements": [
+        "@v1_router.get(path='/graphs/{graph_id}/versions', tags=['graphs'], dependencies=[Depends(auth_middleware)])\n@v1_router.get(path='/templates/{graph_id}/versions', tags=['templates', 'graphs'], dependencies=[Depends(auth_middleware)])\nasync def get_graph_all_versions(graph_id: str, user_id: Annotated[str, Depends(get_user_id)]) -> Sequence[graph_db.GraphModel]:\n    graphs = await graph_db.get_graph_all_versions(graph_id, user_id=user_id)\n    if not graphs:\n        raise HTTPException(status_code=404, detail=f'Graph #{graph_id} not found.')\n    return graphs",
+        "graphs = await graph_db.get_graph_all_versions(graph_id, user_id=user_id)",
+        "not graphs"
+      ],
+      "code": "@v1_router.get(path='/graphs/{graph_id}/versions', tags=['graphs'], dependencies=[Depends(auth_middleware)])\n@v1_router.get(path='/templates/{graph_id}/versions', tags=['templates', 'graphs'], dependencies=[Depends(auth_middleware)])\nasync def get_graph_all_versions(graph_id: str, user_id: Annotated[str, Depends(get_user_id)]) -> Sequence[graph_db.GraphModel]:\n    graphs = await graph_db.get_graph_all_versions(graph_id, user_id=user_id)\n    if not graphs:\n        raise HTTPException(status_code=404, detail=f'Graph #{graph_id} not found.')\n    return graphs\ngraphs = await graph_db.get_graph_all_versions(graph_id, user_id=user_id)\nnot graphs"
+    },
+    {
+      "id": "n21",
+      "type": "block",
+      "statements": [
+        "raise HTTPException(status_code=404, detail=f'Graph #{graph_id} not found.')"
+      ],
+      "code": "raise HTTPException(status_code=404, detail=f'Graph #{graph_id} not found.')"
+    },
+    {
+      "id": "n22",
+      "type": "block",
+      "statements": [],
+      "code": ""
+    },
+    {
+      "id": "n23",
+      "type": "block",
+      "statements": [
+        "return graphs"
+      ],
+      "code": "return graphs"
+    },
+    {
+      "id": "n24",
+      "type": "block",
+      "statements": [
+        "@v1_router.post(path='/graphs', tags=['graphs'], dependencies=[Depends(auth_middleware)])\nasync def create_new_graph(create_graph: CreateGraph, user_id: Annotated[str, Depends(get_user_id)]) -> graph_db.GraphModel:\n    return await do_create_graph(create_graph, is_template=False, user_id=user_id)",
+        "return await do_create_graph(create_graph, is_template=False, user_id=user_id)"
+      ],
+      "code": "@v1_router.post(path='/graphs', tags=['graphs'], dependencies=[Depends(auth_middleware)])\nasync def create_new_graph(create_graph: CreateGraph, user_id: Annotated[str, Depends(get_user_id)]) -> graph_db.GraphModel:\n    return await do_create_graph(create_graph, is_template=False, user_id=user_id)\nreturn await do_create_graph(create_graph, is_template=False, user_id=user_id)"
+    },
+    {
+      "id": "n25",
+      "type": "block",
+      "statements": [
+        "async def do_create_graph(create_graph: CreateGraph, is_template: bool, user_id: str) -> graph_db.GraphModel:\n    if create_graph.graph:\n        graph = graph_db.make_graph_model(create_graph.graph, user_id)\n    elif create_graph.template_id:\n        graph = await graph_db.get_graph(create_graph.template_id, create_graph.template_version, template=True, user_id=user_id)\n        if not graph:\n            raise HTTPException(400, detail=f'Template #{create_graph.template_id} not found')\n        graph.version = 1\n    else:\n        raise HTTPException(status_code=400, detail='Either graph or template_id must be provided.')\n    graph.is_template = is_template\n    graph.is_active = not is_template\n    graph.reassign_ids(user_id=user_id, reassign_graph_id=True)\n    graph = await graph_db.create_graph(graph, user_id=user_id)\n    graph = await on_graph_activate(graph, get_credentials=lambda id: integration_creds_manager.get(user_id, id))\n    return graph",
+        "create_graph.graph"
+      ],
+      "code": "async def do_create_graph(create_graph: CreateGraph, is_template: bool, user_id: str) -> graph_db.GraphModel:\n    if create_graph.graph:\n        graph = graph_db.make_graph_model(create_graph.graph, user_id)\n    elif create_graph.template_id:\n        graph = await graph_db.get_graph(create_graph.template_id, create_graph.template_version, template=True, user_id=user_id)\n        if not graph:\n            raise HTTPException(400, detail=f'Template #{create_graph.template_id} not found')\n        graph.version = 1\n    else:\n        raise HTTPException(status_code=400, detail='Either graph or template_id must be provided.')\n    graph.is_template = is_template\n    graph.is_active = not is_template\n    graph.reassign_ids(user_id=user_id, reassign_graph_id=True)\n    graph = await graph_db.create_graph(graph, user_id=user_id)\n    graph = await on_graph_activate(graph, get_credentials=lambda id: integration_creds_manager.get(user_id, id))\n    return graph\ncreate_graph.graph"
+    },
+    {
+      "id": "n26",
+      "type": "block",
+      "statements": [
+        "graph = graph_db.make_graph_model(create_graph.graph, user_id)"
+      ],
+      "code": "graph = graph_db.make_graph_model(create_graph.graph, user_id)"
+    },
+    {
+      "id": "n27",
+      "type": "block",
+      "statements": [
+        "create_graph.template_id"
+      ],
+      "code": "create_graph.template_id"
+    },
+    {
+      "id": "n28",
+      "type": "block",
+      "statements": [
+        "graph.is_template = is_template",
+        "graph.is_active = not is_template",
+        "graph.reassign_ids()",
+        "graph = await graph_db.create_graph(graph, user_id=user_id)",
+        "graph = await on_graph_activate(graph, get_credentials=lambda id: integration_creds_manager.get(user_id, id))",
+        "return graph"
+      ],
+      "code": "graph.is_template = is_template\ngraph.is_active = not is_template\ngraph.reassign_ids()\ngraph = await graph_db.create_graph(graph, user_id=user_id)\ngraph = await on_graph_activate(graph, get_credentials=lambda id: integration_creds_manager.get(user_id, id))\nreturn graph"
+    },
+    {
+      "id": "n29",
+      "type": "block",
+      "statements": [
+        "graph = await graph_db.get_graph(create_graph.template_id, create_graph.template_version, template=True, user_id=user_id)",
+        "not graph"
+      ],
+      "code": "graph = await graph_db.get_graph(create_graph.template_id, create_graph.template_version, template=True, user_id=user_id)\nnot graph"
+    },
+    {
+      "id": "n30",
+      "type": "block",
+      "statements": [
+        "raise HTTPException(status_code=400, detail='Either graph or template_id must be provided.')"
+      ],
+      "code": "raise HTTPException(status_code=400, detail='Either graph or template_id must be provided.')"
+    },
+    {
+      "id": "n31",
+      "type": "block",
+      "statements": [],
+      "code": ""
+    },
+    {
+      "id": "n32",
+      "type": "block",
+      "statements": [
+        "raise HTTPException(400, detail=f'Template #{create_graph.template_id} not found')"
+      ],
+      "code": "raise HTTPException(400, detail=f'Template #{create_graph.template_id} not found')"
+    },
+    {
+      "id": "n33",
+      "type": "block",
+      "statements": [],
+      "code": ""
+    },
+    {
+      "id": "n34",
+      "type": "block",
+      "statements": [
+        "graph.version = 1"
+      ],
+      "code": "graph.version = 1"
+    },
+    {
+      "id": "n35",
+      "type": "block",
+      "statements": [
+        "@v1_router.delete(path='/graphs/{graph_id}', tags=['graphs'], dependencies=[Depends(auth_middleware)])\nasync def delete_graph(graph_id: str, user_id: Annotated[str, Depends(get_user_id)]) -> DeleteGraphResponse:\n    if (active_version := (await graph_db.get_graph(graph_id, user_id=user_id))):\n\n        def get_credentials(credentials_id: str) -> 'Credentials | None':\n            return integration_creds_manager.get(user_id, credentials_id)\n        await on_graph_deactivate(active_version, get_credentials)\n    return {'version_counts': await graph_db.delete_graph(graph_id, user_id=user_id)}",
+        "(active_version := (await graph_db.get_graph(graph_id, user_id=user_id)))"
+      ],
+      "code": "@v1_router.delete(path='/graphs/{graph_id}', tags=['graphs'], dependencies=[Depends(auth_middleware)])\nasync def delete_graph(graph_id: str, user_id: Annotated[str, Depends(get_user_id)]) -> DeleteGraphResponse:\n    if (active_version := (await graph_db.get_graph(graph_id, user_id=user_id))):\n\n        def get_credentials(credentials_id: str) -> 'Credentials | None':\n            return integration_creds_manager.get(user_id, credentials_id)\n        await on_graph_deactivate(active_version, get_credentials)\n    return {'version_counts': await graph_db.delete_graph(graph_id, user_id=user_id)}\n(active_version := (await graph_db.get_graph(graph_id, user_id=user_id)))"
+    },
+    {
+      "id": "n36",
+      "type": "block",
+      "statements": [
+        "def get_credentials(credentials_id: str) -> 'Credentials | None':\n    return integration_creds_manager.get(user_id, credentials_id)",
+        "return integration_creds_manager.get(user_id, credentials_id)"
+      ],
+      "code": "def get_credentials(credentials_id: str) -> 'Credentials | None':\n    return integration_creds_manager.get(user_id, credentials_id)\nreturn integration_creds_manager.get(user_id, credentials_id)"
+    },
+    {
+      "id": "n37",
+      "type": "block",
+      "statements": [],
+      "code": ""
+    },
+    {
+      "id": "n38",
+      "type": "block",
+      "statements": [
+        "return {'version_counts': await graph_db.delete_graph(graph_id, user_id=user_id)}"
+      ],
+      "code": "return {'version_counts': await graph_db.delete_graph(graph_id, user_id=user_id)}"
+    },
+    {
+      "id": "n39",
+      "type": "block",
+      "statements": [
+        "await on_graph_deactivate(active_version, get_credentials)"
+      ],
+      "code": "await on_graph_deactivate(active_version, get_credentials)"
+    },
+    {
+      "id": "n40",
+      "type": "block",
+      "statements": [
+        "@v1_router.put(path='/graphs/{graph_id}', tags=['graphs'], dependencies=[Depends(auth_middleware)])\n@v1_router.put(path='/templates/{graph_id}', tags=['templates', 'graphs'], dependencies=[Depends(auth_middleware)])\nasync def update_graph(graph_id: str, graph: graph_db.Graph, user_id: Annotated[str, Depends(get_user_id)]) -> graph_db.GraphModel:\n    if graph.id and graph.id != graph_id:\n        raise HTTPException(400, detail='Graph ID does not match ID in URI')\n    existing_versions = await graph_db.get_graph_all_versions(graph_id, user_id=user_id)\n    if not existing_versions:\n        raise HTTPException(404, detail=f'Graph #{graph_id} not found')\n    latest_version_number = max((g.version for g in existing_versions))\n    graph.version = latest_version_number + 1\n    latest_version_graph = next((v for v in existing_versions if v.version == latest_version_number))\n    current_active_version = next((v for v in existing_versions if v.is_active), None)\n    if latest_version_graph.is_template != graph.is_template:\n        raise HTTPException(400, detail='Changing is_template on an existing graph is forbidden')\n    graph.is_active = not graph.is_template\n    graph = graph_db.make_graph_model(graph, user_id)\n    graph.reassign_ids(user_id=user_id)\n    new_graph_version = await graph_db.create_graph(graph, user_id=user_id)\n    if new_graph_version.is_active:\n\n        def get_credentials(credentials_id: str) -> 'Credentials | None':\n            return integration_creds_manager.get(user_id, credentials_id)\n        new_graph_version = await on_graph_activate(new_graph_version, get_credentials=get_credentials)\n        await graph_db.set_graph_active_version(graph_id=graph_id, version=new_graph_version.version, user_id=user_id)\n        if current_active_version:\n            await on_graph_deactivate(current_active_version, get_credentials=get_credentials)\n    return new_graph_version",
+        "graph.id and graph.id != graph_id"
+      ],
+      "code": "@v1_router.put(path='/graphs/{graph_id}', tags=['graphs'], dependencies=[Depends(auth_middleware)])\n@v1_router.put(path='/templates/{graph_id}', tags=['templates', 'graphs'], dependencies=[Depends(auth_middleware)])\nasync def update_graph(graph_id: str, graph: graph_db.Graph, user_id: Annotated[str, Depends(get_user_id)]) -> graph_db.GraphModel:\n    if graph.id and graph.id != graph_id:\n        raise HTTPException(400, detail='Graph ID does not match ID in URI')\n    existing_versions = await graph_db.get_graph_all_versions(graph_id, user_id=user_id)\n    if not existing_versions:\n        raise HTTPException(404, detail=f'Graph #{graph_id} not found')\n    latest_version_number = max((g.version for g in existing_versions))\n    graph.version = latest_version_number + 1\n    latest_version_graph = next((v for v in existing_versions if v.version == latest_version_number))\n    current_active_version = next((v for v in existing_versions if v.is_active), None)\n    if latest_version_graph.is_template != graph.is_template:\n        raise HTTPException(400, detail='Changing is_template on an existing graph is forbidden')\n    graph.is_active = not graph.is_template\n    graph = graph_db.make_graph_model(graph, user_id)\n    graph.reassign_ids(user_id=user_id)\n    new_graph_version = await graph_db.create_graph(graph, user_id=user_id)\n    if new_graph_version.is_active:\n\n        def get_credentials(credentials_id: str) -> 'Credentials | None':\n            return integration_creds_manager.get(user_id, credentials_id)\n        new_graph_version = await on_graph_activate(new_graph_version, get_credentials=get_credentials)\n        await graph_db.set_graph_active_version(graph_id=graph_id, version=new_graph_version.version, user_id=user_id)\n        if current_active_version:\n            await on_graph_deactivate(current_active_version, get_credentials=get_credentials)\n    return new_graph_version\ngraph.id and graph.id != graph_id"
+    },
+    {
+      "id": "n41",
+      "type": "block",
+      "statements": [
+        "raise HTTPException(400, detail='Graph ID does not match ID in URI')"
+      ],
+      "code": "raise HTTPException(400, detail='Graph ID does not match ID in URI')"
+    },
+    {
+      "id": "n42",
+      "type": "block",
+      "statements": [],
+      "code": ""
+    },
+    {
+      "id": "n43",
+      "type": "block",
+      "statements": [
+        "existing_versions = await graph_db.get_graph_all_versions(graph_id, user_id=user_id)",
+        "not existing_versions"
+      ],
+      "code": "existing_versions = await graph_db.get_graph_all_versions(graph_id, user_id=user_id)\nnot existing_versions"
+    },
+    {
+      "id": "n44",
+      "type": "block",
+      "statements": [
+        "raise HTTPException(404, detail=f'Graph #{graph_id} not found')"
+      ],
+      "code": "raise HTTPException(404, detail=f'Graph #{graph_id} not found')"
+    },
+    {
+      "id": "n45",
+      "type": "block",
+      "statements": [],
+      "code": ""
+    },
+    {
+      "id": "n46",
+      "type": "block",
+      "statements": [
+        "latest_version_number = max((g.version for g in existing_versions))",
+        "graph.version = latest_version_number + 1",
+        "latest_version_graph = next((v for v in existing_versions if v.version == latest_version_number))",
+        "current_active_version = next((v for v in existing_versions if v.is_active), None)",
+        "latest_version_graph.is_template NotEq graph.is_template"
+      ],
+      "code": "latest_version_number = max((g.version for g in existing_versions))\ngraph.version = latest_version_number + 1\nlatest_version_graph = next((v for v in existing_versions if v.version == latest_version_number))\ncurrent_active_version = next((v for v in existing_versions if v.is_active), None)\nlatest_version_graph.is_template NotEq graph.is_template"
+    },
+    {
+      "id": "n47",
+      "type": "block",
+      "statements": [
+        "raise HTTPException(400, detail='Changing is_template on an existing graph is forbidden')"
+      ],
+      "code": "raise HTTPException(400, detail='Changing is_template on an existing graph is forbidden')"
+    },
+    {
+      "id": "n48",
+      "type": "block",
+      "statements": [],
+      "code": ""
+    },
+    {
+      "id": "n49",
+      "type": "block",
+      "statements": [
+        "graph.is_active = not graph.is_template",
+        "graph = graph_db.make_graph_model(graph, user_id)",
+        "graph.reassign_ids()",
+        "new_graph_version = await graph_db.create_graph(graph, user_id=user_id)",
+        "new_graph_version.is_active"
+      ],
+      "code": "graph.is_active = not graph.is_template\ngraph = graph_db.make_graph_model(graph, user_id)\ngraph.reassign_ids()\nnew_graph_version = await graph_db.create_graph(graph, user_id=user_id)\nnew_graph_version.is_active"
+    },
+    {
+      "id": "n50",
+      "type": "block",
+      "statements": [
+        "def get_credentials(credentials_id: str) -> 'Credentials | None':\n    return integration_creds_manager.get(user_id, credentials_id)",
+        "return integration_creds_manager.get(user_id, credentials_id)"
+      ],
+      "code": "def get_credentials(credentials_id: str) -> 'Credentials | None':\n    return integration_creds_manager.get(user_id, credentials_id)\nreturn integration_creds_manager.get(user_id, credentials_id)"
+    },
+    {
+      "id": "n51",
+      "type": "block",
+      "statements": [],
+      "code": ""
+    },
+    {
+      "id": "n52",
+      "type": "block",
+      "statements": [
+        "return new_graph_version"
+      ],
+      "code": "return new_graph_version"
+    },
+    {
+      "id": "n53",
+      "type": "block",
+      "statements": [
+        "new_graph_version = await on_graph_activate(new_graph_version, get_credentials=get_credentials)",
+        "await graph_db.set_graph_active_version(graph_id=graph_id, version=new_graph_version.version, user_id=user_id)",
+        "current_active_version"
+      ],
+      "code": "new_graph_version = await on_graph_activate(new_graph_version, get_credentials=get_credentials)\nawait graph_db.set_graph_active_version(graph_id=graph_id, version=new_graph_version.version, user_id=user_id)\ncurrent_active_version"
+    },
+    {
+      "id": "n54",
+      "type": "block",
+      "statements": [
+        "await on_graph_deactivate(current_active_version, get_credentials=get_credentials)"
+      ],
+      "code": "await on_graph_deactivate(current_active_version, get_credentials=get_credentials)"
+    },
+    {
+      "id": "n55",
+      "type": "block",
+      "statements": [],
+      "code": ""
+    },
+    {
+      "id": "n56",
+      "type": "block",
+      "statements": [],
+      "code": ""
+    },
+    {
+      "id": "n57",
+      "type": "block",
+      "statements": [
+        "@v1_router.put(path='/graphs/{graph_id}/versions/active', tags=['graphs'], dependencies=[Depends(auth_middleware)])\nasync def set_graph_active_version(graph_id: str, request_body: SetGraphActiveVersion, user_id: Annotated[str, Depends(get_user_id)]):\n    new_active_version = request_body.active_graph_version\n    new_active_graph = await graph_db.get_graph(graph_id, new_active_version, user_id=user_id)\n    if not new_active_graph:\n        raise HTTPException(404, f'Graph #{graph_id} v{new_active_version} not found')\n    current_active_graph = await graph_db.get_graph(graph_id, user_id=user_id)\n\n    def get_credentials(credentials_id: str) -> 'Credentials | None':\n        return integration_creds_manager.get(user_id, credentials_id)\n    await on_graph_activate(new_active_graph, get_credentials=get_credentials)\n    await graph_db.set_graph_active_version(graph_id=graph_id, version=new_active_version, user_id=user_id)\n    if current_active_graph and current_active_graph.version != new_active_version:\n        await on_graph_deactivate(current_active_graph, get_credentials=get_credentials)",
+        "new_active_version = request_body.active_graph_version",
+        "new_active_graph = await graph_db.get_graph(graph_id, new_active_version, user_id=user_id)",
+        "not new_active_graph"
+      ],
+      "code": "@v1_router.put(path='/graphs/{graph_id}/versions/active', tags=['graphs'], dependencies=[Depends(auth_middleware)])\nasync def set_graph_active_version(graph_id: str, request_body: SetGraphActiveVersion, user_id: Annotated[str, Depends(get_user_id)]):\n    new_active_version = request_body.active_graph_version\n    new_active_graph = await graph_db.get_graph(graph_id, new_active_version, user_id=user_id)\n    if not new_active_graph:\n        raise HTTPException(404, f'Graph #{graph_id} v{new_active_version} not found')\n    current_active_graph = await graph_db.get_graph(graph_id, user_id=user_id)\n\n    def get_credentials(credentials_id: str) -> 'Credentials | None':\n        return integration_creds_manager.get(user_id, credentials_id)\n    await on_graph_activate(new_active_graph, get_credentials=get_credentials)\n    await graph_db.set_graph_active_version(graph_id=graph_id, version=new_active_version, user_id=user_id)\n    if current_active_graph and current_active_graph.version != new_active_version:\n        await on_graph_deactivate(current_active_graph, get_credentials=get_credentials)\nnew_active_version = request_body.active_graph_version\nnew_active_graph = await graph_db.get_graph(graph_id, new_active_version, user_id=user_id)\nnot new_active_graph"
+    },
+    {
+      "id": "n58",
+      "type": "block",
+      "statements": [
+        "raise HTTPException(404, f'Graph #{graph_id} v{new_active_version} not found')"
+      ],
+      "code": "raise HTTPException(404, f'Graph #{graph_id} v{new_active_version} not found')"
+    },
+    {
+      "id": "n59",
+      "type": "block",
+      "statements": [],
+      "code": ""
+    },
+    {
+      "id": "n60",
+      "type": "block",
+      "statements": [
+        "current_active_graph = await graph_db.get_graph(graph_id, user_id=user_id)",
+        "def get_credentials(credentials_id: str) -> 'Credentials | None':\n    return integration_creds_manager.get(user_id, credentials_id)",
+        "return integration_creds_manager.get(user_id, credentials_id)"
+      ],
+      "code": "current_active_graph = await graph_db.get_graph(graph_id, user_id=user_id)\ndef get_credentials(credentials_id: str) -> 'Credentials | None':\n    return integration_creds_manager.get(user_id, credentials_id)\nreturn integration_creds_manager.get(user_id, credentials_id)"
+    },
+    {
+      "id": "n61",
+      "type": "block",
+      "statements": [
+        "await on_graph_activate(new_active_graph, get_credentials=get_credentials)",
+        "await graph_db.set_graph_active_version(graph_id=graph_id, version=new_active_version, user_id=user_id)",
+        "current_active_graph and current_active_graph.version != new_active_version"
+      ],
+      "code": "await on_graph_activate(new_active_graph, get_credentials=get_credentials)\nawait graph_db.set_graph_active_version(graph_id=graph_id, version=new_active_version, user_id=user_id)\ncurrent_active_graph and current_active_graph.version != new_active_version"
+    },
+    {
+      "id": "n62",
+      "type": "block",
+      "statements": [
+        "await on_graph_deactivate(current_active_graph, get_credentials=get_credentials)"
+      ],
+      "code": "await on_graph_deactivate(current_active_graph, get_credentials=get_credentials)"
+    },
+    {
+      "id": "n63",
+      "type": "block",
+      "statements": [],
+      "code": ""
+    },
+    {
+      "id": "n64",
+      "type": "block",
+      "statements": [
+        "@v1_router.post(path='/graphs/{graph_id}/execute', tags=['graphs'], dependencies=[Depends(auth_middleware)])\ndef execute_graph(graph_id: str, node_input: dict[Any, Any], user_id: Annotated[str, Depends(get_user_id)]) -> dict[str, Any]:\n    try:\n        graph_exec = execution_manager_client().add_execution(graph_id, node_input, user_id=user_id)\n        return {'id': graph_exec.graph_exec_id}\n    except Exception as e:\n        msg = e.__str__().encode().decode('unicode_escape')\n        raise HTTPException(status_code=400, detail=msg)",
+        "try:\n    graph_exec = execution_manager_client().add_execution(graph_id, node_input, user_id=user_id)\n    return {'id': graph_exec.graph_exec_id}\nexcept Exception as e:\n    msg = e.__str__().encode().decode('unicode_escape')\n    raise HTTPException(status_code=400, detail=msg)",
+        "graph_exec = execution_manager_client().add_execution(graph_id, node_input, user_id=user_id)",
+        "return {'id': graph_exec.graph_exec_id}"
+      ],
+      "code": "@v1_router.post(path='/graphs/{graph_id}/execute', tags=['graphs'], dependencies=[Depends(auth_middleware)])\ndef execute_graph(graph_id: str, node_input: dict[Any, Any], user_id: Annotated[str, Depends(get_user_id)]) -> dict[str, Any]:\n    try:\n        graph_exec = execution_manager_client().add_execution(graph_id, node_input, user_id=user_id)\n        return {'id': graph_exec.graph_exec_id}\n    except Exception as e:\n        msg = e.__str__().encode().decode('unicode_escape')\n        raise HTTPException(status_code=400, detail=msg)\ntry:\n    graph_exec = execution_manager_client().add_execution(graph_id, node_input, user_id=user_id)\n    return {'id': graph_exec.graph_exec_id}\nexcept Exception as e:\n    msg = e.__str__().encode().decode('unicode_escape')\n    raise HTTPException(status_code=400, detail=msg)\ngraph_exec = execution_manager_client().add_execution(graph_id, node_input, user_id=user_id)\nreturn {'id': graph_exec.graph_exec_id}"
+    },
+    {
+      "id": "n65",
+      "type": "block",
+      "statements": [
+        "msg = e.__str__().encode().decode('unicode_escape')",
+        "raise HTTPException(status_code=400, detail=msg)",
+        "@v1_router.post(path='/graphs/{graph_id}/executions/{graph_exec_id}/stop', tags=['graphs'], dependencies=[Depends(auth_middleware)])\nasync def stop_graph_run(graph_exec_id: str, user_id: Annotated[str, Depends(get_user_id)]) -> Sequence[execution_db.ExecutionResult]:\n    if not await graph_db.get_execution(user_id=user_id, execution_id=graph_exec_id):\n        raise HTTPException(404, detail=f'Agent execution #{graph_exec_id} not found')\n    await asyncio.to_thread(lambda : execution_manager_client().cancel_execution(graph_exec_id))\n    return await execution_db.get_execution_results(graph_exec_id)",
+        "not await graph_db.get_execution(user_id=user_id, execution_id=graph_exec_id)"
+      ],
+      "code": "msg = e.__str__().encode().decode('unicode_escape')\nraise HTTPException(status_code=400, detail=msg)\n@v1_router.post(path='/graphs/{graph_id}/executions/{graph_exec_id}/stop', tags=['graphs'], dependencies=[Depends(auth_middleware)])\nasync def stop_graph_run(graph_exec_id: str, user_id: Annotated[str, Depends(get_user_id)]) -> Sequence[execution_db.ExecutionResult]:\n    if not await graph_db.get_execution(user_id=user_id, execution_id=graph_exec_id):\n        raise HTTPException(404, detail=f'Agent execution #{graph_exec_id} not found')\n    await asyncio.to_thread(lambda : execution_manager_client().cancel_execution(graph_exec_id))\n    return await execution_db.get_execution_results(graph_exec_id)\nnot await graph_db.get_execution(user_id=user_id, execution_id=graph_exec_id)"
+    },
+    {
+      "id": "n66",
+      "type": "block",
+      "statements": [
+        "raise HTTPException(404, detail=f'Agent execution #{graph_exec_id} not found')"
+      ],
+      "code": "raise HTTPException(404, detail=f'Agent execution #{graph_exec_id} not found')"
+    },
+    {
+      "id": "n67",
+      "type": "block",
+      "statements": [],
+      "code": ""
+    },
+    {
+      "id": "n68",
+      "type": "block",
+      "statements": [
+        "await asyncio.to_thread(lambda : execution_manager_client().cancel_execution(graph_exec_id))",
+        "return await execution_db.get_execution_results(graph_exec_id)"
+      ],
+      "code": "await asyncio.to_thread(lambda : execution_manager_client().cancel_execution(graph_exec_id))\nreturn await execution_db.get_execution_results(graph_exec_id)"
+    },
+    {
+      "id": "n69",
+      "type": "block",
+      "statements": [
+        "@v1_router.get(path='/executions', tags=['graphs'], dependencies=[Depends(auth_middleware)])\nasync def get_executions(user_id: Annotated[str, Depends(get_user_id)]) -> list[graph_db.GraphExecution]:\n    return await graph_db.get_executions(user_id=user_id)",
+        "return await graph_db.get_executions(user_id=user_id)"
+      ],
+      "code": "@v1_router.get(path='/executions', tags=['graphs'], dependencies=[Depends(auth_middleware)])\nasync def get_executions(user_id: Annotated[str, Depends(get_user_id)]) -> list[graph_db.GraphExecution]:\n    return await graph_db.get_executions(user_id=user_id)\nreturn await graph_db.get_executions(user_id=user_id)"
+    },
+    {
+      "id": "n70",
+      "type": "block",
+      "statements": [
+        "@v1_router.get(path='/graphs/{graph_id}/executions/{graph_exec_id}', tags=['graphs'], dependencies=[Depends(auth_middleware)])\nasync def get_graph_run_node_execution_results(graph_id: str, graph_exec_id: str, user_id: Annotated[str, Depends(get_user_id)]) -> Sequence[execution_db.ExecutionResult]:\n    graph = await graph_db.get_graph(graph_id, user_id=user_id)\n    if not graph:\n        raise HTTPException(status_code=404, detail=f'Graph #{graph_id} not found.')\n    return await execution_db.get_execution_results(graph_exec_id)",
+        "graph = await graph_db.get_graph(graph_id, user_id=user_id)",
+        "not graph"
+      ],
+      "code": "@v1_router.get(path='/graphs/{graph_id}/executions/{graph_exec_id}', tags=['graphs'], dependencies=[Depends(auth_middleware)])\nasync def get_graph_run_node_execution_results(graph_id: str, graph_exec_id: str, user_id: Annotated[str, Depends(get_user_id)]) -> Sequence[execution_db.ExecutionResult]:\n    graph = await graph_db.get_graph(graph_id, user_id=user_id)\n    if not graph:\n        raise HTTPException(status_code=404, detail=f'Graph #{graph_id} not found.')\n    return await execution_db.get_execution_results(graph_exec_id)\ngraph = await graph_db.get_graph(graph_id, user_id=user_id)\nnot graph"
+    },
+    {
+      "id": "n71",
+      "type": "block",
+      "statements": [
+        "raise HTTPException(status_code=404, detail=f'Graph #{graph_id} not found.')"
+      ],
+      "code": "raise HTTPException(status_code=404, detail=f'Graph #{graph_id} not found.')"
+    },
+    {
+      "id": "n72",
+      "type": "block",
+      "statements": [],
+      "code": ""
+    },
+    {
+      "id": "n73",
+      "type": "block",
+      "statements": [
+        "return await execution_db.get_execution_results(graph_exec_id)"
+      ],
+      "code": "return await execution_db.get_execution_results(graph_exec_id)"
+    },
+    {
+      "id": "n74",
+      "type": "block",
+      "statements": [
+        "@v1_router.get(path='/templates', tags=['graphs', 'templates'], dependencies=[Depends(auth_middleware)])\nasync def get_templates(user_id: Annotated[str, Depends(get_user_id)]) -> Sequence[graph_db.GraphModel]:\n    return await graph_db.get_graphs(filter_by='template', user_id=user_id)",
+        "return await graph_db.get_graphs(filter_by='template', user_id=user_id)"
+      ],
+      "code": "@v1_router.get(path='/templates', tags=['graphs', 'templates'], dependencies=[Depends(auth_middleware)])\nasync def get_templates(user_id: Annotated[str, Depends(get_user_id)]) -> Sequence[graph_db.GraphModel]:\n    return await graph_db.get_graphs(filter_by='template', user_id=user_id)\nreturn await graph_db.get_graphs(filter_by='template', user_id=user_id)"
+    },
+    {
+      "id": "n75",
+      "type": "block",
+      "statements": [
+        "@v1_router.get(path='/templates/{graph_id}', tags=['templates', 'graphs'], dependencies=[Depends(auth_middleware)])\nasync def get_template(graph_id: str, version: int | None=None) -> graph_db.GraphModel:\n    graph = await graph_db.get_graph(graph_id, version, template=True)\n    if not graph:\n        raise HTTPException(status_code=404, detail=f'Template #{graph_id} not found.')\n    return graph",
+        "graph = await graph_db.get_graph(graph_id, version, template=True)",
+        "not graph"
+      ],
+      "code": "@v1_router.get(path='/templates/{graph_id}', tags=['templates', 'graphs'], dependencies=[Depends(auth_middleware)])\nasync def get_template(graph_id: str, version: int | None=None) -> graph_db.GraphModel:\n    graph = await graph_db.get_graph(graph_id, version, template=True)\n    if not graph:\n        raise HTTPException(status_code=404, detail=f'Template #{graph_id} not found.')\n    return graph\ngraph = await graph_db.get_graph(graph_id, version, template=True)\nnot graph"
+    },
+    {
+      "id": "n76",
+      "type": "block",
+      "statements": [
+        "raise HTTPException(status_code=404, detail=f'Template #{graph_id} not found.')"
+      ],
+      "code": "raise HTTPException(status_code=404, detail=f'Template #{graph_id} not found.')"
+    },
+    {
+      "id": "n77",
+      "type": "block",
+      "statements": [],
+      "code": ""
+    },
+    {
+      "id": "n78",
+      "type": "block",
+      "statements": [
+        "return graph"
+      ],
+      "code": "return graph"
+    },
+    {
+      "id": "n79",
+      "type": "block",
+      "statements": [
+        "@v1_router.post(path='/templates', tags=['templates', 'graphs'], dependencies=[Depends(auth_middleware)])\nasync def create_new_template(create_graph: CreateGraph, user_id: Annotated[str, Depends(get_user_id)]) -> graph_db.GraphModel:\n    return await do_create_graph(create_graph, is_template=True, user_id=user_id)",
+        "return await do_create_graph(create_graph, is_template=True, user_id=user_id)"
+      ],
+      "code": "@v1_router.post(path='/templates', tags=['templates', 'graphs'], dependencies=[Depends(auth_middleware)])\nasync def create_new_template(create_graph: CreateGraph, user_id: Annotated[str, Depends(get_user_id)]) -> graph_db.GraphModel:\n    return await do_create_graph(create_graph, is_template=True, user_id=user_id)\nreturn await do_create_graph(create_graph, is_template=True, user_id=user_id)"
+    },
+    {
+      "id": "n80",
+      "type": "block",
+      "statements": [
+        "class ScheduleCreationRequest(pydantic.BaseModel):\n    cron: str\n    input_data: dict[Any, Any]\n    graph_id: str",
+        "cron: str",
+        "input_data: dict[Any, Any]",
+        "graph_id: str",
+        "@v1_router.post(path='/schedules', tags=['schedules'], dependencies=[Depends(auth_middleware)])\nasync def create_schedule(user_id: Annotated[str, Depends(get_user_id)], schedule: ScheduleCreationRequest) -> scheduler.JobInfo:\n    graph = await graph_db.get_graph(schedule.graph_id, user_id=user_id)\n    if not graph:\n        raise HTTPException(status_code=404, detail=f'Graph #{schedule.graph_id} not found.')\n    return await asyncio.to_thread(lambda : execution_scheduler_client().add_execution_schedule(graph_id=schedule.graph_id, graph_version=graph.version, cron=schedule.cron, input_data=schedule.input_data, user_id=user_id))",
+        "graph = await graph_db.get_graph(schedule.graph_id, user_id=user_id)",
+        "not graph"
+      ],
+      "code": "class ScheduleCreationRequest(pydantic.BaseModel):\n    cron: str\n    input_data: dict[Any, Any]\n    graph_id: str\ncron: str\ninput_data: dict[Any, Any]\ngraph_id: str\n@v1_router.post(path='/schedules', tags=['schedules'], dependencies=[Depends(auth_middleware)])\nasync def create_schedule(user_id: Annotated[str, Depends(get_user_id)], schedule: ScheduleCreationRequest) -> scheduler.JobInfo:\n    graph = await graph_db.get_graph(schedule.graph_id, user_id=user_id)\n    if not graph:\n        raise HTTPException(status_code=404, detail=f'Graph #{schedule.graph_id} not found.')\n    return await asyncio.to_thread(lambda : execution_scheduler_client().add_execution_schedule(graph_id=schedule.graph_id, graph_version=graph.version, cron=schedule.cron, input_data=schedule.input_data, user_id=user_id))\ngraph = await graph_db.get_graph(schedule.graph_id, user_id=user_id)\nnot graph"
+    },
+    {
+      "id": "n81",
+      "type": "block",
+      "statements": [
+        "raise HTTPException(status_code=404, detail=f'Graph #{schedule.graph_id} not found.')"
+      ],
+      "code": "raise HTTPException(status_code=404, detail=f'Graph #{schedule.graph_id} not found.')"
+    },
+    {
+      "id": "n82",
+      "type": "block",
+      "statements": [],
+      "code": ""
+    },
+    {
+      "id": "n83",
+      "type": "block",
+      "statements": [
+        "return await asyncio.to_thread(lambda : execution_scheduler_client().add_execution_schedule(graph_id=schedule.graph_id, graph_version=graph.version, cron=schedule.cron, input_data=schedule.input_data, user_id=user_id))"
+      ],
+      "code": "return await asyncio.to_thread(lambda : execution_scheduler_client().add_execution_schedule(graph_id=schedule.graph_id, graph_version=graph.version, cron=schedule.cron, input_data=schedule.input_data, user_id=user_id))"
+    },
+    {
+      "id": "n84",
+      "type": "block",
+      "statements": [
+        "@v1_router.delete(path='/schedules/{schedule_id}', tags=['schedules'], dependencies=[Depends(auth_middleware)])\ndef delete_schedule(schedule_id: str, user_id: Annotated[str, Depends(get_user_id)]) -> dict[Any, Any]:\n    execution_scheduler_client().delete_schedule(schedule_id, user_id=user_id)\n    return {'id': schedule_id}",
+        "execution_scheduler_client().delete_schedule(schedule_id)",
+        "return {'id': schedule_id}"
+      ],
+      "code": "@v1_router.delete(path='/schedules/{schedule_id}', tags=['schedules'], dependencies=[Depends(auth_middleware)])\ndef delete_schedule(schedule_id: str, user_id: Annotated[str, Depends(get_user_id)]) -> dict[Any, Any]:\n    execution_scheduler_client().delete_schedule(schedule_id, user_id=user_id)\n    return {'id': schedule_id}\nexecution_scheduler_client().delete_schedule(schedule_id)\nreturn {'id': schedule_id}"
+    },
+    {
+      "id": "n85",
+      "type": "block",
+      "statements": [
+        "@v1_router.get(path='/schedules', tags=['schedules'], dependencies=[Depends(auth_middleware)])\ndef get_execution_schedules(user_id: Annotated[str, Depends(get_user_id)], graph_id: str | None=None) -> list[scheduler.JobInfo]:\n    return execution_scheduler_client().get_execution_schedules(user_id=user_id, graph_id=graph_id)",
+        "return execution_scheduler_client().get_execution_schedules(user_id=user_id, graph_id=graph_id)"
+      ],
+      "code": "@v1_router.get(path='/schedules', tags=['schedules'], dependencies=[Depends(auth_middleware)])\ndef get_execution_schedules(user_id: Annotated[str, Depends(get_user_id)], graph_id: str | None=None) -> list[scheduler.JobInfo]:\n    return execution_scheduler_client().get_execution_schedules(user_id=user_id, graph_id=graph_id)\nreturn execution_scheduler_client().get_execution_schedules(user_id=user_id, graph_id=graph_id)"
+    },
+    {
+      "id": "n86",
+      "type": "block",
+      "statements": [
+        "@v1_router.post('/api-keys', response_model=list[CreateAPIKeyResponse] | dict[str, str], tags=['api-keys'], dependencies=[Depends(auth_middleware)])\n@feature_flag('api-keys-enabled')\nasync def create_api_key(request: CreateAPIKeyRequest, user_id: Annotated[str, Depends(get_user_id)]) -> CreateAPIKeyResponse:\n    \"\"\"Create a new API key\"\"\"\n    try:\n        (api_key, plain_text) = await generate_api_key(name=request.name, user_id=user_id, permissions=request.permissions, description=request.description)\n        return CreateAPIKeyResponse(api_key=api_key, plain_text_key=plain_text)\n    except APIKeyError as e:\n        logger.error(f'Failed to create API key: {str(e)}')\n        raise HTTPException(status_code=400, detail=str(e))",
+        "'Create a new API key'",
+        "try:\n    (api_key, plain_text) = await generate_api_key(name=request.name, user_id=user_id, permissions=request.permissions, description=request.description)\n    return CreateAPIKeyResponse(api_key=api_key, plain_text_key=plain_text)\nexcept APIKeyError as e:\n    logger.error(f'Failed to create API key: {str(e)}')\n    raise HTTPException(status_code=400, detail=str(e))",
+        "(api_key, plain_text) = await generate_api_key(name=request.name, user_id=user_id, permissions=request.permissions, description=request.description)",
+        "return CreateAPIKeyResponse(api_key=api_key, plain_text_key=plain_text)"
+      ],
+      "code": "@v1_router.post('/api-keys', response_model=list[CreateAPIKeyResponse] | dict[str, str], tags=['api-keys'], dependencies=[Depends(auth_middleware)])\n@feature_flag('api-keys-enabled')\nasync def create_api_key(request: CreateAPIKeyRequest, user_id: Annotated[str, Depends(get_user_id)]) -> CreateAPIKeyResponse:\n    \"\"\"Create a new API key\"\"\"\n    try:\n        (api_key, plain_text) = await generate_api_key(name=request.name, user_id=user_id, permissions=request.permissions, description=request.description)\n        return CreateAPIKeyResponse(api_key=api_key, plain_text_key=plain_text)\n    except APIKeyError as e:\n        logger.error(f'Failed to create API key: {str(e)}')\n        raise HTTPException(status_code=400, detail=str(e))\n'Create a new API key'\ntry:\n    (api_key, plain_text) = await generate_api_key(name=request.name, user_id=user_id, permissions=request.permissions, description=request.description)\n    return CreateAPIKeyResponse(api_key=api_key, plain_text_key=plain_text)\nexcept APIKeyError as e:\n    logger.error(f'Failed to create API key: {str(e)}')\n    raise HTTPException(status_code=400, detail=str(e))\n(api_key, plain_text) = await generate_api_key(name=request.name, user_id=user_id, permissions=request.permissions, description=request.description)\nreturn CreateAPIKeyResponse(api_key=api_key, plain_text_key=plain_text)"
+    },
+    {
+      "id": "n87",
+      "type": "block",
+      "statements": [
+        "logger.error(f'Failed to create API key: {str(e)}')",
+        "raise HTTPException(status_code=400, detail=str(e))",
+        "@v1_router.get('/api-keys', response_model=list[APIKeyWithoutHash] | dict[str, str], tags=['api-keys'], dependencies=[Depends(auth_middleware)])\n@feature_flag('api-keys-enabled')\nasync def get_api_keys(user_id: Annotated[str, Depends(get_user_id)]) -> list[APIKeyWithoutHash]:\n    \"\"\"List all API keys for the user\"\"\"\n    try:\n        return await list_user_api_keys(user_id)\n    except APIKeyError as e:\n        logger.error(f'Failed to list API keys: {str(e)}')\n        raise HTTPException(status_code=400, detail=str(e))",
+        "'List all API keys for the user'",
+        "try:\n    return await list_user_api_keys(user_id)\nexcept APIKeyError as e:\n    logger.error(f'Failed to list API keys: {str(e)}')\n    raise HTTPException(status_code=400, detail=str(e))",
+        "return await list_user_api_keys(user_id)"
+      ],
+      "code": "logger.error(f'Failed to create API key: {str(e)}')\nraise HTTPException(status_code=400, detail=str(e))\n@v1_router.get('/api-keys', response_model=list[APIKeyWithoutHash] | dict[str, str], tags=['api-keys'], dependencies=[Depends(auth_middleware)])\n@feature_flag('api-keys-enabled')\nasync def get_api_keys(user_id: Annotated[str, Depends(get_user_id)]) -> list[APIKeyWithoutHash]:\n    \"\"\"List all API keys for the user\"\"\"\n    try:\n        return await list_user_api_keys(user_id)\n    except APIKeyError as e:\n        logger.error(f'Failed to list API keys: {str(e)}')\n        raise HTTPException(status_code=400, detail=str(e))\n'List all API keys for the user'\ntry:\n    return await list_user_api_keys(user_id)\nexcept APIKeyError as e:\n    logger.error(f'Failed to list API keys: {str(e)}')\n    raise HTTPException(status_code=400, detail=str(e))\nreturn await list_user_api_keys(user_id)"
+    },
+    {
+      "id": "n88",
+      "type": "block",
+      "statements": [
+        "logger.error(f'Failed to list API keys: {str(e)}')",
+        "raise HTTPException(status_code=400, detail=str(e))",
+        "@v1_router.get('/api-keys/{key_id}', response_model=list[APIKeyWithoutHash] | dict[str, str], tags=['api-keys'], dependencies=[Depends(auth_middleware)])\n@feature_flag('api-keys-enabled')\nasync def get_api_key(key_id: str, user_id: Annotated[str, Depends(get_user_id)]) -> APIKeyWithoutHash:\n    \"\"\"Get a specific API key\"\"\"\n    try:\n        api_key = await get_api_key_by_id(key_id, user_id)\n        if not api_key:\n            raise HTTPException(status_code=404, detail='API key not found')\n        return api_key\n    except APIKeyError as e:\n        logger.error(f'Failed to get API key: {str(e)}')\n        raise HTTPException(status_code=400, detail=str(e))",
+        "'Get a specific API key'",
+        "try:\n    api_key = await get_api_key_by_id(key_id, user_id)\n    if not api_key:\n        raise HTTPException(status_code=404, detail='API key not found')\n    return api_key\nexcept APIKeyError as e:\n    logger.error(f'Failed to get API key: {str(e)}')\n    raise HTTPException(status_code=400, detail=str(e))",
+        "api_key = await get_api_key_by_id(key_id, user_id)",
+        "not api_key"
+      ],
+      "code": "logger.error(f'Failed to list API keys: {str(e)}')\nraise HTTPException(status_code=400, detail=str(e))\n@v1_router.get('/api-keys/{key_id}', response_model=list[APIKeyWithoutHash] | dict[str, str], tags=['api-keys'], dependencies=[Depends(auth_middleware)])\n@feature_flag('api-keys-enabled')\nasync def get_api_key(key_id: str, user_id: Annotated[str, Depends(get_user_id)]) -> APIKeyWithoutHash:\n    \"\"\"Get a specific API key\"\"\"\n    try:\n        api_key = await get_api_key_by_id(key_id, user_id)\n        if not api_key:\n            raise HTTPException(status_code=404, detail='API key not found')\n        return api_key\n    except APIKeyError as e:\n        logger.error(f'Failed to get API key: {str(e)}')\n        raise HTTPException(status_code=400, detail=str(e))\n'Get a specific API key'\ntry:\n    api_key = await get_api_key_by_id(key_id, user_id)\n    if not api_key:\n        raise HTTPException(status_code=404, detail='API key not found')\n    return api_key\nexcept APIKeyError as e:\n    logger.error(f'Failed to get API key: {str(e)}')\n    raise HTTPException(status_code=400, detail=str(e))\napi_key = await get_api_key_by_id(key_id, user_id)\nnot api_key"
+    },
+    {
+      "id": "n89",
+      "type": "block",
+      "statements": [
+        "raise HTTPException(status_code=404, detail='API key not found')"
+      ],
+      "code": "raise HTTPException(status_code=404, detail='API key not found')"
+    },
+    {
+      "id": "n90",
+      "type": "block",
+      "statements": [],
+      "code": ""
+    },
+    {
+      "id": "n91",
+      "type": "block",
+      "statements": [
+        "return api_key"
+      ],
+      "code": "return api_key"
+    },
+    {
+      "id": "n92",
+      "type": "block",
+      "statements": [
+        "logger.error(f'Failed to get API key: {str(e)}')",
+        "raise HTTPException(status_code=400, detail=str(e))",
+        "@v1_router.delete('/api-keys/{key_id}', response_model=list[APIKeyWithoutHash] | dict[str, str], tags=['api-keys'], dependencies=[Depends(auth_middleware)])\n@feature_flag('api-keys-enabled')\nasync def delete_api_key(key_id: str, user_id: Annotated[str, Depends(get_user_id)]) -> Optional[APIKeyWithoutHash]:\n    \"\"\"Revoke an API key\"\"\"\n    try:\n        return await revoke_api_key(key_id, user_id)\n    except APIKeyNotFoundError:\n        raise HTTPException(status_code=404, detail='API key not found')\n    except APIKeyPermissionError:\n        raise HTTPException(status_code=403, detail='Permission denied')\n    except APIKeyError as e:\n        logger.error(f'Failed to revoke API key: {str(e)}')\n        raise HTTPException(status_code=400, detail=str(e))",
+        "'Revoke an API key'",
+        "try:\n    return await revoke_api_key(key_id, user_id)\nexcept APIKeyNotFoundError:\n    raise HTTPException(status_code=404, detail='API key not found')\nexcept APIKeyPermissionError:\n    raise HTTPException(status_code=403, detail='Permission denied')\nexcept APIKeyError as e:\n    logger.error(f'Failed to revoke API key: {str(e)}')\n    raise HTTPException(status_code=400, detail=str(e))",
+        "return await revoke_api_key(key_id, user_id)"
+      ],
+      "code": "logger.error(f'Failed to get API key: {str(e)}')\nraise HTTPException(status_code=400, detail=str(e))\n@v1_router.delete('/api-keys/{key_id}', response_model=list[APIKeyWithoutHash] | dict[str, str], tags=['api-keys'], dependencies=[Depends(auth_middleware)])\n@feature_flag('api-keys-enabled')\nasync def delete_api_key(key_id: str, user_id: Annotated[str, Depends(get_user_id)]) -> Optional[APIKeyWithoutHash]:\n    \"\"\"Revoke an API key\"\"\"\n    try:\n        return await revoke_api_key(key_id, user_id)\n    except APIKeyNotFoundError:\n        raise HTTPException(status_code=404, detail='API key not found')\n    except APIKeyPermissionError:\n        raise HTTPException(status_code=403, detail='Permission denied')\n    except APIKeyError as e:\n        logger.error(f'Failed to revoke API key: {str(e)}')\n        raise HTTPException(status_code=400, detail=str(e))\n'Revoke an API key'\ntry:\n    return await revoke_api_key(key_id, user_id)\nexcept APIKeyNotFoundError:\n    raise HTTPException(status_code=404, detail='API key not found')\nexcept APIKeyPermissionError:\n    raise HTTPException(status_code=403, detail='Permission denied')\nexcept APIKeyError as e:\n    logger.error(f'Failed to revoke API key: {str(e)}')\n    raise HTTPException(status_code=400, detail=str(e))\nreturn await revoke_api_key(key_id, user_id)"
+    },
+    {
+      "id": "n93",
+      "type": "block",
+      "statements": [
+        "raise HTTPException(status_code=404, detail='API key not found')",
+        "raise HTTPException(status_code=403, detail='Permission denied')",
+        "logger.error(f'Failed to revoke API key: {str(e)}')",
+        "raise HTTPException(status_code=400, detail=str(e))",
+        "@v1_router.post('/api-keys/{key_id}/suspend', response_model=list[APIKeyWithoutHash] | dict[str, str], tags=['api-keys'], dependencies=[Depends(auth_middleware)])\n@feature_flag('api-keys-enabled')\nasync def suspend_key(key_id: str, user_id: Annotated[str, Depends(get_user_id)]) -> Optional[APIKeyWithoutHash]:\n    \"\"\"Suspend an API key\"\"\"\n    try:\n        return await suspend_api_key(key_id, user_id)\n    except APIKeyNotFoundError:\n        raise HTTPException(status_code=404, detail='API key not found')\n    except APIKeyPermissionError:\n        raise HTTPException(status_code=403, detail='Permission denied')\n    except APIKeyError as e:\n        logger.error(f'Failed to suspend API key: {str(e)}')\n        raise HTTPException(status_code=400, detail=str(e))",
+        "'Suspend an API key'",
+        "try:\n    return await suspend_api_key(key_id, user_id)\nexcept APIKeyNotFoundError:\n    raise HTTPException(status_code=404, detail='API key not found')\nexcept APIKeyPermissionError:\n    raise HTTPException(status_code=403, detail='Permission denied')\nexcept APIKeyError as e:\n    logger.error(f'Failed to suspend API key: {str(e)}')\n    raise HTTPException(status_code=400, detail=str(e))",
+        "return await suspend_api_key(key_id, user_id)"
+      ],
+      "code": "raise HTTPException(status_code=404, detail='API key not found')\nraise HTTPException(status_code=403, detail='Permission denied')\nlogger.error(f'Failed to revoke API key: {str(e)}')\nraise HTTPException(status_code=400, detail=str(e))\n@v1_router.post('/api-keys/{key_id}/suspend', response_model=list[APIKeyWithoutHash] | dict[str, str], tags=['api-keys'], dependencies=[Depends(auth_middleware)])\n@feature_flag('api-keys-enabled')\nasync def suspend_key(key_id: str, user_id: Annotated[str, Depends(get_user_id)]) -> Optional[APIKeyWithoutHash]:\n    \"\"\"Suspend an API key\"\"\"\n    try:\n        return await suspend_api_key(key_id, user_id)\n    except APIKeyNotFoundError:\n        raise HTTPException(status_code=404, detail='API key not found')\n    except APIKeyPermissionError:\n        raise HTTPException(status_code=403, detail='Permission denied')\n    except APIKeyError as e:\n        logger.error(f'Failed to suspend API key: {str(e)}')\n        raise HTTPException(status_code=400, detail=str(e))\n'Suspend an API key'\ntry:\n    return await suspend_api_key(key_id, user_id)\nexcept APIKeyNotFoundError:\n    raise HTTPException(status_code=404, detail='API key not found')\nexcept APIKeyPermissionError:\n    raise HTTPException(status_code=403, detail='Permission denied')\nexcept APIKeyError as e:\n    logger.error(f'Failed to suspend API key: {str(e)}')\n    raise HTTPException(status_code=400, detail=str(e))\nreturn await suspend_api_key(key_id, user_id)"
+    },
+    {
+      "id": "n94",
+      "type": "block",
+      "statements": [
+        "raise HTTPException(status_code=404, detail='API key not found')",
+        "raise HTTPException(status_code=403, detail='Permission denied')",
+        "logger.error(f'Failed to suspend API key: {str(e)}')",
+        "raise HTTPException(status_code=400, detail=str(e))",
+        "@v1_router.put('/api-keys/{key_id}/permissions', response_model=list[APIKeyWithoutHash] | dict[str, str], tags=['api-keys'], dependencies=[Depends(auth_middleware)])\n@feature_flag('api-keys-enabled')\nasync def update_permissions(key_id: str, request: UpdatePermissionsRequest, user_id: Annotated[str, Depends(get_user_id)]) -> Optional[APIKeyWithoutHash]:\n    \"\"\"Update API key permissions\"\"\"\n    try:\n        return await update_api_key_permissions(key_id, user_id, request.permissions)\n    except APIKeyNotFoundError:\n        raise HTTPException(status_code=404, detail='API key not found')\n    except APIKeyPermissionError:\n        raise HTTPException(status_code=403, detail='Permission denied')\n    except APIKeyError as e:\n        logger.error(f'Failed to update API key permissions: {str(e)}')\n        raise HTTPException(status_code=400, detail=str(e))",
+        "'Update API key permissions'",
+        "try:\n    return await update_api_key_permissions(key_id, user_id, request.permissions)\nexcept APIKeyNotFoundError:\n    raise HTTPException(status_code=404, detail='API key not found')\nexcept APIKeyPermissionError:\n    raise HTTPException(status_code=403, detail='Permission denied')\nexcept APIKeyError as e:\n    logger.error(f'Failed to update API key permissions: {str(e)}')\n    raise HTTPException(status_code=400, detail=str(e))",
+        "return await update_api_key_permissions(key_id, user_id, request.permissions)"
+      ],
+      "code": "raise HTTPException(status_code=404, detail='API key not found')\nraise HTTPException(status_code=403, detail='Permission denied')\nlogger.error(f'Failed to suspend API key: {str(e)}')\nraise HTTPException(status_code=400, detail=str(e))\n@v1_router.put('/api-keys/{key_id}/permissions', response_model=list[APIKeyWithoutHash] | dict[str, str], tags=['api-keys'], dependencies=[Depends(auth_middleware)])\n@feature_flag('api-keys-enabled')\nasync def update_permissions(key_id: str, request: UpdatePermissionsRequest, user_id: Annotated[str, Depends(get_user_id)]) -> Optional[APIKeyWithoutHash]:\n    \"\"\"Update API key permissions\"\"\"\n    try:\n        return await update_api_key_permissions(key_id, user_id, request.permissions)\n    except APIKeyNotFoundError:\n        raise HTTPException(status_code=404, detail='API key not found')\n    except APIKeyPermissionError:\n        raise HTTPException(status_code=403, detail='Permission denied')\n    except APIKeyError as e:\n        logger.error(f'Failed to update API key permissions: {str(e)}')\n        raise HTTPException(status_code=400, detail=str(e))\n'Update API key permissions'\ntry:\n    return await update_api_key_permissions(key_id, user_id, request.permissions)\nexcept APIKeyNotFoundError:\n    raise HTTPException(status_code=404, detail='API key not found')\nexcept APIKeyPermissionError:\n    raise HTTPException(status_code=403, detail='Permission denied')\nexcept APIKeyError as e:\n    logger.error(f'Failed to update API key permissions: {str(e)}')\n    raise HTTPException(status_code=400, detail=str(e))\nreturn await update_api_key_permissions(key_id, user_id, request.permissions)"
+    },
+    {
+      "id": "n95",
+      "type": "block",
+      "statements": [
+        "raise HTTPException(status_code=404, detail='API key not found')",
+        "raise HTTPException(status_code=403, detail='Permission denied')",
+        "logger.error(f'Failed to update API key permissions: {str(e)}')",
+        "raise HTTPException(status_code=400, detail=str(e))"
+      ],
+      "code": "raise HTTPException(status_code=404, detail='API key not found')\nraise HTTPException(status_code=403, detail='Permission denied')\nlogger.error(f'Failed to update API key permissions: {str(e)}')\nraise HTTPException(status_code=400, detail=str(e))"
+    }
+  ],
+  "edges": [
+    {
+      "source": "n31",
+      "target": "n28"
+    },
+    {
+      "source": "n70",
+      "target": "n71"
+    },
+    {
+      "source": "n0",
+      "target": "n1"
+    },
+    {
+      "source": "n76",
+      "target": "n78"
+    },
+    {
+      "source": "n59",
+      "target": "n60"
+    },
+    {
+      "source": "n17",
+      "target": "n19"
+    },
+    {
+      "source": "n40",
+      "target": "n41"
+    },
+    {
+      "source": "n29",
+      "target": "n32"
+    },
+    {
+      "source": "n35",
+      "target": "n36"
+    },
+    {
+      "source": "n80",
+      "target": "n81"
+    },
+    {
+      "source": "n53",
+      "target": "n55"
+    },
+    {
+      "source": "n21",
+      "target": "n23"
+    },
+    {
+      "source": "n89",
+      "target": "n91"
+    },
+    {
+      "source": "n51",
+      "target": "n52"
+    },
+    {
+      "source": "n49",
+      "target": "n50"
+    },
+    {
+      "source": "n41",
+      "target": "n43"
+    },
+    {
+      "source": "n20",
+      "target": "n21"
+    },
+    {
+      "source": "n45",
+      "target": "n46"
+    },
+    {
+      "source": "n88",
+      "target": "n89"
+    },
+    {
+      "source": "n88",
+      "target": "n90"
+    },
+    {
+      "source": "n12",
+      "target": "n11"
+    },
+    {
+      "source": "n75",
+      "target": "n77"
+    },
+    {
+      "source": "n56",
+      "target": "n52"
+    },
+    {
+      "source": "n75",
+      "target": "n76"
+    },
+    {
+      "source": "n61",
+      "target": "n62"
+    },
+    {
+      "source": "n65",
+      "target": "n66"
+    },
+    {
+      "source": "n72",
+      "target": "n73"
+    },
+    {
+      "source": "n63",
+      "target": "n64"
+    },
+    {
+      "source": "n29",
+      "target": "n33"
+    },
+    {
+      "source": "n35",
+      "target": "n37"
+    },
+    {
+      "source": "n2",
+      "target": "n3"
+    },
+    {
+      "source": "n58",
+      "target": "n60"
+    },
+    {
+      "source": "n42",
+      "target": "n43"
+    },
+    {
+      "source": "n81",
+      "target": "n83"
+    },
+    {
+      "source": "n80",
+      "target": "n82"
+    },
+    {
+      "source": "n11",
+      "target": "n12"
+    },
+    {
+      "source": "n7",
+      "target": "n9"
+    },
+    {
+      "source": "n26",
+      "target": "n28"
+    },
+    {
+      "source": "n65",
+      "target": "n67"
+    },
+    {
+      "source": "n33",
+      "target": "n34"
+    },
+    {
+      "source": "n66",
+      "target": "n68"
+    },
+    {
+      "source": "n57",
+      "target": "n59"
+    },
+    {
+      "source": "n55",
+      "target": "n56"
+    },
+    {
+      "source": "n47",
+      "target": "n49"
+    },
+    {
+      "source": "n77",
+      "target": "n78"
+    },
+    {
+      "source": "n53",
+      "target": "n54"
+    },
+    {
+      "source": "n22",
+      "target": "n23"
+    },
+    {
+      "source": "n39",
+      "target": "n38"
+    },
+    {
+      "source": "n82",
+      "target": "n83"
+    },
+    {
+      "source": "n90",
+      "target": "n91"
+    },
+    {
+      "source": "n30",
+      "target": "n31"
+    },
+    {
+      "source": "n46",
+      "target": "n48"
+    },
+    {
+      "source": "n54",
+      "target": "n56"
+    },
+    {
+      "source": "n57",
+      "target": "n58"
+    },
+    {
+      "source": "n37",
+      "target": "n38"
+    },
+    {
+      "source": "n25",
+      "target": "n26"
+    },
+    {
+      "source": "n27",
+      "target": "n29"
+    },
+    {
+      "source": "n40",
+      "target": "n42"
+    },
+    {
+      "source": "n1",
+      "target": "n3"
+    },
+    {
+      "source": "n70",
+      "target": "n72"
+    },
+    {
+      "source": "n32",
+      "target": "n34"
+    },
+    {
+      "source": "n11",
+      "target": "n13"
+    },
+    {
+      "source": "n0",
+      "target": "n2"
+    },
+    {
+      "source": "n48",
+      "target": "n49"
+    },
+    {
+      "source": "n61",
+      "target": "n63"
+    },
+    {
+      "source": "n10",
+      "target": "n11"
+    },
+    {
+      "source": "n71",
+      "target": "n73"
+    },
+    {
+      "source": "n16",
+      "target": "n17"
+    },
+    {
+      "source": "n16",
+      "target": "n18"
+    },
+    {
+      "source": "n43",
+      "target": "n44"
+    },
+    {
+      "source": "n7",
+      "target": "n8"
+    },
+    {
+      "source": "n62",
+      "target": "n64"
+    },
+    {
+      "source": "n44",
+      "target": "n46"
+    },
+    {
+      "source": "n46",
+      "target": "n47"
+    },
+    {
+      "source": "n49",
+      "target": "n51"
+    },
+    {
+      "source": "n9",
+      "target": "n10"
+    },
+    {
+      "source": "n67",
+      "target": "n68"
+    },
+    {
+      "source": "n27",
+      "target": "n30"
+    },
+    {
+      "source": "n18",
+      "target": "n19"
+    },
+    {
+      "source": "n43",
+      "target": "n45"
+    },
+    {
+      "source": "n8",
+      "target": "n10"
+    },
+    {
+      "source": "n25",
+      "target": "n27"
+    },
+    {
+      "source": "n20",
+      "target": "n22"
+    },
+    {
+      "source": "n34",
+      "target": "n31"
+    }
+  ]
+}

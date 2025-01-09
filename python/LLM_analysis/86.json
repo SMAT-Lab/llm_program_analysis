@@ -1,0 +1,25 @@
+{
+  "nodes": [
+    {
+      "id": "n0",
+      "code": "from datetime import datetime\n\nimport pytest\n\nfrom prisma.models import CreditTransaction\n\nfrom backend.blocks.llm import AITextGeneratorBlock\nfrom backend.data.credit import UserCredit\nfrom backend.data.user import DEFAULT_USER_ID\nfrom backend.integrations.credentials_store import openai_credentials\nfrom backend.util.test import SpinTestServer\n\nREFILL_VALUE = 1000\nuser_credit = UserCredit(REFILL_VALUE)\n"
+    },
+    {
+      "id": "n1",
+      "code": "@pytest.mark.asyncio(scope=\"session\")\nasync def test_block_credit_usage(server: SpinTestServer):\n\n    current_credit = await user_credit.get_or_refill_credit(DEFAULT_USER_ID)\n\n    spending_amount_1 = await user_credit.spend_credits(\n        DEFAULT_USER_ID,\n        current_credit,\n        AITextGeneratorBlock().id,\n        {\n            \"model\": \"gpt-4-turbo\",\n            \"credentials\": {\n                \"id\": openai_credentials.id,\n                \"provider\": openai_credentials.provider,\n                \"type\": openai_credentials.type,\n            },\n        },\n        0.0,\n        0.0,\n        validate_balance=False,\n    )\n\n    assert spending_amount_1 > 0\n\n    spending_amount_2 = await user_credit.spend_credits(\n        DEFAULT_USER_ID,\n        current_credit,\n        AITextGeneratorBlock().id,\n        {\"model\": \"gpt-4-turbo\", \"api_key\": \"owned_api_key\"},\n        0.0,\n        0.0,\n        validate_balance=False,\n    )\n\n    assert spending_amount_2 == 0\n\n    new_credit = await user_credit.get_or_refill_credit(DEFAULT_USER_ID)\n\n    assert new_credit == current_credit - spending_amount_1 - spending_amount_2\n"
+    },
+    {
+      "id": "n2",
+      "code": "@pytest.mark.asyncio(scope=\"session\")\nasync def test_block_credit_top_up(server: SpinTestServer):\n\n    current_credit = await user_credit.get_or_refill_credit(DEFAULT_USER_ID)\n\n    await user_credit.top_up_credits(DEFAULT_USER_ID, 100)\n\n    new_credit = await user_credit.get_or_refill_credit(DEFAULT_USER_ID)\n    assert new_credit == current_credit + 100\n"
+    },
+    {
+      "id": "n3",
+      "code": "@pytest.mark.asyncio(scope=\"session\")\nasync def test_block_credit_reset(server: SpinTestServer):\n\n    month1 = datetime(2022, 1, 15)\n    month2 = datetime(2022, 2, 15)\n\n    user_credit.time_now = lambda: month2\n    month2credit = await user_credit.get_or_refill_credit(DEFAULT_USER_ID)\n\n    user_credit.time_now = lambda: month1\n    month1credit = await user_credit.get_or_refill_credit(DEFAULT_USER_ID)\n    await user_credit.top_up_credits(DEFAULT_USER_ID, 100)\n    assert await user_credit.get_or_refill_credit(DEFAULT_USER_ID) == month1credit + 100\n\n    user_credit.time_now = lambda: month2\n    assert await user_credit.get_or_refill_credit(DEFAULT_USER_ID) == month2credit\n"
+    },
+    {
+      "id": "n4",
+      "code": "@pytest.mark.asyncio(scope=\"session\")\nasync def test_credit_refill(server: SpinTestServer):\n\n    # Clear all transactions within the month\n    await CreditTransaction.prisma().update_many(\n        where={\n            \"userId\": DEFAULT_USER_ID,\n            \"createdAt\": {\n                \"gte\": datetime(2022, 2, 1),\n                \"lt\": datetime(2022, 3, 1),\n            },\n        },\n        data={\"isActive\": False},\n    )\n\n    user_credit.time_now = lambda: datetime(2022, 2, 15)\n\n    balance = await user_credit.get_or_refill_credit(DEFAULT_USER_ID)\n    assert balance == REFILL_VALUE\n"
+    }
+  ],
+  "edges": []
+}

@@ -1,0 +1,374 @@
+{
+    "nodes": [
+        {
+            "id": "chunk_0_GlobalBlock_1",
+            "code": "import logging\nimport time\nfrom enum import Enum\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_2",
+            "code": "from typing import Literal\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_3",
+            "code": "import replicate\nfrom pydantic import SecretStr\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_4",
+            "code": "from backend.data.block import Block, BlockCategory, BlockOutput, BlockSchema\nfrom backend.data.model import (\n    APIKeyCredentials,\n    CredentialsField,\n    CredentialsMetaInput,\n    SchemaField,\n)\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_5",
+            "code": "from backend.integrations.providers import ProviderName\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_6",
+            "code": "logger = logging.getLogger(__name__)\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_7",
+            "code": "TEST_CREDENTIALS = APIKeyCredentials(\n    id=\"01234567-89ab-cdef-0123-456789abcdef\",\n    provider=\"replicate\",\n    api_key=SecretStr(\"mock-replicate-api-key\"),\n    title=\"Mock Replicate API key\",\n    expires_at=None,\n)\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_8",
+            "code": "TEST_CREDENTIALS_INPUT = {\n    \"provider\": TEST_CREDENTIALS.provider,\n    \"id\": TEST_CREDENTIALS.id,\n    \"type\": TEST_CREDENTIALS.type,\n    \"title\": TEST_CREDENTIALS.type,\n}\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_9",
+            "code": "# Model version enum\n\n"
+        },
+        {
+            "id": "chunk_1_MusicGenModelVersion_1",
+            "code": "class MusicGenModelVersion(str, Enum):\n    STEREO_LARGE = \"stereo-large\"\n    MELODY_LARGE = \"melody-large\"\n    LARGE = \"large\"\n"
+        },
+        {
+            "id": "chunk_2_AudioFormat_1",
+            "code": "class AudioFormat(str, Enum):\n    WAV = \"wav\"\n    MP3 = \"mp3\"\n"
+        },
+        {
+            "id": "chunk_3_NormalizationStrategy_1",
+            "code": "class NormalizationStrategy(str, Enum):\n    LOUDNESS = \"loudness\"\n    CLIP = \"clip\"\n    PEAK = \"peak\"\n    RMS = \"rms\"\n"
+        },
+        {
+            "id": "chunk_4_AIMusicGeneratorBlock_1",
+            "code": "class AIMusicGeneratorBlock(Block):\n    class Input(BlockSchema):\n        credentials: CredentialsMetaInput[\n            Literal[ProviderName.REPLICATE], Literal[\"api_key\"]\n        ] = CredentialsField(\n            description=\"The Replicate integration can be used with \"\n            \"any API key with sufficient permissions for the blocks it is used on.\",\n        )\n        prompt: str = SchemaField(\n            description=\"A description of the music you want to generate\",\n            placeholder=\"e.g., 'An upbeat electronic dance track with heavy bass'\",\n            title=\"Prompt\",\n        )\n        music_gen_model_version: MusicGenModelVersion = SchemaField(\n            description=\"Model to use for generation\",\n            default=MusicGenModelVersion.STEREO_LARGE,\n            title=\"Model Version\",\n        )\n        duration: int = SchemaField(\n            description=\"Duration of the generated audio in seconds\",\n            default=8,\n            title=\"Duration\",\n        )\n        temperature: float = SchemaField(\n            description=\"Controls the 'conservativeness' of the sampling process. Higher temperature means more diversity\",\n            default=1.0,\n            title=\"Temperature\",\n        )\n        top_k: int = SchemaField(\n            description=\"Reduces sampling to the k most likely tokens\",\n            default=250,\n            title=\"Top K\",\n        )\n        top_p: float = SchemaField(\n            description=\"Reduces sampling to tokens with cumulative probability of p. When set to 0 (default), top_k sampling is used\",\n            default=0.0,\n            title=\"Top P\",\n        )\n        classifier_free_guidance: int = SchemaField(\n            description=\"Increases the influence of inputs on the output. Higher values produce lower-variance outputs that adhere more closely to inputs\",\n            default=3,\n            title=\"Classifier Free Guidance\",\n        )\n        output_format: AudioFormat = SchemaField(\n            description=\"Output format for generated audio\",\n            default=AudioFormat.WAV,\n            title=\"Output Format\",\n        )\n        normalization_strategy: NormalizationStrategy = SchemaField(\n            description=\"Strategy for normalizing audio\",\n            default=NormalizationStrategy.LOUDNESS,\n            title=\"Normalization Strategy\",\n        )\n\n"
+        },
+        {
+            "id": "chunk_4_AIMusicGeneratorBlock_2",
+            "code": "    class Output(BlockSchema):\n        result: str = SchemaField(description=\"URL of the generated audio file\")\n        error: str = SchemaField(description=\"Error message if the model run failed\")\n\n"
+        },
+        {
+            "id": "chunk_4_AIMusicGeneratorBlock_3",
+            "code": "    def __init__(self):\n        super().__init__(\n            id=\"44f6c8ad-d75c-4ae1-8209-aad1c0326928\",\n            description=\"This block generates music using Meta's MusicGen model on Replicate.\",\n            categories={BlockCategory.AI},\n            input_schema=AIMusicGeneratorBlock.Input,\n            output_schema=AIMusicGeneratorBlock.Output,\n            test_input={\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n                \"prompt\": \"An upbeat electronic dance track with heavy bass\",\n                \"music_gen_model_version\": MusicGenModelVersion.STEREO_LARGE,\n                \"duration\": 8,\n                \"temperature\": 1.0,\n                \"top_k\": 250,\n                \"top_p\": 0.0,\n                \"classifier_free_guidance\": 3,\n                \"output_format\": AudioFormat.WAV,\n                \"normalization_strategy\": NormalizationStrategy.LOUDNESS,\n            },\n            test_output=[\n                (\n                    \"result\",\n                    \"https://replicate.com/output/generated-audio-url.wav\",\n                ),\n            ],\n            test_mock={\n                \"run_model\": lambda api_key, music_gen_model_version, prompt, duration, temperature, top_k, top_p, classifier_free_guidance, output_format, normalization_strategy: \"https://replicate.com/output/generated-audio-url.wav\",\n            },\n            test_credentials=TEST_CREDENTIALS,\n        )\n"
+        },
+        {
+            "id": "chunk_4_AIMusicGeneratorBlock_4",
+            "code": "    def run(\n        self, input_data: Input, *, credentials: APIKeyCredentials, **kwargs\n    ) -> BlockOutput:\n        max_retries = 3\n        retry_delay = 5  # seconds\n        last_error = None\n\n"
+        },
+        {
+            "id": "chunk_4_AIMusicGeneratorBlock_5",
+            "code": "        for attempt in range(max_retries):\n            try:\n                logger.debug(\n                    f\"[AIMusicGeneratorBlock] - Running model (attempt {attempt + 1})\"\n                )\n                result = self.run_model(\n                    api_key=credentials.api_key,\n                    music_gen_model_version=input_data.music_gen_model_version,\n                    prompt=input_data.prompt,\n                    duration=input_data.duration,\n                    temperature=input_data.temperature,\n                    top_k=input_data.top_k,\n                    top_p=input_data.top_p,\n                    classifier_free_guidance=input_data.classifier_free_guidance,\n                    output_format=input_data.output_format,\n                    normalization_strategy=input_data.normalization_strategy,\n                )\n                if result and result != \"No output received\":\n                    yield \"result\", result\n                    return\n                else:\n                    last_error = \"Model returned empty or invalid response\"\n                    raise ValueError(last_error)\n            except Exception as e:\n                last_error = f\"Unexpected error: {str(e)}\"\n                logger.error(f\"[AIMusicGeneratorBlock] - Error: {last_error}\")\n                if attempt < max_retries - 1:\n                    time.sleep(retry_delay)\n                    continue\n"
+        },
+        {
+            "id": "chunk_4_AIMusicGeneratorBlock_6",
+            "code": "        # If we've exhausted all retries, yield the error\n        yield \"error\", f\"Failed after {max_retries} attempts. Last error: {last_error}\"\n"
+        },
+        {
+            "id": "chunk_4_AIMusicGeneratorBlock_7",
+            "code": "    def run_model(\n        self,\n        api_key: SecretStr,\n        music_gen_model_version: MusicGenModelVersion,\n        prompt: str,\n        duration: int,\n        temperature: float,\n        top_k: int,\n        top_p: float,\n        classifier_free_guidance: int,\n        output_format: AudioFormat,\n        normalization_strategy: NormalizationStrategy,\n    ):\n"
+        },
+        {
+            "id": "chunk_4_AIMusicGeneratorBlock_8",
+            "code": "        # Initialize Replicate client with the API key\n        client = replicate.Client(api_token=api_key.get_secret_value())\n\n"
+        },
+        {
+            "id": "chunk_4_AIMusicGeneratorBlock_9",
+            "code": "        # Run the model with parameters\n        output = client.run(\n            \"meta/musicgen:671ac645ce5e552cc63a54a2bbff63fcf798043055d2dac5fc9e36a837eedcfb\",\n            input={\n                \"prompt\": prompt,\n                \"music_gen_model_version\": music_gen_model_version,\n                \"duration\": duration,\n                \"temperature\": temperature,\n                \"top_k\": top_k,\n                \"top_p\": top_p,\n                \"classifier_free_guidance\": classifier_free_guidance,\n                \"output_format\": output_format,\n                \"normalization_strategy\": normalization_strategy,\n            },\n        )\n"
+        },
+        {
+            "id": "chunk_4_AIMusicGeneratorBlock_10",
+            "code": "        # Handle the output\n        if isinstance(output, list) and len(output) > 0:\n            result_url = output[0]  # If output is a list, get the first element\n        elif isinstance(output, str):\n            result_url = output  # If output is a string, use it directly\n        else:\n            result_url = (\n                \"No output received\"  # Fallback message if output is not as expected\n            )\n\n        return result_url\n"
+        },
+        {
+            "id": "chunk_5_AIMusicGeneratorBlock.Input_1",
+            "code": "    class Input(BlockSchema):\n        credentials: CredentialsMetaInput[\n            Literal[ProviderName.REPLICATE], Literal[\"api_key\"]\n        ] = CredentialsField(\n"
+        },
+        {
+            "id": "chunk_5_AIMusicGeneratorBlock.Input_2",
+            "code": "            description=\"The Replicate integration can be used with \"\n            \"any API key with sufficient permissions for the blocks it is used on.\",\n        )\n"
+        },
+        {
+            "id": "chunk_5_AIMusicGeneratorBlock.Input_3",
+            "code": "        prompt: str = SchemaField(\n            description=\"A description of the music you want to generate\",\n            placeholder=\"e.g., 'An upbeat electronic dance track with heavy bass'\",\n            title=\"Prompt\",\n        )\n"
+        },
+        {
+            "id": "chunk_5_AIMusicGeneratorBlock.Input_4",
+            "code": "        music_gen_model_version: MusicGenModelVersion = SchemaField(\n            description=\"Model to use for generation\",\n            default=MusicGenModelVersion.STEREO_LARGE,\n            title=\"Model Version\",\n        )\n"
+        },
+        {
+            "id": "chunk_5_AIMusicGeneratorBlock.Input_5",
+            "code": "        duration: int = SchemaField(\n            description=\"Duration of the generated audio in seconds\",\n            default=8,\n            title=\"Duration\",\n        )\n"
+        },
+        {
+            "id": "chunk_5_AIMusicGeneratorBlock.Input_6",
+            "code": "        temperature: float = SchemaField(\n            description=\"Controls the 'conservativeness' of the sampling process. Higher temperature means more diversity\",\n            default=1.0,\n            title=\"Temperature\",\n        )\n"
+        },
+        {
+            "id": "chunk_5_AIMusicGeneratorBlock.Input_7",
+            "code": "        top_k: int = SchemaField(\n            description=\"Reduces sampling to the k most likely tokens\",\n            default=250,\n            title=\"Top K\",\n        )\n"
+        },
+        {
+            "id": "chunk_5_AIMusicGeneratorBlock.Input_8",
+            "code": "        top_p: float = SchemaField(\n            description=\"Reduces sampling to tokens with cumulative probability of p. When set to 0 (default), top_k sampling is used\",\n            default=0.0,\n            title=\"Top P\",\n        )\n"
+        },
+        {
+            "id": "chunk_5_AIMusicGeneratorBlock.Input_9",
+            "code": "        classifier_free_guidance: int = SchemaField(\n            description=\"Increases the influence of inputs on the output. Higher values produce lower-variance outputs that adhere more closely to inputs\",\n            default=3,\n            title=\"Classifier Free Guidance\",\n        )\n"
+        },
+        {
+            "id": "chunk_5_AIMusicGeneratorBlock.Input_10",
+            "code": "        output_format: AudioFormat = SchemaField(\n            description=\"Output format for generated audio\",\n            default=AudioFormat.WAV,\n            title=\"Output Format\",\n        )\n"
+        },
+        {
+            "id": "chunk_5_AIMusicGeneratorBlock.Input_11",
+            "code": "        normalization_strategy: NormalizationStrategy = SchemaField(\n            description=\"Strategy for normalizing audio\",\n            default=NormalizationStrategy.LOUDNESS,\n            title=\"Normalization Strategy\",\n        )\n"
+        },
+        {
+            "id": "chunk_6_AIMusicGeneratorBlock.Output_1",
+            "code": "    class Output(BlockSchema):\n        result: str = SchemaField(description=\"URL of the generated audio file\")\n        error: str = SchemaField(description=\"Error message if the model run failed\")\n"
+        },
+        {
+            "id": "chunk_7_AIMusicGeneratorBlock.__init___1",
+            "code": "    def __init__(self):\n        super().__init__(\n"
+        },
+        {
+            "id": "chunk_7_AIMusicGeneratorBlock.__init___2",
+            "code": "            id=\"44f6c8ad-d75c-4ae1-8209-aad1c0326928\",\n            description=\"This block generates music using Meta's MusicGen model on Replicate.\",\n            categories={BlockCategory.AI},\n            input_schema=AIMusicGeneratorBlock.Input,\n            output_schema=AIMusicGeneratorBlock.Output,\n            test_input={\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n                \"prompt\": \"An upbeat electronic dance track with heavy bass\",\n                \"music_gen_model_version\": MusicGenModelVersion.STEREO_LARGE,\n                \"duration\": 8,\n                \"temperature\": 1.0,\n                \"top_k\": 250,\n                \"top_p\": 0.0,\n                \"classifier_free_guidance\": 3,\n                \"output_format\": AudioFormat.WAV,\n                \"normalization_strategy\": NormalizationStrategy.LOUDNESS,\n            },\n            test_output=[\n                (\n                    \"result\",\n                    \"https://replicate.com/output/generated-audio-url.wav\",\n                ),\n            ],\n            test_mock={\n                \"run_model\": lambda api_key, music_gen_model_version, prompt, duration, temperature, top_k, top_p, classifier_free_guidance, output_format, normalization_strategy: \"https://replicate.com/output/generated-audio-url.wav\",\n            },\n            test_credentials=TEST_CREDENTIALS,\n        )\n"
+        },
+        {
+            "id": "chunk_8_AIMusicGeneratorBlock.run_1",
+            "code": "    def run(\n        self, input_data: Input, *, credentials: APIKeyCredentials, **kwargs\n    ) -> BlockOutput:\n"
+        },
+        {
+            "id": "chunk_8_AIMusicGeneratorBlock.run_2",
+            "code": "        max_retries = 3\n        retry_delay = 5  # seconds\n        last_error = None\n"
+        },
+        {
+            "id": "chunk_8_AIMusicGeneratorBlock.run_3",
+            "code": "        for attempt in range(max_retries):\n"
+        },
+        {
+            "id": "chunk_8_AIMusicGeneratorBlock.run_4",
+            "code": "            try:\n                logger.debug(\n                    f\"[AIMusicGeneratorBlock] - Running model (attempt {attempt + 1})\"\n                )\n"
+        },
+        {
+            "id": "chunk_8_AIMusicGeneratorBlock.run_5",
+            "code": "                result = self.run_model(\n                    api_key=credentials.api_key,\n                    music_gen_model_version=input_data.music_gen_model_version,\n                    prompt=input_data.prompt,\n                    duration=input_data.duration,\n                    temperature=input_data.temperature,\n                    top_k=input_data.top_k,\n                    top_p=input_data.top_p,\n                    classifier_free_guidance=input_data.classifier_free_guidance,\n                    output_format=input_data.output_format,\n                    normalization_strategy=input_data.normalization_strategy,\n                )\n"
+        },
+        {
+            "id": "chunk_8_AIMusicGeneratorBlock.run_6",
+            "code": "                if result and result != \"No output received\":\n                    yield \"result\", result\n                    return\n"
+        },
+        {
+            "id": "chunk_8_AIMusicGeneratorBlock.run_7",
+            "code": "                else:\n                    last_error = \"Model returned empty or invalid response\"\n                    raise ValueError(last_error)\n"
+        },
+        {
+            "id": "chunk_8_AIMusicGeneratorBlock.run_8",
+            "code": "            except Exception as e:\n                last_error = f\"Unexpected error: {str(e)}\"\n                logger.error(f\"[AIMusicGeneratorBlock] - Error: {last_error}\")\n"
+        },
+        {
+            "id": "chunk_8_AIMusicGeneratorBlock.run_9",
+            "code": "                if attempt < max_retries - 1:\n                    time.sleep(retry_delay)\n                    continue\n"
+        },
+        {
+            "id": "chunk_8_AIMusicGeneratorBlock.run_10",
+            "code": "        yield \"error\", f\"Failed after {max_retries} attempts. Last error: {last_error}\"\n"
+        },
+        {
+            "id": "chunk_9_AIMusicGeneratorBlock.run_model_1",
+            "code": "    def run_model(\n        self,\n        api_key: SecretStr,\n        music_gen_model_version: MusicGenModelVersion,\n        prompt: str,\n        duration: int,\n        temperature: float,\n        top_k: int,\n        top_p: float,\n        classifier_free_guidance: int,\n        output_format: AudioFormat,\n        normalization_strategy: NormalizationStrategy,\n    ):\n"
+        },
+        {
+            "id": "chunk_9_AIMusicGeneratorBlock.run_model_2",
+            "code": "        # Initialize Replicate client with the API key\n        client = replicate.Client(api_token=api_key.get_secret_value())\n"
+        },
+        {
+            "id": "chunk_9_AIMusicGeneratorBlock.run_model_3",
+            "code": "        # Run the model with parameters\n        output = client.run(\n            \"meta/musicgen:671ac645ce5e552cc63a54a2bbff63fcf798043055d2dac5fc9e36a837eedcfb\",\n            input={\n                \"prompt\": prompt,\n                \"music_gen_model_version\": music_gen_model_version,\n                \"duration\": duration,\n                \"temperature\": temperature,\n                \"top_k\": top_k,\n                \"top_p\": top_p,\n                \"classifier_free_guidance\": classifier_free_guidance,\n                \"output_format\": output_format,\n                \"normalization_strategy\": normalization_strategy,\n            },\n        )\n"
+        },
+        {
+            "id": "chunk_9_AIMusicGeneratorBlock.run_model_4",
+            "code": "        # Handle the output\n        if isinstance(output, list) and len(output) > 0:\n            result_url = output[0]  # If output is a list, get the first element\n        elif isinstance(output, str):\n            result_url = output  # If output is a string, use it directly\n        else:\n            result_url = (\n                \"No output received\"  # Fallback message if output is not as expected\n            )\n"
+        },
+        {
+            "id": "chunk_9_AIMusicGeneratorBlock.run_model_5",
+            "code": "        return result_url\n"
+        }
+    ],
+    "edges": [
+        {
+            "from": "chunk_0_GlobalBlock_1",
+            "to": "chunk_0_GlobalBlock_2"
+        },
+        {
+            "from": "chunk_0_GlobalBlock_2",
+            "to": "chunk_0_GlobalBlock_3"
+        },
+        {
+            "from": "chunk_0_GlobalBlock_3",
+            "to": "chunk_0_GlobalBlock_4"
+        },
+        {
+            "from": "chunk_0_GlobalBlock_4",
+            "to": "chunk_0_GlobalBlock_5"
+        },
+        {
+            "from": "chunk_0_GlobalBlock_5",
+            "to": "chunk_0_GlobalBlock_6"
+        },
+        {
+            "from": "chunk_0_GlobalBlock_6",
+            "to": "chunk_0_GlobalBlock_7"
+        },
+        {
+            "from": "chunk_0_GlobalBlock_7",
+            "to": "chunk_0_GlobalBlock_8"
+        },
+        {
+            "from": "chunk_0_GlobalBlock_8",
+            "to": "chunk_0_GlobalBlock_9"
+        },
+        {
+            "from": "chunk_4_AIMusicGeneratorBlock_1",
+            "to": "chunk_4_AIMusicGeneratorBlock_2"
+        },
+        {
+            "from": "chunk_4_AIMusicGeneratorBlock_2",
+            "to": "chunk_4_AIMusicGeneratorBlock_3"
+        },
+        {
+            "from": "chunk_4_AIMusicGeneratorBlock_3",
+            "to": "chunk_4_AIMusicGeneratorBlock_4"
+        },
+        {
+            "from": "chunk_4_AIMusicGeneratorBlock_4",
+            "to": "chunk_4_AIMusicGeneratorBlock_5"
+        },
+        {
+            "from": "chunk_4_AIMusicGeneratorBlock_5",
+            "to": "chunk_4_AIMusicGeneratorBlock_6"
+        },
+        {
+            "from": "chunk_4_AIMusicGeneratorBlock_7",
+            "to": "chunk_4_AIMusicGeneratorBlock_8"
+        },
+        {
+            "from": "chunk_4_AIMusicGeneratorBlock_8",
+            "to": "chunk_4_AIMusicGeneratorBlock_9"
+        },
+        {
+            "from": "chunk_4_AIMusicGeneratorBlock_9",
+            "to": "chunk_4_AIMusicGeneratorBlock_10"
+        },
+        {
+            "from": "chunk_5_AIMusicGeneratorBlock.Input_1",
+            "to": "chunk_5_AIMusicGeneratorBlock.Input_2"
+        },
+        {
+            "from": "chunk_5_AIMusicGeneratorBlock.Input_2",
+            "to": "chunk_5_AIMusicGeneratorBlock.Input_3"
+        },
+        {
+            "from": "chunk_5_AIMusicGeneratorBlock.Input_3",
+            "to": "chunk_5_AIMusicGeneratorBlock.Input_4"
+        },
+        {
+            "from": "chunk_5_AIMusicGeneratorBlock.Input_4",
+            "to": "chunk_5_AIMusicGeneratorBlock.Input_5"
+        },
+        {
+            "from": "chunk_5_AIMusicGeneratorBlock.Input_5",
+            "to": "chunk_5_AIMusicGeneratorBlock.Input_6"
+        },
+        {
+            "from": "chunk_5_AIMusicGeneratorBlock.Input_6",
+            "to": "chunk_5_AIMusicGeneratorBlock.Input_7"
+        },
+        {
+            "from": "chunk_5_AIMusicGeneratorBlock.Input_7",
+            "to": "chunk_5_AIMusicGeneratorBlock.Input_8"
+        },
+        {
+            "from": "chunk_5_AIMusicGeneratorBlock.Input_8",
+            "to": "chunk_5_AIMusicGeneratorBlock.Input_9"
+        },
+        {
+            "from": "chunk_5_AIMusicGeneratorBlock.Input_9",
+            "to": "chunk_5_AIMusicGeneratorBlock.Input_10"
+        },
+        {
+            "from": "chunk_5_AIMusicGeneratorBlock.Input_10",
+            "to": "chunk_5_AIMusicGeneratorBlock.Input_11"
+        },
+        {
+            "from": "chunk_7_AIMusicGeneratorBlock.__init___1",
+            "to": "chunk_7_AIMusicGeneratorBlock.__init___2"
+        },
+        {
+            "from": "chunk_8_AIMusicGeneratorBlock.run_1",
+            "to": "chunk_8_AIMusicGeneratorBlock.run_2"
+        },
+        {
+            "from": "chunk_8_AIMusicGeneratorBlock.run_2",
+            "to": "chunk_8_AIMusicGeneratorBlock.run_3"
+        },
+        {
+            "from": "chunk_8_AIMusicGeneratorBlock.run_3",
+            "to": "chunk_8_AIMusicGeneratorBlock.run_4"
+        },
+        {
+            "from": "chunk_8_AIMusicGeneratorBlock.run_4",
+            "to": "chunk_8_AIMusicGeneratorBlock.run_5"
+        },
+        {
+            "from": "chunk_8_AIMusicGeneratorBlock.run_5",
+            "to": "chunk_8_AIMusicGeneratorBlock.run_6"
+        },
+        {
+            "from": "chunk_8_AIMusicGeneratorBlock.run_5",
+            "to": "chunk_8_AIMusicGeneratorBlock.run_7"
+        },
+        {
+            "from": "chunk_8_AIMusicGeneratorBlock.run_7",
+            "to": "chunk_8_AIMusicGeneratorBlock.run_8"
+        },
+        {
+            "from": "chunk_8_AIMusicGeneratorBlock.run_8",
+            "to": "chunk_8_AIMusicGeneratorBlock.run_9"
+        },
+        {
+            "from": "chunk_8_AIMusicGeneratorBlock.run_8",
+            "to": "chunk_8_AIMusicGeneratorBlock.run_10"
+        },
+        {
+            "from": "chunk_8_AIMusicGeneratorBlock.run_9",
+            "to": "chunk_8_AIMusicGeneratorBlock.run_3"
+        },
+        {
+            "from": "chunk_9_AIMusicGeneratorBlock.run_model_1",
+            "to": "chunk_9_AIMusicGeneratorBlock.run_model_2"
+        },
+        {
+            "from": "chunk_9_AIMusicGeneratorBlock.run_model_2",
+            "to": "chunk_9_AIMusicGeneratorBlock.run_model_3"
+        },
+        {
+            "from": "chunk_9_AIMusicGeneratorBlock.run_model_3",
+            "to": "chunk_9_AIMusicGeneratorBlock.run_model_4"
+        },
+        {
+            "from": "chunk_9_AIMusicGeneratorBlock.run_model_4",
+            "to": "chunk_9_AIMusicGeneratorBlock.run_model_5"
+        }
+    ]
+}

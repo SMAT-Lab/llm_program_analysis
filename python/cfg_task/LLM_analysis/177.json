@@ -1,0 +1,70 @@
+{
+  "nodes": [
+    {
+      "id": "n0",
+      "code": "from contextlib import contextmanager\nfrom threading import Lock\nfrom typing import TYPE_CHECKING, Any\n\nfrom expiringdict import ExpiringDict\n\n\nif TYPE_CHECKING:\n    from redis import Redis\n    from redis.lock import Lock as RedisLock\n\n\n\n\n"
+    },
+    {
+      "id": "n1",
+      "code": "if TYPE_CHECKING:\n\n    from redis import Redis\n    from redis.lock import Lock as RedisLock\n"
+    },
+    {
+      "id": "n2",
+      "code": "class RedisKeyedMutex:\n    \"\"\"\n    This class provides a mutex that can be locked and unlocked by a specific key,\n    using Redis as a distributed locking provider.\n    It uses an ExpiringDict to automatically clear the mutex after a specified timeout,\n    in case the key is not unlocked for a specified duration, to prevent memory leaks.\n    \"\"\"\n\n    def __init__(self, redis: \"Redis\", timeout: int | None = 60):\n        self.redis = redis\n        self.timeout = timeout\n        self.locks: dict[Any, \"RedisLock\"] = ExpiringDict(\n            max_len=6000, max_age_seconds=self.timeout\n        )\n        self.locks_lock = Lock()\n\n"
+    },
+    {
+      "id": "n3",
+      "code": "    @contextmanager\n    def locked(self, key: Any):\n        lock = self.acquire(key)\n        try:\n            yield\n        finally:\n            if lock.locked():\n                lock.release()\n\n"
+    },
+    {
+      "id": "n4",
+      "code": "    def acquire(self, key: Any) -> \"RedisLock\":\n        \"\"\"Acquires and returns a lock with the given key\"\"\"\n        with self.locks_lock:\n            if key not in self.locks:\n                self.locks[key] = self.redis.lock(\n                    str(key), self.timeout, thread_local=False\n                )\n            lock = self.locks[key]\n        lock.acquire()\n        return lock\n"
+    },
+    {
+      "id": "n5",
+      "code": "    def release(self, key: Any):\n        if (lock := self.locks.get(key)) and lock.locked() and lock.owned():\n            lock.release()\n"
+    },
+    {
+      "id": "n6",
+      "code": "    def release_all_locks(self):\n        \"\"\"Call this on process termination to ensure all locks are released\"\"\"\n        self.locks_lock.acquire(blocking=False)\n        for lock in self.locks.values():\n            if lock.locked() and lock.owned():\n                lock.release()\n\n"
+    },
+    {
+      "id": "n7",
+      "code": "    def __init__(self, redis: \"Redis\", timeout: int | None = 60):\n\n        self.redis = redis\n        self.timeout = timeout\n\n        self.locks: dict[Any, \"RedisLock\"] = ExpiringDict(\n            max_len=6000, max_age_seconds=self.timeout\n        )\n\n        self.locks_lock = Lock()\n"
+    },
+    {
+      "id": "n8",
+      "code": "    @contextmanager\n    def locked(self, key: Any):\n\n        lock = self.acquire(key)\n\n        try:\n            yield\n\n        finally:\n            if lock.locked():\n                lock.release()\n"
+    },
+    {
+      "id": "n9",
+      "code": "    def acquire(self, key: Any) -> \"RedisLock\":\n        \"\"\"Acquires and returns a lock with the given key\"\"\"\n\n        with self.locks_lock:\n\n            if key not in self.locks:\n                self.locks[key] = self.redis.lock(\n                    str(key), self.timeout, thread_local=False\n                )\n\n            lock = self.locks[key]\n\n        lock.acquire()\n\n        return lock\n"
+    },
+    {
+      "id": "n10",
+      "code": "    def release(self, key: Any):\n\n        if (lock := self.locks.get(key)) and lock.locked() and lock.owned():\n            lock.release()\n"
+    },
+    {
+      "id": "n11",
+      "code": "    def release_all_locks(self):\n        \"\"\"Call this on process termination to ensure all locks are released\"\"\"\n\n        self.locks_lock.acquire(blocking=False)\n\n        for lock in self.locks.values():\n            if lock.locked() and lock.owned():\n                lock.release()\n"
+    }
+  ],
+  "edges": [
+    {
+      "source": "n2",
+      "target": "n4"
+    },
+    {
+      "source": "n2",
+      "target": "n6"
+    },
+    {
+      "source": "n2",
+      "target": "n3"
+    },
+    {
+      "source": "n2",
+      "target": "n5"
+    }
+  ]
+}

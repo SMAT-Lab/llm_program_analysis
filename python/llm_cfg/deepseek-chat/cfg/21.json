@@ -1,0 +1,898 @@
+{
+    "nodes": [
+        {
+            "id": "chunk_0_GlobalBlock_1",
+            "code": "import asyncio\nimport logging\nfrom collections import defaultdict\nfrom typing import TYPE_CHECKING, Annotated, Any, Sequence\n\nimport pydantic\nfrom autogpt_libs.auth.middleware import auth_middleware\nfrom autogpt_libs.feature_flag.client import feature_flag\nfrom autogpt_libs.utils.cache import thread_cached\nfrom fastapi import APIRouter, Depends, HTTPException\nfrom typing_extensions import Optional, TypedDict\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_2",
+            "code": "import backend.data.block\nimport backend.server.integrations.router\nimport backend.server.routers.analytics\nfrom backend.data import execution as execution_db\nfrom backend.data import graph as graph_db\nfrom backend.data.api_key import (\n    APIKeyError,\n    APIKeyNotFoundError,\n    APIKeyPermissionError,\n    APIKeyWithoutHash,\n    generate_api_key,\n    get_api_key_by_id,\n    list_user_api_keys,\n    revoke_api_key,\n    suspend_api_key,\n    update_api_key_permissions,\n)\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_3",
+            "code": "from backend.data.block import BlockInput, CompletedBlockOutput\nfrom backend.data.credit import get_block_costs, get_user_credit_model\nfrom backend.data.user import get_or_create_user\nfrom backend.executor import ExecutionManager, ExecutionScheduler, scheduler\nfrom backend.integrations.creds_manager import IntegrationCredentialsManager\nfrom backend.integrations.webhooks.graph_lifecycle_hooks import (\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_4",
+            "code": "    on_graph_activate,\n    on_graph_deactivate,\n)\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_5",
+            "code": "from backend.server.model import (\n    CreateAPIKeyRequest,\n    CreateAPIKeyResponse,\n    CreateGraph,\n    SetGraphActiveVersion,\n    UpdatePermissionsRequest,\n)\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_6",
+            "code": "from backend.server.utils import get_user_id\nfrom backend.util.service import get_service_client\nfrom backend.util.settings import Settings\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_7",
+            "code": "if TYPE_CHECKING:\n\n"
+        },
+        {
+            "id": "chunk_1_execution_manager_client_1",
+            "code": "@thread_cached\n"
+        },
+        {
+            "id": "chunk_1_execution_manager_client_2",
+            "code": "def execution_manager_client() -> ExecutionManager:\n    return get_service_client(ExecutionManager)\n"
+        },
+        {
+            "id": "chunk_2_execution_scheduler_client_1",
+            "code": "@thread_cached\n"
+        },
+        {
+            "id": "chunk_2_execution_scheduler_client_2",
+            "code": "def execution_scheduler_client() -> ExecutionScheduler:\n    return get_service_client(ExecutionScheduler)\n"
+        },
+        {
+            "id": "chunk_3_GlobalBlock_1",
+            "code": "settings = Settings()\nlogger = logging.getLogger(__name__)\nintegration_creds_manager = IntegrationCredentialsManager()\n"
+        },
+        {
+            "id": "chunk_3_GlobalBlock_2",
+            "code": "_user_credit_model = get_user_credit_model()\n"
+        },
+        {
+            "id": "chunk_3_GlobalBlock_3",
+            "code": "v1_router = APIRouter()\n"
+        },
+        {
+            "id": "chunk_4_get_or_create_user_route_1",
+            "code": "@v1_router.post(\"/auth/user\", tags=[\"auth\"], dependencies=[Depends(auth_middleware)])\nasync def get_or_create_user_route(user_data: dict = Depends(auth_middleware)):\n"
+        },
+        {
+            "id": "chunk_4_get_or_create_user_route_2",
+            "code": "    user = await get_or_create_user(user_data)\n    return user.model_dump()\n"
+        },
+        {
+            "id": "chunk_5_get_graph_blocks_1",
+            "code": "@v1_router.get(path=\"/blocks\", tags=[\"blocks\"], dependencies=[Depends(auth_middleware)])\ndef get_graph_blocks() -> Sequence[dict[Any, Any]]:\n"
+        },
+        {
+            "id": "chunk_5_get_graph_blocks_2",
+            "code": "    blocks = [block() for block in backend.data.block.get_blocks().values()]\n    costs = get_block_costs()\n    return [{**b.to_dict(), \"costs\": costs.get(b.id, [])} for b in blocks]\n"
+        },
+        {
+            "id": "chunk_6_execute_graph_block_1",
+            "code": "def execute_graph_block(block_id: str, data: BlockInput) -> CompletedBlockOutput:\n    obj = backend.data.block.get_block(block_id)\n"
+        },
+        {
+            "id": "chunk_6_execute_graph_block_2",
+            "code": "    if not obj:\n        raise HTTPException(status_code=404, detail=f\"Block #{block_id} not found.\")\n"
+        },
+        {
+            "id": "chunk_6_execute_graph_block_3",
+            "code": "    output = defaultdict(list)\n"
+        },
+        {
+            "id": "chunk_6_execute_graph_block_4",
+            "code": "    for name, data in obj.execute(data):\n        output[name].append(data)\n"
+        },
+        {
+            "id": "chunk_6_execute_graph_block_5",
+            "code": "    return output\n"
+        },
+        {
+            "id": "chunk_7_get_user_credits_1",
+            "code": "@v1_router.get(path=\"/credits\", dependencies=[Depends(auth_middleware)])\nasync def get_user_credits(\n    user_id: Annotated[str, Depends(get_user_id)],\n) -> dict[str, int]:\n"
+        },
+        {
+            "id": "chunk_7_get_user_credits_2",
+            "code": "    # Credits can go negative, so ensure it's at least 0 for user to see.\n    return {\"credits\": max(await _user_credit_model.get_or_refill_credit(user_id), 0)}\n"
+        },
+        {
+            "id": "chunk_8_DeleteGraphResponse_1",
+            "code": "class DeleteGraphResponse(TypedDict):\n    version_counts: int\n"
+        },
+        {
+            "id": "chunk_9_get_graphs_1",
+            "code": "@v1_router.get(path=\"/graphs\", tags=[\"graphs\"], dependencies=[Depends(auth_middleware)])\nasync def get_graphs(\n    user_id: Annotated[str, Depends(get_user_id)]\n) -> Sequence[graph_db.GraphModel]:\n"
+        },
+        {
+            "id": "chunk_9_get_graphs_2",
+            "code": "    return await graph_db.get_graphs(filter_by=\"active\", user_id=user_id)\n"
+        },
+        {
+            "id": "chunk_10_get_graph_1",
+            "code": "async def get_graph(\n    graph_id: str,\n    user_id: Annotated[str, Depends(get_user_id)],\n    version: int | None = None,\n    hide_credentials: bool = False,\n) -> graph_db.GraphModel:\n"
+        },
+        {
+            "id": "chunk_10_get_graph_2",
+            "code": "    graph = await graph_db.get_graph(\n        graph_id, version, user_id=user_id, for_export=hide_credentials\n    )\n"
+        },
+        {
+            "id": "chunk_10_get_graph_3",
+            "code": "    if not graph:\n        raise HTTPException(status_code=404, detail=f\"Graph #{graph_id} not found.\")\n"
+        },
+        {
+            "id": "chunk_10_get_graph_4",
+            "code": "    return graph\n"
+        },
+        {
+            "id": "chunk_11_get_graph_all_versions_1",
+            "code": "async def get_graph_all_versions(\n    graph_id: str, user_id: Annotated[str, Depends(get_user_id)]\n) -> Sequence[graph_db.GraphModel]:\n    graphs = await graph_db.get_graph_all_versions(graph_id, user_id=user_id)\n"
+        },
+        {
+            "id": "chunk_11_get_graph_all_versions_2",
+            "code": "    if not graphs:\n        raise HTTPException(status_code=404, detail=f\"Graph #{graph_id} not found.\")\n"
+        },
+        {
+            "id": "chunk_11_get_graph_all_versions_3",
+            "code": "    return graphs\n"
+        },
+        {
+            "id": "chunk_12_create_new_graph_1",
+            "code": "async def create_new_graph(\n    create_graph: CreateGraph, user_id: Annotated[str, Depends(get_user_id)]\n) -> graph_db.GraphModel:\n    return await do_create_graph(create_graph, is_template=False, user_id=user_id)\n"
+        },
+        {
+            "id": "chunk_13_do_create_graph_1",
+            "code": "async def do_create_graph(\n    create_graph: CreateGraph,\n    is_template: bool,\n    # user_id doesn't have to be annotated like on other endpoints,\n    # because create_graph isn't used directly as an endpoint\n    user_id: str,\n) -> graph_db.GraphModel:\n"
+        },
+        {
+            "id": "chunk_13_do_create_graph_2",
+            "code": "    if create_graph.graph:\n        graph = graph_db.make_graph_model(create_graph.graph, user_id)\n"
+        },
+        {
+            "id": "chunk_13_do_create_graph_3",
+            "code": "    elif create_graph.template_id:\n        # Create a new graph from a template\n        graph = await graph_db.get_graph(\n            create_graph.template_id,\n            create_graph.template_version,\n            template=True,\n            user_id=user_id,\n        )\n"
+        },
+        {
+            "id": "chunk_13_do_create_graph_4",
+            "code": "        if not graph:\n            raise HTTPException(\n                400, detail=f\"Template #{create_graph.template_id} not found\"\n            )\n"
+        },
+        {
+            "id": "chunk_13_do_create_graph_5",
+            "code": "        graph.version = 1\n"
+        },
+        {
+            "id": "chunk_13_do_create_graph_6",
+            "code": "    else:\n        raise HTTPException(\n            status_code=400, detail=\"Either graph or template_id must be provided.\"\n        )\n"
+        },
+        {
+            "id": "chunk_13_do_create_graph_7",
+            "code": "    graph.is_template = is_template\n    graph.is_active = not is_template\n    graph.reassign_ids(user_id=user_id, reassign_graph_id=True)\n"
+        },
+        {
+            "id": "chunk_13_do_create_graph_8",
+            "code": "    graph = await graph_db.create_graph(graph, user_id=user_id)\n    graph = await on_graph_activate(\n        graph,\n        get_credentials=lambda id: integration_creds_manager.get(user_id, id),\n    )\n"
+        },
+        {
+            "id": "chunk_13_do_create_graph_9",
+            "code": "    return graph\n"
+        },
+        {
+            "id": "chunk_14_delete_graph_1",
+            "code": "async def delete_graph(\n    graph_id: str, user_id: Annotated[str, Depends(get_user_id)]\n) -> DeleteGraphResponse:\n"
+        },
+        {
+            "id": "chunk_14_delete_graph_2",
+            "code": "    if active_version := await graph_db.get_graph(graph_id, user_id=user_id):\n"
+        },
+        {
+            "id": "chunk_14_delete_graph_3",
+            "code": "        def get_credentials(credentials_id: str) -> \"Credentials | None\":\n            return integration_creds_manager.get(user_id, credentials_id)\n"
+        },
+        {
+            "id": "chunk_14_delete_graph_4",
+            "code": "        await on_graph_deactivate(active_version, get_credentials)\n"
+        },
+        {
+            "id": "chunk_14_delete_graph_5",
+            "code": "    return {\"version_counts\": await graph_db.delete_graph(graph_id, user_id=user_id)}\n"
+        },
+        {
+            "id": "chunk_15_update_graph_1",
+            "code": "async def update_graph(\n    graph_id: str,\n    graph: graph_db.Graph,\n    user_id: Annotated[str, Depends(get_user_id)],\n) -> graph_db.GraphModel:\n"
+        },
+        {
+            "id": "chunk_15_update_graph_2",
+            "code": "    # Sanity check\n    if graph.id and graph.id != graph_id:\n        raise HTTPException(400, detail=\"Graph ID does not match ID in URI\")\n"
+        },
+        {
+            "id": "chunk_15_update_graph_3",
+            "code": "    # Determine new version\n    existing_versions = await graph_db.get_graph_all_versions(graph_id, user_id=user_id)\n    if not existing_versions:\n        raise HTTPException(404, detail=f\"Graph #{graph_id} not found\")\n"
+        },
+        {
+            "id": "chunk_15_update_graph_4",
+            "code": "    latest_version_number = max(g.version for g in existing_versions)\n    graph.version = latest_version_number + 1\n"
+        },
+        {
+            "id": "chunk_15_update_graph_5",
+            "code": "    latest_version_graph = next(\n        v for v in existing_versions if v.version == latest_version_number\n    )\n"
+        },
+        {
+            "id": "chunk_15_update_graph_6",
+            "code": "    current_active_version = next((v for v in existing_versions if v.is_active), None)\n    if latest_version_graph.is_template != graph.is_template:\n        raise HTTPException(\n            400, detail=\"Changing is_template on an existing graph is forbidden\"\n        )\n"
+        },
+        {
+            "id": "chunk_15_update_graph_7",
+            "code": "    graph.is_active = not graph.is_template\n    graph = graph_db.make_graph_model(graph, user_id)\n    graph.reassign_ids(user_id=user_id)\n"
+        },
+        {
+            "id": "chunk_15_update_graph_8",
+            "code": "    new_graph_version = await graph_db.create_graph(graph, user_id=user_id)\n"
+        },
+        {
+            "id": "chunk_15_update_graph_9",
+            "code": "    if new_graph_version.is_active:\n"
+        },
+        {
+            "id": "chunk_15_update_graph_10",
+            "code": "        def get_credentials(credentials_id: str) -> \"Credentials | None\":\n            return integration_creds_manager.get(user_id, credentials_id)\n"
+        },
+        {
+            "id": "chunk_15_update_graph_11",
+            "code": "        # Handle activation of the new graph first to ensure continuity\n        new_graph_version = await on_graph_activate(\n            new_graph_version,\n            get_credentials=get_credentials,\n        )\n"
+        },
+        {
+            "id": "chunk_15_update_graph_12",
+            "code": "        # Ensure new version is the only active version\n        await graph_db.set_graph_active_version(\n            graph_id=graph_id, version=new_graph_version.version, user_id=user_id\n        )\n"
+        },
+        {
+            "id": "chunk_15_update_graph_13",
+            "code": "        if current_active_version:\n            # Handle deactivation of the previously active version\n            await on_graph_deactivate(\n                current_active_version,\n                get_credentials=get_credentials,\n            )\n"
+        },
+        {
+            "id": "chunk_15_update_graph_14",
+            "code": "    return new_graph_version\n"
+        },
+        {
+            "id": "chunk_16_set_graph_active_version_1",
+            "code": "async def set_graph_active_version(\n    graph_id: str,\n    request_body: SetGraphActiveVersion,\n    user_id: Annotated[str, Depends(get_user_id)],\n):\n"
+        },
+        {
+            "id": "chunk_16_set_graph_active_version_2",
+            "code": "    new_active_version = request_body.active_graph_version\n"
+        },
+        {
+            "id": "chunk_16_set_graph_active_version_3",
+            "code": "    new_active_graph = await graph_db.get_graph(\n        graph_id, new_active_version, user_id=user_id\n    )\n"
+        },
+        {
+            "id": "chunk_16_set_graph_active_version_4",
+            "code": "    if not new_active_graph:\n        raise HTTPException(404, f\"Graph #{graph_id} v{new_active_version} not found\")\n"
+        },
+        {
+            "id": "chunk_16_set_graph_active_version_5",
+            "code": "    current_active_graph = await graph_db.get_graph(graph_id, user_id=user_id)\n"
+        },
+        {
+            "id": "chunk_16_set_graph_active_version_6",
+            "code": "    def get_credentials(credentials_id: str) -> \"Credentials | None\":\n        return integration_creds_manager.get(user_id, credentials_id)\n"
+        },
+        {
+            "id": "chunk_16_set_graph_active_version_7",
+            "code": "    await on_graph_activate(\n        new_active_graph,\n        get_credentials=get_credentials,\n    )\n"
+        },
+        {
+            "id": "chunk_16_set_graph_active_version_8",
+            "code": "    await graph_db.set_graph_active_version(\n        graph_id=graph_id,\n        version=new_active_version,\n        user_id=user_id,\n    )\n"
+        },
+        {
+            "id": "chunk_16_set_graph_active_version_9",
+            "code": "    if current_active_graph and current_active_graph.version != new_active_version:\n"
+        },
+        {
+            "id": "chunk_16_set_graph_active_version_10",
+            "code": "        await on_graph_deactivate(\n            current_active_graph,\n            get_credentials=get_credentials,\n        )\n"
+        },
+        {
+            "id": "chunk_17_execute_graph_1",
+            "code": "def execute_graph(\n    graph_id: str,\n    node_input: dict[Any, Any],\n    user_id: Annotated[str, Depends(get_user_id)],\n) -> dict[str, Any]:  # FIXME: add proper return type\n"
+        },
+        {
+            "id": "chunk_17_execute_graph_2",
+            "code": "    try:\n        graph_exec = execution_manager_client().add_execution(\n            graph_id, node_input, user_id=user_id\n        )\n        return {\"id\": graph_exec.graph_exec_id}\n"
+        },
+        {
+            "id": "chunk_17_execute_graph_3",
+            "code": "    except Exception as e:\n        msg = e.__str__().encode().decode(\"unicode_escape\")\n        raise HTTPException(status_code=400, detail=msg)\n"
+        },
+        {
+            "id": "chunk_18_stop_graph_run_1",
+            "code": "async def stop_graph_run(\n    graph_exec_id: str, user_id: Annotated[str, Depends(get_user_id)]\n) -> Sequence[execution_db.ExecutionResult]:\n"
+        },
+        {
+            "id": "chunk_18_stop_graph_run_2",
+            "code": "    if not await graph_db.get_execution(user_id=user_id, execution_id=graph_exec_id):\n        raise HTTPException(404, detail=f\"Agent execution #{graph_exec_id} not found\")\n"
+        },
+        {
+            "id": "chunk_18_stop_graph_run_3",
+            "code": "    await asyncio.to_thread(\n        lambda: execution_manager_client().cancel_execution(graph_exec_id)\n    )\n"
+        },
+        {
+            "id": "chunk_18_stop_graph_run_4",
+            "code": "    # Retrieve & return canceled graph execution in its final state\n    return await execution_db.get_execution_results(graph_exec_id)\n"
+        },
+        {
+            "id": "chunk_19_get_executions_1",
+            "code": "async def get_executions(\n    user_id: Annotated[str, Depends(get_user_id)],\n) -> list[graph_db.GraphExecution]:\n    return await graph_db.get_executions(user_id=user_id)\n"
+        },
+        {
+            "id": "chunk_20_get_graph_run_node_execution_results_1",
+            "code": "async def get_graph_run_node_execution_results(\n    graph_id: str,\n    graph_exec_id: str,\n    user_id: Annotated[str, Depends(get_user_id)],\n) -> Sequence[execution_db.ExecutionResult]:\n"
+        },
+        {
+            "id": "chunk_20_get_graph_run_node_execution_results_2",
+            "code": "    graph = await graph_db.get_graph(graph_id, user_id=user_id)\n"
+        },
+        {
+            "id": "chunk_20_get_graph_run_node_execution_results_3",
+            "code": "    if not graph:\n        raise HTTPException(status_code=404, detail=f\"Graph #{graph_id} not found.\")\n"
+        },
+        {
+            "id": "chunk_20_get_graph_run_node_execution_results_4",
+            "code": "    return await execution_db.get_execution_results(graph_exec_id)\n"
+        },
+        {
+            "id": "chunk_21_get_templates_1",
+            "code": "async def get_templates(\n    user_id: Annotated[str, Depends(get_user_id)]\n) -> Sequence[graph_db.GraphModel]:\n    return await graph_db.get_graphs(filter_by=\"template\", user_id=user_id)\n"
+        },
+        {
+            "id": "chunk_22_get_template_1",
+            "code": "async def get_template(\n    graph_id: str, version: int | None = None\n) -> graph_db.GraphModel:\n"
+        },
+        {
+            "id": "chunk_22_get_template_2",
+            "code": "    graph = await graph_db.get_graph(graph_id, version, template=True)\n"
+        },
+        {
+            "id": "chunk_22_get_template_3",
+            "code": "    if not graph:\n        raise HTTPException(status_code=404, detail=f\"Template #{graph_id} not found.\")\n"
+        },
+        {
+            "id": "chunk_22_get_template_4",
+            "code": "    return graph\n"
+        },
+        {
+            "id": "chunk_23_create_new_template_1",
+            "code": "async def create_new_template(\n    create_graph: CreateGraph, user_id: Annotated[str, Depends(get_user_id)]\n) -> graph_db.GraphModel:\n    return await do_create_graph(create_graph, is_template=True, user_id=user_id)\n"
+        },
+        {
+            "id": "chunk_24_ScheduleCreationRequest_1",
+            "code": "class ScheduleCreationRequest(pydantic.BaseModel):\n    cron: str\n    input_data: dict[Any, Any]\n    graph_id: str\n"
+        },
+        {
+            "id": "chunk_25_create_schedule_1",
+            "code": "async def create_schedule(\n    user_id: Annotated[str, Depends(get_user_id)],\n    schedule: ScheduleCreationRequest,\n) -> scheduler.JobInfo:\n"
+        },
+        {
+            "id": "chunk_25_create_schedule_2",
+            "code": "    graph = await graph_db.get_graph(schedule.graph_id, user_id=user_id)\n"
+        },
+        {
+            "id": "chunk_25_create_schedule_3",
+            "code": "    if not graph:\n        raise HTTPException(\n            status_code=404, detail=f\"Graph #{schedule.graph_id} not found.\"\n        )\n"
+        },
+        {
+            "id": "chunk_25_create_schedule_4",
+            "code": "    return await asyncio.to_thread(\n        lambda: execution_scheduler_client().add_execution_schedule(\n            graph_id=schedule.graph_id,\n            graph_version=graph.version,\n            cron=schedule.cron,\n            input_data=schedule.input_data,\n            user_id=user_id,\n        )\n    )\n"
+        },
+        {
+            "id": "chunk_26_delete_schedule_1",
+            "code": "def delete_schedule(\n    schedule_id: str,\n    user_id: Annotated[str, Depends(get_user_id)],\n) -> dict[Any, Any]:\n"
+        },
+        {
+            "id": "chunk_26_delete_schedule_2",
+            "code": "    execution_scheduler_client().delete_schedule(schedule_id, user_id=user_id)\n"
+        },
+        {
+            "id": "chunk_26_delete_schedule_3",
+            "code": "    return {\"id\": schedule_id}\n"
+        },
+        {
+            "id": "chunk_27_get_execution_schedules_1",
+            "code": "def get_execution_schedules(\n    user_id: Annotated[str, Depends(get_user_id)],\n    graph_id: str | None = None,\n) -> list[scheduler.JobInfo]:\n"
+        },
+        {
+            "id": "chunk_27_get_execution_schedules_2",
+            "code": "    return execution_scheduler_client().get_execution_schedules(\n        user_id=user_id,\n        graph_id=graph_id,\n    )\n"
+        },
+        {
+            "id": "chunk_28_create_api_key_1",
+            "code": "async def create_api_key(\n    request: CreateAPIKeyRequest, user_id: Annotated[str, Depends(get_user_id)]\n) -> CreateAPIKeyResponse:\n    \"\"\"Create a new API key\"\"\"\n"
+        },
+        {
+            "id": "chunk_28_create_api_key_2",
+            "code": "    try:\n        api_key, plain_text = await generate_api_key(\n            name=request.name,\n            user_id=user_id,\n            permissions=request.permissions,\n            description=request.description,\n        )\n"
+        },
+        {
+            "id": "chunk_28_create_api_key_3",
+            "code": "        return CreateAPIKeyResponse(api_key=api_key, plain_text_key=plain_text)\n"
+        },
+        {
+            "id": "chunk_28_create_api_key_4",
+            "code": "    except APIKeyError as e:\n        logger.error(f\"Failed to create API key: {str(e)}\")\n        raise HTTPException(status_code=400, detail=str(e))\n"
+        },
+        {
+            "id": "chunk_29_get_api_keys_1",
+            "code": "async def get_api_keys(\n    user_id: Annotated[str, Depends(get_user_id)]\n) -> list[APIKeyWithoutHash]:\n    \"\"\"List all API keys for the user\"\"\"\n"
+        },
+        {
+            "id": "chunk_29_get_api_keys_2",
+            "code": "    try:\n        return await list_user_api_keys(user_id)\n"
+        },
+        {
+            "id": "chunk_29_get_api_keys_3",
+            "code": "    except APIKeyError as e:\n        logger.error(f\"Failed to list API keys: {str(e)}\")\n        raise HTTPException(status_code=400, detail=str(e))\n"
+        },
+        {
+            "id": "chunk_30_get_api_key_1",
+            "code": "async def get_api_key(\n    key_id: str, user_id: Annotated[str, Depends(get_user_id)]\n) -> APIKeyWithoutHash:\n    \"\"\"Get a specific API key\"\"\"\n"
+        },
+        {
+            "id": "chunk_30_get_api_key_2",
+            "code": "    try:\n        api_key = await get_api_key_by_id(key_id, user_id)\n        if not api_key:\n            raise HTTPException(status_code=404, detail=\"API key not found\")\n        return api_key\n"
+        },
+        {
+            "id": "chunk_30_get_api_key_3",
+            "code": "    except APIKeyError as e:\n        logger.error(f\"Failed to get API key: {str(e)}\")\n        raise HTTPException(status_code=400, detail=str(e))\n"
+        },
+        {
+            "id": "chunk_31_delete_api_key_1",
+            "code": "async def delete_api_key(\n    key_id: str, user_id: Annotated[str, Depends(get_user_id)]\n) -> Optional[APIKeyWithoutHash]:\n    \"\"\"Revoke an API key\"\"\"\n"
+        },
+        {
+            "id": "chunk_31_delete_api_key_2",
+            "code": "    try:\n        return await revoke_api_key(key_id, user_id)\n"
+        },
+        {
+            "id": "chunk_31_delete_api_key_3",
+            "code": "    except APIKeyNotFoundError:\n        raise HTTPException(status_code=404, detail=\"API key not found\")\n"
+        },
+        {
+            "id": "chunk_31_delete_api_key_4",
+            "code": "    except APIKeyPermissionError:\n        raise HTTPException(status_code=403, detail=\"Permission denied\")\n"
+        },
+        {
+            "id": "chunk_31_delete_api_key_5",
+            "code": "    except APIKeyError as e:\n        logger.error(f\"Failed to revoke API key: {str(e)}\")\n        raise HTTPException(status_code=400, detail=str(e))\n"
+        },
+        {
+            "id": "chunk_32_suspend_key_1",
+            "code": "async def suspend_key(\n    key_id: str, user_id: Annotated[str, Depends(get_user_id)]\n) -> Optional[APIKeyWithoutHash]:\n    \"\"\"Suspend an API key\"\"\"\n"
+        },
+        {
+            "id": "chunk_32_suspend_key_2",
+            "code": "    try:\n        return await suspend_api_key(key_id, user_id)\n"
+        },
+        {
+            "id": "chunk_32_suspend_key_3",
+            "code": "    except APIKeyNotFoundError:\n        raise HTTPException(status_code=404, detail=\"API key not found\")\n"
+        },
+        {
+            "id": "chunk_32_suspend_key_4",
+            "code": "    except APIKeyPermissionError:\n        raise HTTPException(status_code=403, detail=\"Permission denied\")\n"
+        },
+        {
+            "id": "chunk_32_suspend_key_5",
+            "code": "    except APIKeyError as e:\n        logger.error(f\"Failed to suspend API key: {str(e)}\")\n        raise HTTPException(status_code=400, detail=str(e))\n"
+        },
+        {
+            "id": "chunk_33_update_permissions_1",
+            "code": "async def update_permissions(\n    key_id: str,\n    request: UpdatePermissionsRequest,\n    user_id: Annotated[str, Depends(get_user_id)],\n) -> Optional[APIKeyWithoutHash]:\n    \"\"\"Update API key permissions\"\"\"\n"
+        },
+        {
+            "id": "chunk_33_update_permissions_2",
+            "code": "    try:\n        return await update_api_key_permissions(key_id, user_id, request.permissions)\n"
+        },
+        {
+            "id": "chunk_33_update_permissions_3",
+            "code": "    except APIKeyNotFoundError:\n        raise HTTPException(status_code=404, detail=\"API key not found\")\n"
+        },
+        {
+            "id": "chunk_33_update_permissions_4",
+            "code": "    except APIKeyPermissionError:\n        raise HTTPException(status_code=403, detail=\"Permission denied\")\n"
+        },
+        {
+            "id": "chunk_33_update_permissions_5",
+            "code": "    except APIKeyError as e:\n        logger.error(f\"Failed to update API key permissions: {str(e)}\")\n        raise HTTPException(status_code=400, detail=str(e))\n"
+        }
+    ],
+    "edges": [
+        {
+            "from": "chunk_0_GlobalBlock_1",
+            "to": "chunk_0_GlobalBlock_2"
+        },
+        {
+            "from": "chunk_0_GlobalBlock_2",
+            "to": "chunk_0_GlobalBlock_3"
+        },
+        {
+            "from": "chunk_0_GlobalBlock_3",
+            "to": "chunk_0_GlobalBlock_4"
+        },
+        {
+            "from": "chunk_0_GlobalBlock_4",
+            "to": "chunk_0_GlobalBlock_5"
+        },
+        {
+            "from": "chunk_0_GlobalBlock_5",
+            "to": "chunk_0_GlobalBlock_6"
+        },
+        {
+            "from": "chunk_0_GlobalBlock_6",
+            "to": "chunk_0_GlobalBlock_7"
+        },
+        {
+            "from": "chunk_1_execution_manager_client_1",
+            "to": "chunk_1_execution_manager_client_2"
+        },
+        {
+            "from": "chunk_2_execution_scheduler_client_1",
+            "to": "chunk_2_execution_scheduler_client_2"
+        },
+        {
+            "from": "chunk_3_GlobalBlock_1",
+            "to": "chunk_3_GlobalBlock_2"
+        },
+        {
+            "from": "chunk_3_GlobalBlock_2",
+            "to": "chunk_3_GlobalBlock_3"
+        },
+        {
+            "from": "chunk_4_get_or_create_user_route_1",
+            "to": "chunk_4_get_or_create_user_route_2"
+        },
+        {
+            "from": "chunk_5_get_graph_blocks_1",
+            "to": "chunk_5_get_graph_blocks_2"
+        },
+        {
+            "from": "chunk_6_execute_graph_block_1",
+            "to": "chunk_6_execute_graph_block_2"
+        },
+        {
+            "from": "chunk_6_execute_graph_block_2",
+            "to": "chunk_6_execute_graph_block_3"
+        },
+        {
+            "from": "chunk_6_execute_graph_block_3",
+            "to": "chunk_6_execute_graph_block_4"
+        },
+        {
+            "from": "chunk_6_execute_graph_block_4",
+            "to": "chunk_6_execute_graph_block_5"
+        },
+        {
+            "from": "chunk_7_get_user_credits_1",
+            "to": "chunk_7_get_user_credits_2"
+        },
+        {
+            "from": "chunk_9_get_graphs_1",
+            "to": "chunk_9_get_graphs_2"
+        },
+        {
+            "from": "chunk_10_get_graph_1",
+            "to": "chunk_10_get_graph_2"
+        },
+        {
+            "from": "chunk_10_get_graph_2",
+            "to": "chunk_10_get_graph_3"
+        },
+        {
+            "from": "chunk_10_get_graph_3",
+            "to": "chunk_10_get_graph_4"
+        },
+        {
+            "from": "chunk_11_get_graph_all_versions_1",
+            "to": "chunk_11_get_graph_all_versions_2"
+        },
+        {
+            "from": "chunk_11_get_graph_all_versions_2",
+            "to": "chunk_11_get_graph_all_versions_3"
+        },
+        {
+            "from": "chunk_13_do_create_graph_1",
+            "to": "chunk_13_do_create_graph_2"
+        },
+        {
+            "from": "chunk_13_do_create_graph_1",
+            "to": "chunk_13_do_create_graph_3"
+        },
+        {
+            "from": "chunk_13_do_create_graph_1",
+            "to": "chunk_13_do_create_graph_6"
+        },
+        {
+            "from": "chunk_13_do_create_graph_2",
+            "to": "chunk_13_do_create_graph_7"
+        },
+        {
+            "from": "chunk_13_do_create_graph_3",
+            "to": "chunk_13_do_create_graph_4"
+        },
+        {
+            "from": "chunk_13_do_create_graph_3",
+            "to": "chunk_13_do_create_graph_5"
+        },
+        {
+            "from": "chunk_13_do_create_graph_5",
+            "to": "chunk_13_do_create_graph_7"
+        },
+        {
+            "from": "chunk_13_do_create_graph_7",
+            "to": "chunk_13_do_create_graph_8"
+        },
+        {
+            "from": "chunk_13_do_create_graph_8",
+            "to": "chunk_13_do_create_graph_9"
+        },
+        {
+            "from": "chunk_14_delete_graph_1",
+            "to": "chunk_14_delete_graph_2"
+        },
+        {
+            "from": "chunk_14_delete_graph_2",
+            "to": "chunk_14_delete_graph_3"
+        },
+        {
+            "from": "chunk_14_delete_graph_2",
+            "to": "chunk_14_delete_graph_5"
+        },
+        {
+            "from": "chunk_14_delete_graph_3",
+            "to": "chunk_14_delete_graph_4"
+        },
+        {
+            "from": "chunk_14_delete_graph_4",
+            "to": "chunk_14_delete_graph_5"
+        },
+        {
+            "from": "chunk_15_update_graph_1",
+            "to": "chunk_15_update_graph_2"
+        },
+        {
+            "from": "chunk_15_update_graph_2",
+            "to": "chunk_15_update_graph_3"
+        },
+        {
+            "from": "chunk_15_update_graph_3",
+            "to": "chunk_15_update_graph_4"
+        },
+        {
+            "from": "chunk_15_update_graph_4",
+            "to": "chunk_15_update_graph_5"
+        },
+        {
+            "from": "chunk_15_update_graph_5",
+            "to": "chunk_15_update_graph_6"
+        },
+        {
+            "from": "chunk_15_update_graph_6",
+            "to": "chunk_15_update_graph_7"
+        },
+        {
+            "from": "chunk_15_update_graph_7",
+            "to": "chunk_15_update_graph_8"
+        },
+        {
+            "from": "chunk_15_update_graph_8",
+            "to": "chunk_15_update_graph_9"
+        },
+        {
+            "from": "chunk_15_update_graph_9",
+            "to": "chunk_15_update_graph_10"
+        },
+        {
+            "from": "chunk_15_update_graph_9",
+            "to": "chunk_15_update_graph_14"
+        },
+        {
+            "from": "chunk_15_update_graph_10",
+            "to": "chunk_15_update_graph_11"
+        },
+        {
+            "from": "chunk_15_update_graph_11",
+            "to": "chunk_15_update_graph_12"
+        },
+        {
+            "from": "chunk_15_update_graph_12",
+            "to": "chunk_15_update_graph_13"
+        },
+        {
+            "from": "chunk_15_update_graph_13",
+            "to": "chunk_15_update_graph_14"
+        },
+        {
+            "from": "chunk_16_set_graph_active_version_1",
+            "to": "chunk_16_set_graph_active_version_2"
+        },
+        {
+            "from": "chunk_16_set_graph_active_version_2",
+            "to": "chunk_16_set_graph_active_version_3"
+        },
+        {
+            "from": "chunk_16_set_graph_active_version_3",
+            "to": "chunk_16_set_graph_active_version_4"
+        },
+        {
+            "from": "chunk_16_set_graph_active_version_4",
+            "to": "chunk_16_set_graph_active_version_5"
+        },
+        {
+            "from": "chunk_16_set_graph_active_version_5",
+            "to": "chunk_16_set_graph_active_version_6"
+        },
+        {
+            "from": "chunk_16_set_graph_active_version_6",
+            "to": "chunk_16_set_graph_active_version_7"
+        },
+        {
+            "from": "chunk_16_set_graph_active_version_7",
+            "to": "chunk_16_set_graph_active_version_8"
+        },
+        {
+            "from": "chunk_16_set_graph_active_version_8",
+            "to": "chunk_16_set_graph_active_version_9"
+        },
+        {
+            "from": "chunk_16_set_graph_active_version_9",
+            "to": "chunk_16_set_graph_active_version_10"
+        },
+        {
+            "from": "chunk_17_execute_graph_1",
+            "to": "chunk_17_execute_graph_2"
+        },
+        {
+            "from": "chunk_17_execute_graph_2",
+            "to": "chunk_17_execute_graph_3"
+        },
+        {
+            "from": "chunk_18_stop_graph_run_1",
+            "to": "chunk_18_stop_graph_run_2"
+        },
+        {
+            "from": "chunk_18_stop_graph_run_2",
+            "to": "chunk_18_stop_graph_run_3"
+        },
+        {
+            "from": "chunk_18_stop_graph_run_3",
+            "to": "chunk_18_stop_graph_run_4"
+        },
+        {
+            "from": "chunk_20_get_graph_run_node_execution_results_1",
+            "to": "chunk_20_get_graph_run_node_execution_results_2"
+        },
+        {
+            "from": "chunk_20_get_graph_run_node_execution_results_2",
+            "to": "chunk_20_get_graph_run_node_execution_results_3"
+        },
+        {
+            "from": "chunk_20_get_graph_run_node_execution_results_3",
+            "to": "chunk_20_get_graph_run_node_execution_results_4"
+        },
+        {
+            "from": "chunk_22_get_template_1",
+            "to": "chunk_22_get_template_2"
+        },
+        {
+            "from": "chunk_22_get_template_2",
+            "to": "chunk_22_get_template_3"
+        },
+        {
+            "from": "chunk_22_get_template_3",
+            "to": "chunk_22_get_template_4"
+        },
+        {
+            "from": "chunk_25_create_schedule_1",
+            "to": "chunk_25_create_schedule_2"
+        },
+        {
+            "from": "chunk_25_create_schedule_2",
+            "to": "chunk_25_create_schedule_3"
+        },
+        {
+            "from": "chunk_25_create_schedule_3",
+            "to": "chunk_25_create_schedule_4"
+        },
+        {
+            "from": "chunk_26_delete_schedule_1",
+            "to": "chunk_26_delete_schedule_2"
+        },
+        {
+            "from": "chunk_26_delete_schedule_2",
+            "to": "chunk_26_delete_schedule_3"
+        },
+        {
+            "from": "chunk_27_get_execution_schedules_1",
+            "to": "chunk_27_get_execution_schedules_2"
+        },
+        {
+            "from": "chunk_28_create_api_key_1",
+            "to": "chunk_28_create_api_key_2"
+        },
+        {
+            "from": "chunk_28_create_api_key_2",
+            "to": "chunk_28_create_api_key_3"
+        },
+        {
+            "from": "chunk_28_create_api_key_2",
+            "to": "chunk_28_create_api_key_4"
+        },
+        {
+            "from": "chunk_29_get_api_keys_1",
+            "to": "chunk_29_get_api_keys_2"
+        },
+        {
+            "from": "chunk_29_get_api_keys_2",
+            "to": "chunk_29_get_api_keys_3"
+        },
+        {
+            "from": "chunk_30_get_api_key_1",
+            "to": "chunk_30_get_api_key_2"
+        },
+        {
+            "from": "chunk_30_get_api_key_2",
+            "to": "chunk_30_get_api_key_3"
+        },
+        {
+            "from": "chunk_31_delete_api_key_1",
+            "to": "chunk_31_delete_api_key_2"
+        },
+        {
+            "from": "chunk_31_delete_api_key_2",
+            "to": "chunk_31_delete_api_key_3"
+        },
+        {
+            "from": "chunk_31_delete_api_key_2",
+            "to": "chunk_31_delete_api_key_4"
+        },
+        {
+            "from": "chunk_31_delete_api_key_2",
+            "to": "chunk_31_delete_api_key_5"
+        },
+        {
+            "from": "chunk_32_suspend_key_1",
+            "to": "chunk_32_suspend_key_2"
+        },
+        {
+            "from": "chunk_32_suspend_key_2",
+            "to": "chunk_32_suspend_key_3"
+        },
+        {
+            "from": "chunk_32_suspend_key_2",
+            "to": "chunk_32_suspend_key_4"
+        },
+        {
+            "from": "chunk_32_suspend_key_2",
+            "to": "chunk_32_suspend_key_5"
+        },
+        {
+            "from": "chunk_33_update_permissions_1",
+            "to": "chunk_33_update_permissions_2"
+        },
+        {
+            "from": "chunk_33_update_permissions_2",
+            "to": "chunk_33_update_permissions_3"
+        },
+        {
+            "from": "chunk_33_update_permissions_2",
+            "to": "chunk_33_update_permissions_4"
+        },
+        {
+            "from": "chunk_33_update_permissions_2",
+            "to": "chunk_33_update_permissions_5"
+        }
+    ]
+}

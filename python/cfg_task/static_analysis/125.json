@@ -1,0 +1,604 @@
+{
+  "nodes": [
+    {
+      "id": "n0",
+      "type": "block",
+      "statements": [
+        "import logging",
+        "import time",
+        "from enum import Enum",
+        "from typing import Any",
+        "import httpx",
+        "from backend.blocks.fal._auth import TEST_CREDENTIALS, TEST_CREDENTIALS_INPUT, FalCredentials, FalCredentialsField, FalCredentialsInput",
+        "from backend.data.block import Block, BlockCategory, BlockOutput, BlockSchema",
+        "from backend.data.model import SchemaField",
+        "logger = logging.getLogger(__name__)",
+        "class FalModel(str, Enum):\n    MOCHI = 'fal-ai/mochi-v1'\n    LUMA = 'fal-ai/luma-dream-machine'",
+        "MOCHI = 'fal-ai/mochi-v1'",
+        "LUMA = 'fal-ai/luma-dream-machine'",
+        "class AIVideoGeneratorBlock(Block):\n\n    class Input(BlockSchema):\n        prompt: str = SchemaField(description='Description of the video to generate.', placeholder='A dog running in a field.')\n        model: FalModel = SchemaField(title='FAL Model', default=FalModel.MOCHI, description='The FAL model to use for video generation.')\n        credentials: FalCredentialsInput = FalCredentialsField()\n\n    class Output(BlockSchema):\n        video_url: str = SchemaField(description='The URL of the generated video.')\n        error: str = SchemaField(description='Error message if video generation failed.')\n        logs: list[str] = SchemaField(description='Generation progress logs.', optional=True)\n\n    def __init__(self):\n        super().__init__(id='530cf046-2ce0-4854-ae2c-659db17c7a46', description='Generate videos using FAL AI models.', categories={BlockCategory.AI}, input_schema=self.Input, output_schema=self.Output, test_input={'prompt': 'A dog running in a field.', 'model': FalModel.MOCHI, 'credentials': TEST_CREDENTIALS_INPUT}, test_credentials=TEST_CREDENTIALS, test_output=[('video_url', 'https://fal.media/files/example/video.mp4')], test_mock={'generate_video': lambda *args, **kwargs: 'https://fal.media/files/example/video.mp4'})\n\n    def _get_headers(self, api_key: str) -> dict[str, str]:\n        \"\"\"Get headers for FAL API requests.\"\"\"\n        return {'Authorization': f'Key {api_key}', 'Content-Type': 'application/json'}\n\n    def _submit_request(self, url: str, headers: dict[str, str], data: dict[str, Any]) -> dict[str, Any]:\n        \"\"\"Submit a request to the FAL API.\"\"\"\n        try:\n            response = httpx.post(url, headers=headers, json=data)\n            response.raise_for_status()\n            return response.json()\n        except httpx.HTTPError as e:\n            logger.error(f'FAL API request failed: {str(e)}')\n            raise RuntimeError(f'Failed to submit request: {str(e)}')\n\n    def _poll_status(self, status_url: str, headers: dict[str, str]) -> dict[str, Any]:\n        \"\"\"Poll the status endpoint until completion or failure.\"\"\"\n        try:\n            response = httpx.get(status_url, headers=headers)\n            response.raise_for_status()\n            return response.json()\n        except httpx.HTTPError as e:\n            logger.error(f'Failed to get status: {str(e)}')\n            raise RuntimeError(f'Failed to get status: {str(e)}')\n\n    def generate_video(self, input_data: Input, credentials: FalCredentials) -> str:\n        \"\"\"Generate video using the specified FAL model.\"\"\"\n        base_url = 'https://queue.fal.run'\n        api_key = credentials.api_key.get_secret_value()\n        headers = self._get_headers(api_key)\n        submit_url = f'{base_url}/{input_data.model.value}'\n        submit_data = {'prompt': input_data.prompt}\n        seen_logs = set()\n        try:\n            submit_response = httpx.post(submit_url, headers=headers, json=submit_data)\n            submit_response.raise_for_status()\n            request_data = submit_response.json()\n            request_id = request_data.get('request_id')\n            status_url = request_data.get('status_url')\n            result_url = request_data.get('response_url')\n            if not all([request_id, status_url, result_url]):\n                raise ValueError('Missing required data in submission response')\n            max_attempts = 30\n            attempt = 0\n            base_wait_time = 5\n            while attempt < max_attempts:\n                status_response = httpx.get(f'{status_url}?logs=1', headers=headers)\n                status_response.raise_for_status()\n                status_data = status_response.json()\n                logs = status_data.get('logs', [])\n                if logs and isinstance(logs, list):\n                    for log in logs:\n                        if isinstance(log, dict):\n                            log_key = f\"{log.get('timestamp', '')}-{log.get('message', '')}\"\n                            if log_key not in seen_logs:\n                                seen_logs.add(log_key)\n                                message = log.get('message', '')\n                                if message:\n                                    logger.debug(f\"[FAL Generation] [{log.get('level', 'INFO')}] [{log.get('source', '')}] [{log.get('timestamp', '')}] {message}\")\n                status = status_data.get('status')\n                if status == 'COMPLETED':\n                    result_response = httpx.get(result_url, headers=headers)\n                    result_response.raise_for_status()\n                    result_data = result_response.json()\n                    if 'video' not in result_data or not isinstance(result_data['video'], dict):\n                        raise ValueError('Invalid response format - missing video data')\n                    video_url = result_data['video'].get('url')\n                    if not video_url:\n                        raise ValueError('No video URL in response')\n                    return video_url\n                elif status == 'FAILED':\n                    error_msg = status_data.get('error', 'No error details provided')\n                    raise RuntimeError(f'Video generation failed: {error_msg}')\n                elif status == 'IN_QUEUE':\n                    position = status_data.get('queue_position', 'unknown')\n                    logger.debug(f'[FAL Generation] Status: In queue, position: {position}')\n                elif status == 'IN_PROGRESS':\n                    logger.debug('[FAL Generation] Status: Request is being processed...')\n                else:\n                    logger.info(f'[FAL Generation] Status: Unknown status: {status}')\n                wait_time = min(base_wait_time * 2 ** attempt, 60)\n                time.sleep(wait_time)\n                attempt += 1\n            raise RuntimeError('Maximum polling attempts reached')\n        except httpx.HTTPError as e:\n            raise RuntimeError(f'API request failed: {str(e)}')\n\n    def run(self, input_data: Input, *, credentials: FalCredentials, **kwargs) -> BlockOutput:\n        try:\n            video_url = self.generate_video(input_data, credentials)\n            yield ('video_url', video_url)\n        except Exception as e:\n            error_message = str(e)\n            yield ('error', error_message)",
+        "class Input(BlockSchema):\n    prompt: str = SchemaField(description='Description of the video to generate.', placeholder='A dog running in a field.')\n    model: FalModel = SchemaField(title='FAL Model', default=FalModel.MOCHI, description='The FAL model to use for video generation.')\n    credentials: FalCredentialsInput = FalCredentialsField()",
+        "prompt: str = SchemaField(description='Description of the video to generate.', placeholder='A dog running in a field.')",
+        "model: FalModel = SchemaField(title='FAL Model', default=FalModel.MOCHI, description='The FAL model to use for video generation.')",
+        "credentials: FalCredentialsInput = FalCredentialsField()",
+        "class Output(BlockSchema):\n    video_url: str = SchemaField(description='The URL of the generated video.')\n    error: str = SchemaField(description='Error message if video generation failed.')\n    logs: list[str] = SchemaField(description='Generation progress logs.', optional=True)",
+        "video_url: str = SchemaField(description='The URL of the generated video.')",
+        "error: str = SchemaField(description='Error message if video generation failed.')",
+        "logs: list[str] = SchemaField(description='Generation progress logs.', optional=True)",
+        "def __init__(self):\n    super().__init__(id='530cf046-2ce0-4854-ae2c-659db17c7a46', description='Generate videos using FAL AI models.', categories={BlockCategory.AI}, input_schema=self.Input, output_schema=self.Output, test_input={'prompt': 'A dog running in a field.', 'model': FalModel.MOCHI, 'credentials': TEST_CREDENTIALS_INPUT}, test_credentials=TEST_CREDENTIALS, test_output=[('video_url', 'https://fal.media/files/example/video.mp4')], test_mock={'generate_video': lambda *args, **kwargs: 'https://fal.media/files/example/video.mp4'})",
+        "super().__init__()",
+        "def _get_headers(self, api_key: str) -> dict[str, str]:\n    \"\"\"Get headers for FAL API requests.\"\"\"\n    return {'Authorization': f'Key {api_key}', 'Content-Type': 'application/json'}",
+        "'Get headers for FAL API requests.'",
+        "return {'Authorization': f'Key {api_key}', 'Content-Type': 'application/json'}"
+      ],
+      "code": "import logging\nimport time\nfrom enum import Enum\nfrom typing import Any\nimport httpx\nfrom backend.blocks.fal._auth import TEST_CREDENTIALS, TEST_CREDENTIALS_INPUT, FalCredentials, FalCredentialsField, FalCredentialsInput\nfrom backend.data.block import Block, BlockCategory, BlockOutput, BlockSchema\nfrom backend.data.model import SchemaField\nlogger = logging.getLogger(__name__)\nclass FalModel(str, Enum):\n    MOCHI = 'fal-ai/mochi-v1'\n    LUMA = 'fal-ai/luma-dream-machine'\nMOCHI = 'fal-ai/mochi-v1'\nLUMA = 'fal-ai/luma-dream-machine'\nclass AIVideoGeneratorBlock(Block):\n\n    class Input(BlockSchema):\n        prompt: str = SchemaField(description='Description of the video to generate.', placeholder='A dog running in a field.')\n        model: FalModel = SchemaField(title='FAL Model', default=FalModel.MOCHI, description='The FAL model to use for video generation.')\n        credentials: FalCredentialsInput = FalCredentialsField()\n\n    class Output(BlockSchema):\n        video_url: str = SchemaField(description='The URL of the generated video.')\n        error: str = SchemaField(description='Error message if video generation failed.')\n        logs: list[str] = SchemaField(description='Generation progress logs.', optional=True)\n\n    def __init__(self):\n        super().__init__(id='530cf046-2ce0-4854-ae2c-659db17c7a46', description='Generate videos using FAL AI models.', categories={BlockCategory.AI}, input_schema=self.Input, output_schema=self.Output, test_input={'prompt': 'A dog running in a field.', 'model': FalModel.MOCHI, 'credentials': TEST_CREDENTIALS_INPUT}, test_credentials=TEST_CREDENTIALS, test_output=[('video_url', 'https://fal.media/files/example/video.mp4')], test_mock={'generate_video': lambda *args, **kwargs: 'https://fal.media/files/example/video.mp4'})\n\n    def _get_headers(self, api_key: str) -> dict[str, str]:\n        \"\"\"Get headers for FAL API requests.\"\"\"\n        return {'Authorization': f'Key {api_key}', 'Content-Type': 'application/json'}\n\n    def _submit_request(self, url: str, headers: dict[str, str], data: dict[str, Any]) -> dict[str, Any]:\n        \"\"\"Submit a request to the FAL API.\"\"\"\n        try:\n            response = httpx.post(url, headers=headers, json=data)\n            response.raise_for_status()\n            return response.json()\n        except httpx.HTTPError as e:\n            logger.error(f'FAL API request failed: {str(e)}')\n            raise RuntimeError(f'Failed to submit request: {str(e)}')\n\n    def _poll_status(self, status_url: str, headers: dict[str, str]) -> dict[str, Any]:\n        \"\"\"Poll the status endpoint until completion or failure.\"\"\"\n        try:\n            response = httpx.get(status_url, headers=headers)\n            response.raise_for_status()\n            return response.json()\n        except httpx.HTTPError as e:\n            logger.error(f'Failed to get status: {str(e)}')\n            raise RuntimeError(f'Failed to get status: {str(e)}')\n\n    def generate_video(self, input_data: Input, credentials: FalCredentials) -> str:\n        \"\"\"Generate video using the specified FAL model.\"\"\"\n        base_url = 'https://queue.fal.run'\n        api_key = credentials.api_key.get_secret_value()\n        headers = self._get_headers(api_key)\n        submit_url = f'{base_url}/{input_data.model.value}'\n        submit_data = {'prompt': input_data.prompt}\n        seen_logs = set()\n        try:\n            submit_response = httpx.post(submit_url, headers=headers, json=submit_data)\n            submit_response.raise_for_status()\n            request_data = submit_response.json()\n            request_id = request_data.get('request_id')\n            status_url = request_data.get('status_url')\n            result_url = request_data.get('response_url')\n            if not all([request_id, status_url, result_url]):\n                raise ValueError('Missing required data in submission response')\n            max_attempts = 30\n            attempt = 0\n            base_wait_time = 5\n            while attempt < max_attempts:\n                status_response = httpx.get(f'{status_url}?logs=1', headers=headers)\n                status_response.raise_for_status()\n                status_data = status_response.json()\n                logs = status_data.get('logs', [])\n                if logs and isinstance(logs, list):\n                    for log in logs:\n                        if isinstance(log, dict):\n                            log_key = f\"{log.get('timestamp', '')}-{log.get('message', '')}\"\n                            if log_key not in seen_logs:\n                                seen_logs.add(log_key)\n                                message = log.get('message', '')\n                                if message:\n                                    logger.debug(f\"[FAL Generation] [{log.get('level', 'INFO')}] [{log.get('source', '')}] [{log.get('timestamp', '')}] {message}\")\n                status = status_data.get('status')\n                if status == 'COMPLETED':\n                    result_response = httpx.get(result_url, headers=headers)\n                    result_response.raise_for_status()\n                    result_data = result_response.json()\n                    if 'video' not in result_data or not isinstance(result_data['video'], dict):\n                        raise ValueError('Invalid response format - missing video data')\n                    video_url = result_data['video'].get('url')\n                    if not video_url:\n                        raise ValueError('No video URL in response')\n                    return video_url\n                elif status == 'FAILED':\n                    error_msg = status_data.get('error', 'No error details provided')\n                    raise RuntimeError(f'Video generation failed: {error_msg}')\n                elif status == 'IN_QUEUE':\n                    position = status_data.get('queue_position', 'unknown')\n                    logger.debug(f'[FAL Generation] Status: In queue, position: {position}')\n                elif status == 'IN_PROGRESS':\n                    logger.debug('[FAL Generation] Status: Request is being processed...')\n                else:\n                    logger.info(f'[FAL Generation] Status: Unknown status: {status}')\n                wait_time = min(base_wait_time * 2 ** attempt, 60)\n                time.sleep(wait_time)\n                attempt += 1\n            raise RuntimeError('Maximum polling attempts reached')\n        except httpx.HTTPError as e:\n            raise RuntimeError(f'API request failed: {str(e)}')\n\n    def run(self, input_data: Input, *, credentials: FalCredentials, **kwargs) -> BlockOutput:\n        try:\n            video_url = self.generate_video(input_data, credentials)\n            yield ('video_url', video_url)\n        except Exception as e:\n            error_message = str(e)\n            yield ('error', error_message)\nclass Input(BlockSchema):\n    prompt: str = SchemaField(description='Description of the video to generate.', placeholder='A dog running in a field.')\n    model: FalModel = SchemaField(title='FAL Model', default=FalModel.MOCHI, description='The FAL model to use for video generation.')\n    credentials: FalCredentialsInput = FalCredentialsField()\nprompt: str = SchemaField(description='Description of the video to generate.', placeholder='A dog running in a field.')\nmodel: FalModel = SchemaField(title='FAL Model', default=FalModel.MOCHI, description='The FAL model to use for video generation.')\ncredentials: FalCredentialsInput = FalCredentialsField()\nclass Output(BlockSchema):\n    video_url: str = SchemaField(description='The URL of the generated video.')\n    error: str = SchemaField(description='Error message if video generation failed.')\n    logs: list[str] = SchemaField(description='Generation progress logs.', optional=True)\nvideo_url: str = SchemaField(description='The URL of the generated video.')\nerror: str = SchemaField(description='Error message if video generation failed.')\nlogs: list[str] = SchemaField(description='Generation progress logs.', optional=True)\ndef __init__(self):\n    super().__init__(id='530cf046-2ce0-4854-ae2c-659db17c7a46', description='Generate videos using FAL AI models.', categories={BlockCategory.AI}, input_schema=self.Input, output_schema=self.Output, test_input={'prompt': 'A dog running in a field.', 'model': FalModel.MOCHI, 'credentials': TEST_CREDENTIALS_INPUT}, test_credentials=TEST_CREDENTIALS, test_output=[('video_url', 'https://fal.media/files/example/video.mp4')], test_mock={'generate_video': lambda *args, **kwargs: 'https://fal.media/files/example/video.mp4'})\nsuper().__init__()\ndef _get_headers(self, api_key: str) -> dict[str, str]:\n    \"\"\"Get headers for FAL API requests.\"\"\"\n    return {'Authorization': f'Key {api_key}', 'Content-Type': 'application/json'}\n'Get headers for FAL API requests.'\nreturn {'Authorization': f'Key {api_key}', 'Content-Type': 'application/json'}"
+    },
+    {
+      "id": "n1",
+      "type": "block",
+      "statements": [
+        "def _submit_request(self, url: str, headers: dict[str, str], data: dict[str, Any]) -> dict[str, Any]:\n    \"\"\"Submit a request to the FAL API.\"\"\"\n    try:\n        response = httpx.post(url, headers=headers, json=data)\n        response.raise_for_status()\n        return response.json()\n    except httpx.HTTPError as e:\n        logger.error(f'FAL API request failed: {str(e)}')\n        raise RuntimeError(f'Failed to submit request: {str(e)}')",
+        "'Submit a request to the FAL API.'",
+        "try:\n    response = httpx.post(url, headers=headers, json=data)\n    response.raise_for_status()\n    return response.json()\nexcept httpx.HTTPError as e:\n    logger.error(f'FAL API request failed: {str(e)}')\n    raise RuntimeError(f'Failed to submit request: {str(e)}')",
+        "response = httpx.post(url, headers=headers, json=data)",
+        "response.raise_for_status()",
+        "return response.json()"
+      ],
+      "code": "def _submit_request(self, url: str, headers: dict[str, str], data: dict[str, Any]) -> dict[str, Any]:\n    \"\"\"Submit a request to the FAL API.\"\"\"\n    try:\n        response = httpx.post(url, headers=headers, json=data)\n        response.raise_for_status()\n        return response.json()\n    except httpx.HTTPError as e:\n        logger.error(f'FAL API request failed: {str(e)}')\n        raise RuntimeError(f'Failed to submit request: {str(e)}')\n'Submit a request to the FAL API.'\ntry:\n    response = httpx.post(url, headers=headers, json=data)\n    response.raise_for_status()\n    return response.json()\nexcept httpx.HTTPError as e:\n    logger.error(f'FAL API request failed: {str(e)}')\n    raise RuntimeError(f'Failed to submit request: {str(e)}')\nresponse = httpx.post(url, headers=headers, json=data)\nresponse.raise_for_status()\nreturn response.json()"
+    },
+    {
+      "id": "n2",
+      "type": "block",
+      "statements": [
+        "logger.error(f'FAL API request failed: {str(e)}')",
+        "raise RuntimeError(f'Failed to submit request: {str(e)}')",
+        "def _poll_status(self, status_url: str, headers: dict[str, str]) -> dict[str, Any]:\n    \"\"\"Poll the status endpoint until completion or failure.\"\"\"\n    try:\n        response = httpx.get(status_url, headers=headers)\n        response.raise_for_status()\n        return response.json()\n    except httpx.HTTPError as e:\n        logger.error(f'Failed to get status: {str(e)}')\n        raise RuntimeError(f'Failed to get status: {str(e)}')",
+        "'Poll the status endpoint until completion or failure.'",
+        "try:\n    response = httpx.get(status_url, headers=headers)\n    response.raise_for_status()\n    return response.json()\nexcept httpx.HTTPError as e:\n    logger.error(f'Failed to get status: {str(e)}')\n    raise RuntimeError(f'Failed to get status: {str(e)}')",
+        "response = httpx.get(status_url, headers=headers)",
+        "response.raise_for_status()",
+        "return response.json()"
+      ],
+      "code": "logger.error(f'FAL API request failed: {str(e)}')\nraise RuntimeError(f'Failed to submit request: {str(e)}')\ndef _poll_status(self, status_url: str, headers: dict[str, str]) -> dict[str, Any]:\n    \"\"\"Poll the status endpoint until completion or failure.\"\"\"\n    try:\n        response = httpx.get(status_url, headers=headers)\n        response.raise_for_status()\n        return response.json()\n    except httpx.HTTPError as e:\n        logger.error(f'Failed to get status: {str(e)}')\n        raise RuntimeError(f'Failed to get status: {str(e)}')\n'Poll the status endpoint until completion or failure.'\ntry:\n    response = httpx.get(status_url, headers=headers)\n    response.raise_for_status()\n    return response.json()\nexcept httpx.HTTPError as e:\n    logger.error(f'Failed to get status: {str(e)}')\n    raise RuntimeError(f'Failed to get status: {str(e)}')\nresponse = httpx.get(status_url, headers=headers)\nresponse.raise_for_status()\nreturn response.json()"
+    },
+    {
+      "id": "n3",
+      "type": "block",
+      "statements": [
+        "logger.error(f'Failed to get status: {str(e)}')",
+        "raise RuntimeError(f'Failed to get status: {str(e)}')",
+        "def generate_video(self, input_data: Input, credentials: FalCredentials) -> str:\n    \"\"\"Generate video using the specified FAL model.\"\"\"\n    base_url = 'https://queue.fal.run'\n    api_key = credentials.api_key.get_secret_value()\n    headers = self._get_headers(api_key)\n    submit_url = f'{base_url}/{input_data.model.value}'\n    submit_data = {'prompt': input_data.prompt}\n    seen_logs = set()\n    try:\n        submit_response = httpx.post(submit_url, headers=headers, json=submit_data)\n        submit_response.raise_for_status()\n        request_data = submit_response.json()\n        request_id = request_data.get('request_id')\n        status_url = request_data.get('status_url')\n        result_url = request_data.get('response_url')\n        if not all([request_id, status_url, result_url]):\n            raise ValueError('Missing required data in submission response')\n        max_attempts = 30\n        attempt = 0\n        base_wait_time = 5\n        while attempt < max_attempts:\n            status_response = httpx.get(f'{status_url}?logs=1', headers=headers)\n            status_response.raise_for_status()\n            status_data = status_response.json()\n            logs = status_data.get('logs', [])\n            if logs and isinstance(logs, list):\n                for log in logs:\n                    if isinstance(log, dict):\n                        log_key = f\"{log.get('timestamp', '')}-{log.get('message', '')}\"\n                        if log_key not in seen_logs:\n                            seen_logs.add(log_key)\n                            message = log.get('message', '')\n                            if message:\n                                logger.debug(f\"[FAL Generation] [{log.get('level', 'INFO')}] [{log.get('source', '')}] [{log.get('timestamp', '')}] {message}\")\n            status = status_data.get('status')\n            if status == 'COMPLETED':\n                result_response = httpx.get(result_url, headers=headers)\n                result_response.raise_for_status()\n                result_data = result_response.json()\n                if 'video' not in result_data or not isinstance(result_data['video'], dict):\n                    raise ValueError('Invalid response format - missing video data')\n                video_url = result_data['video'].get('url')\n                if not video_url:\n                    raise ValueError('No video URL in response')\n                return video_url\n            elif status == 'FAILED':\n                error_msg = status_data.get('error', 'No error details provided')\n                raise RuntimeError(f'Video generation failed: {error_msg}')\n            elif status == 'IN_QUEUE':\n                position = status_data.get('queue_position', 'unknown')\n                logger.debug(f'[FAL Generation] Status: In queue, position: {position}')\n            elif status == 'IN_PROGRESS':\n                logger.debug('[FAL Generation] Status: Request is being processed...')\n            else:\n                logger.info(f'[FAL Generation] Status: Unknown status: {status}')\n            wait_time = min(base_wait_time * 2 ** attempt, 60)\n            time.sleep(wait_time)\n            attempt += 1\n        raise RuntimeError('Maximum polling attempts reached')\n    except httpx.HTTPError as e:\n        raise RuntimeError(f'API request failed: {str(e)}')",
+        "'Generate video using the specified FAL model.'",
+        "base_url = 'https://queue.fal.run'",
+        "api_key = credentials.api_key.get_secret_value()",
+        "headers = self._get_headers(api_key)",
+        "submit_url = f'{base_url}/{input_data.model.value}'",
+        "submit_data = {'prompt': input_data.prompt}",
+        "seen_logs = set()",
+        "try:\n    submit_response = httpx.post(submit_url, headers=headers, json=submit_data)\n    submit_response.raise_for_status()\n    request_data = submit_response.json()\n    request_id = request_data.get('request_id')\n    status_url = request_data.get('status_url')\n    result_url = request_data.get('response_url')\n    if not all([request_id, status_url, result_url]):\n        raise ValueError('Missing required data in submission response')\n    max_attempts = 30\n    attempt = 0\n    base_wait_time = 5\n    while attempt < max_attempts:\n        status_response = httpx.get(f'{status_url}?logs=1', headers=headers)\n        status_response.raise_for_status()\n        status_data = status_response.json()\n        logs = status_data.get('logs', [])\n        if logs and isinstance(logs, list):\n            for log in logs:\n                if isinstance(log, dict):\n                    log_key = f\"{log.get('timestamp', '')}-{log.get('message', '')}\"\n                    if log_key not in seen_logs:\n                        seen_logs.add(log_key)\n                        message = log.get('message', '')\n                        if message:\n                            logger.debug(f\"[FAL Generation] [{log.get('level', 'INFO')}] [{log.get('source', '')}] [{log.get('timestamp', '')}] {message}\")\n        status = status_data.get('status')\n        if status == 'COMPLETED':\n            result_response = httpx.get(result_url, headers=headers)\n            result_response.raise_for_status()\n            result_data = result_response.json()\n            if 'video' not in result_data or not isinstance(result_data['video'], dict):\n                raise ValueError('Invalid response format - missing video data')\n            video_url = result_data['video'].get('url')\n            if not video_url:\n                raise ValueError('No video URL in response')\n            return video_url\n        elif status == 'FAILED':\n            error_msg = status_data.get('error', 'No error details provided')\n            raise RuntimeError(f'Video generation failed: {error_msg}')\n        elif status == 'IN_QUEUE':\n            position = status_data.get('queue_position', 'unknown')\n            logger.debug(f'[FAL Generation] Status: In queue, position: {position}')\n        elif status == 'IN_PROGRESS':\n            logger.debug('[FAL Generation] Status: Request is being processed...')\n        else:\n            logger.info(f'[FAL Generation] Status: Unknown status: {status}')\n        wait_time = min(base_wait_time * 2 ** attempt, 60)\n        time.sleep(wait_time)\n        attempt += 1\n    raise RuntimeError('Maximum polling attempts reached')\nexcept httpx.HTTPError as e:\n    raise RuntimeError(f'API request failed: {str(e)}')",
+        "submit_response = httpx.post(submit_url, headers=headers, json=submit_data)",
+        "submit_response.raise_for_status()",
+        "request_data = submit_response.json()",
+        "request_id = request_data.get('request_id')",
+        "status_url = request_data.get('status_url')",
+        "result_url = request_data.get('response_url')",
+        "not all([request_id, status_url, result_url])"
+      ],
+      "code": "logger.error(f'Failed to get status: {str(e)}')\nraise RuntimeError(f'Failed to get status: {str(e)}')\ndef generate_video(self, input_data: Input, credentials: FalCredentials) -> str:\n    \"\"\"Generate video using the specified FAL model.\"\"\"\n    base_url = 'https://queue.fal.run'\n    api_key = credentials.api_key.get_secret_value()\n    headers = self._get_headers(api_key)\n    submit_url = f'{base_url}/{input_data.model.value}'\n    submit_data = {'prompt': input_data.prompt}\n    seen_logs = set()\n    try:\n        submit_response = httpx.post(submit_url, headers=headers, json=submit_data)\n        submit_response.raise_for_status()\n        request_data = submit_response.json()\n        request_id = request_data.get('request_id')\n        status_url = request_data.get('status_url')\n        result_url = request_data.get('response_url')\n        if not all([request_id, status_url, result_url]):\n            raise ValueError('Missing required data in submission response')\n        max_attempts = 30\n        attempt = 0\n        base_wait_time = 5\n        while attempt < max_attempts:\n            status_response = httpx.get(f'{status_url}?logs=1', headers=headers)\n            status_response.raise_for_status()\n            status_data = status_response.json()\n            logs = status_data.get('logs', [])\n            if logs and isinstance(logs, list):\n                for log in logs:\n                    if isinstance(log, dict):\n                        log_key = f\"{log.get('timestamp', '')}-{log.get('message', '')}\"\n                        if log_key not in seen_logs:\n                            seen_logs.add(log_key)\n                            message = log.get('message', '')\n                            if message:\n                                logger.debug(f\"[FAL Generation] [{log.get('level', 'INFO')}] [{log.get('source', '')}] [{log.get('timestamp', '')}] {message}\")\n            status = status_data.get('status')\n            if status == 'COMPLETED':\n                result_response = httpx.get(result_url, headers=headers)\n                result_response.raise_for_status()\n                result_data = result_response.json()\n                if 'video' not in result_data or not isinstance(result_data['video'], dict):\n                    raise ValueError('Invalid response format - missing video data')\n                video_url = result_data['video'].get('url')\n                if not video_url:\n                    raise ValueError('No video URL in response')\n                return video_url\n            elif status == 'FAILED':\n                error_msg = status_data.get('error', 'No error details provided')\n                raise RuntimeError(f'Video generation failed: {error_msg}')\n            elif status == 'IN_QUEUE':\n                position = status_data.get('queue_position', 'unknown')\n                logger.debug(f'[FAL Generation] Status: In queue, position: {position}')\n            elif status == 'IN_PROGRESS':\n                logger.debug('[FAL Generation] Status: Request is being processed...')\n            else:\n                logger.info(f'[FAL Generation] Status: Unknown status: {status}')\n            wait_time = min(base_wait_time * 2 ** attempt, 60)\n            time.sleep(wait_time)\n            attempt += 1\n        raise RuntimeError('Maximum polling attempts reached')\n    except httpx.HTTPError as e:\n        raise RuntimeError(f'API request failed: {str(e)}')\n'Generate video using the specified FAL model.'\nbase_url = 'https://queue.fal.run'\napi_key = credentials.api_key.get_secret_value()\nheaders = self._get_headers(api_key)\nsubmit_url = f'{base_url}/{input_data.model.value}'\nsubmit_data = {'prompt': input_data.prompt}\nseen_logs = set()\ntry:\n    submit_response = httpx.post(submit_url, headers=headers, json=submit_data)\n    submit_response.raise_for_status()\n    request_data = submit_response.json()\n    request_id = request_data.get('request_id')\n    status_url = request_data.get('status_url')\n    result_url = request_data.get('response_url')\n    if not all([request_id, status_url, result_url]):\n        raise ValueError('Missing required data in submission response')\n    max_attempts = 30\n    attempt = 0\n    base_wait_time = 5\n    while attempt < max_attempts:\n        status_response = httpx.get(f'{status_url}?logs=1', headers=headers)\n        status_response.raise_for_status()\n        status_data = status_response.json()\n        logs = status_data.get('logs', [])\n        if logs and isinstance(logs, list):\n            for log in logs:\n                if isinstance(log, dict):\n                    log_key = f\"{log.get('timestamp', '')}-{log.get('message', '')}\"\n                    if log_key not in seen_logs:\n                        seen_logs.add(log_key)\n                        message = log.get('message', '')\n                        if message:\n                            logger.debug(f\"[FAL Generation] [{log.get('level', 'INFO')}] [{log.get('source', '')}] [{log.get('timestamp', '')}] {message}\")\n        status = status_data.get('status')\n        if status == 'COMPLETED':\n            result_response = httpx.get(result_url, headers=headers)\n            result_response.raise_for_status()\n            result_data = result_response.json()\n            if 'video' not in result_data or not isinstance(result_data['video'], dict):\n                raise ValueError('Invalid response format - missing video data')\n            video_url = result_data['video'].get('url')\n            if not video_url:\n                raise ValueError('No video URL in response')\n            return video_url\n        elif status == 'FAILED':\n            error_msg = status_data.get('error', 'No error details provided')\n            raise RuntimeError(f'Video generation failed: {error_msg}')\n        elif status == 'IN_QUEUE':\n            position = status_data.get('queue_position', 'unknown')\n            logger.debug(f'[FAL Generation] Status: In queue, position: {position}')\n        elif status == 'IN_PROGRESS':\n            logger.debug('[FAL Generation] Status: Request is being processed...')\n        else:\n            logger.info(f'[FAL Generation] Status: Unknown status: {status}')\n        wait_time = min(base_wait_time * 2 ** attempt, 60)\n        time.sleep(wait_time)\n        attempt += 1\n    raise RuntimeError('Maximum polling attempts reached')\nexcept httpx.HTTPError as e:\n    raise RuntimeError(f'API request failed: {str(e)}')\nsubmit_response = httpx.post(submit_url, headers=headers, json=submit_data)\nsubmit_response.raise_for_status()\nrequest_data = submit_response.json()\nrequest_id = request_data.get('request_id')\nstatus_url = request_data.get('status_url')\nresult_url = request_data.get('response_url')\nnot all([request_id, status_url, result_url])"
+    },
+    {
+      "id": "n4",
+      "type": "block",
+      "statements": [
+        "raise ValueError('Missing required data in submission response')"
+      ],
+      "code": "raise ValueError('Missing required data in submission response')"
+    },
+    {
+      "id": "n5",
+      "type": "block",
+      "statements": [],
+      "code": ""
+    },
+    {
+      "id": "n6",
+      "type": "block",
+      "statements": [
+        "max_attempts = 30",
+        "attempt = 0",
+        "base_wait_time = 5"
+      ],
+      "code": "max_attempts = 30\nattempt = 0\nbase_wait_time = 5"
+    },
+    {
+      "id": "n7",
+      "type": "block",
+      "statements": [
+        "attempt Lt max_attempts"
+      ],
+      "code": "attempt Lt max_attempts"
+    },
+    {
+      "id": "n8",
+      "type": "block",
+      "statements": [
+        "status_response = httpx.get(f'{status_url}?logs=1', headers=headers)",
+        "status_response.raise_for_status()",
+        "status_data = status_response.json()",
+        "logs = status_data.get('logs', [])",
+        "logs and isinstance(logs, list)"
+      ],
+      "code": "status_response = httpx.get(f'{status_url}?logs=1', headers=headers)\nstatus_response.raise_for_status()\nstatus_data = status_response.json()\nlogs = status_data.get('logs', [])\nlogs and isinstance(logs, list)"
+    },
+    {
+      "id": "n9",
+      "type": "block",
+      "statements": [
+        "raise RuntimeError('Maximum polling attempts reached')",
+        "raise RuntimeError(f'API request failed: {str(e)}')",
+        "def run(self, input_data: Input, *, credentials: FalCredentials, **kwargs) -> BlockOutput:\n    try:\n        video_url = self.generate_video(input_data, credentials)\n        yield ('video_url', video_url)\n    except Exception as e:\n        error_message = str(e)\n        yield ('error', error_message)",
+        "try:\n    video_url = self.generate_video(input_data, credentials)\n    yield ('video_url', video_url)\nexcept Exception as e:\n    error_message = str(e)\n    yield ('error', error_message)",
+        "video_url = self.generate_video(input_data, credentials)",
+        "(yield ('video_url', video_url))",
+        "error_message = str(e)",
+        "(yield ('error', error_message))"
+      ],
+      "code": "raise RuntimeError('Maximum polling attempts reached')\nraise RuntimeError(f'API request failed: {str(e)}')\ndef run(self, input_data: Input, *, credentials: FalCredentials, **kwargs) -> BlockOutput:\n    try:\n        video_url = self.generate_video(input_data, credentials)\n        yield ('video_url', video_url)\n    except Exception as e:\n        error_message = str(e)\n        yield ('error', error_message)\ntry:\n    video_url = self.generate_video(input_data, credentials)\n    yield ('video_url', video_url)\nexcept Exception as e:\n    error_message = str(e)\n    yield ('error', error_message)\nvideo_url = self.generate_video(input_data, credentials)\n(yield ('video_url', video_url))\nerror_message = str(e)\n(yield ('error', error_message))"
+    },
+    {
+      "id": "n10",
+      "type": "block",
+      "statements": [],
+      "code": ""
+    },
+    {
+      "id": "n11",
+      "type": "block",
+      "statements": [],
+      "code": ""
+    },
+    {
+      "id": "n12",
+      "type": "block",
+      "statements": [
+        "status = status_data.get('status')",
+        "status Eq 'COMPLETED'"
+      ],
+      "code": "status = status_data.get('status')\nstatus Eq 'COMPLETED'"
+    },
+    {
+      "id": "n13",
+      "type": "block",
+      "statements": [
+        "log",
+        "logs"
+      ],
+      "code": "log\nlogs"
+    },
+    {
+      "id": "n14",
+      "type": "block",
+      "statements": [
+        "isinstance(log, dict)"
+      ],
+      "code": "isinstance(log, dict)"
+    },
+    {
+      "id": "n15",
+      "type": "block",
+      "statements": [],
+      "code": ""
+    },
+    {
+      "id": "n16",
+      "type": "block",
+      "statements": [
+        "log_key = f\"{log.get('timestamp', '')}-{log.get('message', '')}\"",
+        "log_key NotIn seen_logs"
+      ],
+      "code": "log_key = f\"{log.get('timestamp', '')}-{log.get('message', '')}\"\nlog_key NotIn seen_logs"
+    },
+    {
+      "id": "n17",
+      "type": "block",
+      "statements": [],
+      "code": ""
+    },
+    {
+      "id": "n18",
+      "type": "block",
+      "statements": [],
+      "code": ""
+    },
+    {
+      "id": "n19",
+      "type": "block",
+      "statements": [
+        "seen_logs.add(log_key)",
+        "message = log.get('message', '')",
+        "message"
+      ],
+      "code": "seen_logs.add(log_key)\nmessage = log.get('message', '')\nmessage"
+    },
+    {
+      "id": "n20",
+      "type": "block",
+      "statements": [],
+      "code": ""
+    },
+    {
+      "id": "n21",
+      "type": "block",
+      "statements": [],
+      "code": ""
+    },
+    {
+      "id": "n22",
+      "type": "block",
+      "statements": [
+        "logger.debug(f\"[FAL Generation] [{log.get('level', 'INFO')}] [{log.get('source', '')}] [{log.get('timestamp', '')}] {message}\")"
+      ],
+      "code": "logger.debug(f\"[FAL Generation] [{log.get('level', 'INFO')}] [{log.get('source', '')}] [{log.get('timestamp', '')}] {message}\")"
+    },
+    {
+      "id": "n23",
+      "type": "block",
+      "statements": [],
+      "code": ""
+    },
+    {
+      "id": "n24",
+      "type": "block",
+      "statements": [],
+      "code": ""
+    },
+    {
+      "id": "n25",
+      "type": "block",
+      "statements": [
+        "result_response = httpx.get(result_url, headers=headers)",
+        "result_response.raise_for_status()",
+        "result_data = result_response.json()",
+        "'video' not in result_data or not isinstance(result_data['video'], dict)"
+      ],
+      "code": "result_response = httpx.get(result_url, headers=headers)\nresult_response.raise_for_status()\nresult_data = result_response.json()\n'video' not in result_data or not isinstance(result_data['video'], dict)"
+    },
+    {
+      "id": "n26",
+      "type": "block",
+      "statements": [
+        "status Eq 'FAILED'"
+      ],
+      "code": "status Eq 'FAILED'"
+    },
+    {
+      "id": "n27",
+      "type": "block",
+      "statements": [
+        "wait_time = min(base_wait_time * 2 ** attempt, 60)",
+        "time.sleep(wait_time)",
+        "attempt += 1"
+      ],
+      "code": "wait_time = min(base_wait_time * 2 ** attempt, 60)\ntime.sleep(wait_time)\nattempt += 1"
+    },
+    {
+      "id": "n28",
+      "type": "block",
+      "statements": [
+        "raise ValueError('Invalid response format - missing video data')"
+      ],
+      "code": "raise ValueError('Invalid response format - missing video data')"
+    },
+    {
+      "id": "n29",
+      "type": "block",
+      "statements": [],
+      "code": ""
+    },
+    {
+      "id": "n30",
+      "type": "block",
+      "statements": [
+        "video_url = result_data['video'].get('url')",
+        "not video_url"
+      ],
+      "code": "video_url = result_data['video'].get('url')\nnot video_url"
+    },
+    {
+      "id": "n31",
+      "type": "block",
+      "statements": [
+        "raise ValueError('No video URL in response')"
+      ],
+      "code": "raise ValueError('No video URL in response')"
+    },
+    {
+      "id": "n32",
+      "type": "block",
+      "statements": [],
+      "code": ""
+    },
+    {
+      "id": "n33",
+      "type": "block",
+      "statements": [
+        "return video_url"
+      ],
+      "code": "return video_url"
+    },
+    {
+      "id": "n34",
+      "type": "block",
+      "statements": [
+        "error_msg = status_data.get('error', 'No error details provided')",
+        "raise RuntimeError(f'Video generation failed: {error_msg}')"
+      ],
+      "code": "error_msg = status_data.get('error', 'No error details provided')\nraise RuntimeError(f'Video generation failed: {error_msg}')"
+    },
+    {
+      "id": "n35",
+      "type": "block",
+      "statements": [
+        "status Eq 'IN_QUEUE'"
+      ],
+      "code": "status Eq 'IN_QUEUE'"
+    },
+    {
+      "id": "n36",
+      "type": "block",
+      "statements": [],
+      "code": ""
+    },
+    {
+      "id": "n37",
+      "type": "block",
+      "statements": [
+        "position = status_data.get('queue_position', 'unknown')",
+        "logger.debug(f'[FAL Generation] Status: In queue, position: {position}')"
+      ],
+      "code": "position = status_data.get('queue_position', 'unknown')\nlogger.debug(f'[FAL Generation] Status: In queue, position: {position}')"
+    },
+    {
+      "id": "n38",
+      "type": "block",
+      "statements": [
+        "status Eq 'IN_PROGRESS'"
+      ],
+      "code": "status Eq 'IN_PROGRESS'"
+    },
+    {
+      "id": "n39",
+      "type": "block",
+      "statements": [],
+      "code": ""
+    },
+    {
+      "id": "n40",
+      "type": "block",
+      "statements": [
+        "logger.debug('[FAL Generation] Status: Request is being processed...')"
+      ],
+      "code": "logger.debug('[FAL Generation] Status: Request is being processed...')"
+    },
+    {
+      "id": "n41",
+      "type": "block",
+      "statements": [
+        "logger.info(f'[FAL Generation] Status: Unknown status: {status}')"
+      ],
+      "code": "logger.info(f'[FAL Generation] Status: Unknown status: {status}')"
+    },
+    {
+      "id": "n42",
+      "type": "block",
+      "statements": [],
+      "code": ""
+    }
+  ],
+  "edges": [
+    {
+      "source": "n6",
+      "target": "n7"
+    },
+    {
+      "source": "n17",
+      "target": "n18"
+    },
+    {
+      "source": "n14",
+      "target": "n17"
+    },
+    {
+      "source": "n35",
+      "target": "n37"
+    },
+    {
+      "source": "n26",
+      "target": "n35"
+    },
+    {
+      "source": "n12",
+      "target": "n26"
+    },
+    {
+      "source": "n27",
+      "target": "n7"
+    },
+    {
+      "source": "n13",
+      "target": "n14"
+    },
+    {
+      "source": "n23",
+      "target": "n24"
+    },
+    {
+      "source": "n24",
+      "target": "n21"
+    },
+    {
+      "source": "n13",
+      "target": "n15"
+    },
+    {
+      "source": "n3",
+      "target": "n4"
+    },
+    {
+      "source": "n42",
+      "target": "n39"
+    },
+    {
+      "source": "n18",
+      "target": "n13"
+    },
+    {
+      "source": "n25",
+      "target": "n29"
+    },
+    {
+      "source": "n16",
+      "target": "n19"
+    },
+    {
+      "source": "n4",
+      "target": "n6"
+    },
+    {
+      "source": "n25",
+      "target": "n28"
+    },
+    {
+      "source": "n30",
+      "target": "n31"
+    },
+    {
+      "source": "n7",
+      "target": "n8"
+    },
+    {
+      "source": "n34",
+      "target": "n36"
+    },
+    {
+      "source": "n31",
+      "target": "n33"
+    },
+    {
+      "source": "n29",
+      "target": "n30"
+    },
+    {
+      "source": "n15",
+      "target": "n12"
+    },
+    {
+      "source": "n19",
+      "target": "n22"
+    },
+    {
+      "source": "n16",
+      "target": "n20"
+    },
+    {
+      "source": "n32",
+      "target": "n33"
+    },
+    {
+      "source": "n14",
+      "target": "n16"
+    },
+    {
+      "source": "n20",
+      "target": "n21"
+    },
+    {
+      "source": "n26",
+      "target": "n34"
+    },
+    {
+      "source": "n37",
+      "target": "n39"
+    },
+    {
+      "source": "n28",
+      "target": "n30"
+    },
+    {
+      "source": "n39",
+      "target": "n36"
+    },
+    {
+      "source": "n11",
+      "target": "n12"
+    },
+    {
+      "source": "n8",
+      "target": "n11"
+    },
+    {
+      "source": "n7",
+      "target": "n9"
+    },
+    {
+      "source": "n36",
+      "target": "n27"
+    },
+    {
+      "source": "n5",
+      "target": "n6"
+    },
+    {
+      "source": "n38",
+      "target": "n40"
+    },
+    {
+      "source": "n40",
+      "target": "n42"
+    },
+    {
+      "source": "n8",
+      "target": "n10"
+    },
+    {
+      "source": "n21",
+      "target": "n18"
+    },
+    {
+      "source": "n12",
+      "target": "n25"
+    },
+    {
+      "source": "n38",
+      "target": "n41"
+    },
+    {
+      "source": "n3",
+      "target": "n5"
+    },
+    {
+      "source": "n22",
+      "target": "n24"
+    },
+    {
+      "source": "n35",
+      "target": "n38"
+    },
+    {
+      "source": "n19",
+      "target": "n23"
+    },
+    {
+      "source": "n10",
+      "target": "n13"
+    },
+    {
+      "source": "n41",
+      "target": "n42"
+    },
+    {
+      "source": "n30",
+      "target": "n32"
+    }
+  ]
+}

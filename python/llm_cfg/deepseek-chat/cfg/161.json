@@ -1,0 +1,1562 @@
+{
+    "nodes": [
+        {
+            "id": "chunk_0_GlobalBlock_1",
+            "code": "import random\nfrom collections import defaultdict\nfrom enum import Enum\nfrom typing import Any, Dict, List, Optional, Union\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_2",
+            "code": "from backend.data.block import Block, BlockCategory, BlockOutput, BlockSchema\nfrom backend.data.model import SchemaField\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_3",
+            "code": "\n\n\n"
+        },
+        {
+            "id": "chunk_1_SamplingMethod_1",
+            "code": "class SamplingMethod(str, Enum):\n    RANDOM = \"random\"\n    SYSTEMATIC = \"systematic\"\n    TOP = \"top\"\n    BOTTOM = \"bottom\"\n    STRATIFIED = \"stratified\"\n    WEIGHTED = \"weighted\"\n    RESERVOIR = \"reservoir\"\n    CLUSTER = \"cluster\"\n"
+        },
+        {
+            "id": "chunk_2_DataSamplingBlock_1",
+            "code": "class DataSamplingBlock(Block):\n    class Input(BlockSchema):\n        data: Union[Dict[str, Any], List[Union[dict, List[Any]]]] = SchemaField(\n            description=\"The dataset to sample from. Can be a single dictionary, a list of dictionaries, or a list of lists.\",\n            placeholder=\"{'id': 1, 'value': 'a'} or [{'id': 1, 'value': 'a'}, {'id': 2, 'value': 'b'}, ...]\",\n        )\n        sample_size: int = SchemaField(\n            description=\"The number of samples to take from the dataset.\",\n            placeholder=\"10\",\n            default=10,\n        )\n        sampling_method: SamplingMethod = SchemaField(\n            description=\"The method to use for sampling.\",\n            default=SamplingMethod.RANDOM,\n        )\n        accumulate: bool = SchemaField(\n            description=\"Whether to accumulate data before sampling.\",\n            default=False,\n        )\n        random_seed: Optional[int] = SchemaField(\n            description=\"Seed for random number generator (optional).\",\n            default=None,\n        )\n        stratify_key: Optional[str] = SchemaField(\n            description=\"Key to use for stratified sampling (required for stratified sampling).\",\n            default=None,\n        )\n        weight_key: Optional[str] = SchemaField(\n            description=\"Key to use for weighted sampling (required for weighted sampling).\",\n            default=None,\n        )\n        cluster_key: Optional[str] = SchemaField(\n            description=\"Key to use for cluster sampling (required for cluster sampling).\",\n            default=None,\n        )\n\n"
+        },
+        {
+            "id": "chunk_2_DataSamplingBlock_2",
+            "code": "    class Output(BlockSchema):\n        sampled_data: List[Union[dict, List[Any]]] = SchemaField(\n            description=\"The sampled subset of the input data.\"\n        )\n        sample_indices: List[int] = SchemaField(\n            description=\"The indices of the sampled data in the original dataset.\"\n        )\n\n"
+        },
+        {
+            "id": "chunk_2_DataSamplingBlock_3",
+            "code": "    def __init__(self):\n        super().__init__(\n            id=\"4a448883-71fa-49cf-91cf-70d793bd7d87\",\n            description=\"This block samples data from a given dataset using various sampling methods.\",\n            categories={BlockCategory.LOGIC},\n            input_schema=DataSamplingBlock.Input,\n            output_schema=DataSamplingBlock.Output,\n            test_input={\n                \"data\": [\n                    {\"id\": i, \"value\": chr(97 + i), \"group\": i % 3} for i in range(10)\n                ],\n                \"sample_size\": 3,\n                \"sampling_method\": SamplingMethod.STRATIFIED,\n                \"accumulate\": False,\n                \"random_seed\": 42,\n                \"stratify_key\": \"group\",\n            },\n            test_output=[\n                (\n                    \"sampled_data\",\n                    [\n                        {\"id\": 0, \"value\": \"a\", \"group\": 0},\n                        {\"id\": 1, \"value\": \"b\", \"group\": 1},\n                        {\"id\": 8, \"value\": \"i\", \"group\": 2},\n                    ],\n                ),\n                (\"sample_indices\", [0, 1, 8]),\n            ],\n        )\n"
+        },
+        {
+            "id": "chunk_2_DataSamplingBlock_4",
+            "code": "        self.accumulated_data = []\n"
+        },
+        {
+            "id": "chunk_2_DataSamplingBlock_5",
+            "code": "    def run(self, input_data: Input, **kwargs) -> BlockOutput:\n        if input_data.accumulate:\n            if isinstance(input_data.data, dict):\n                self.accumulated_data.append(input_data.data)\n            elif isinstance(input_data.data, list):\n                self.accumulated_data.extend(input_data.data)\n            else:\n                raise ValueError(f\"Unsupported data type: {type(input_data.data)}\")\n"
+        },
+        {
+            "id": "chunk_2_DataSamplingBlock_6",
+            "code": "            # If we don't have enough data yet, return without sampling\n            if len(self.accumulated_data) < input_data.sample_size:\n                return\n"
+        },
+        {
+            "id": "chunk_2_DataSamplingBlock_7",
+            "code": "            data_to_sample = self.accumulated_data\n        else:\n            # If not accumulating, use the input data directly\n            data_to_sample = (\n                input_data.data\n                if isinstance(input_data.data, list)\n                else [input_data.data]\n            )\n"
+        },
+        {
+            "id": "chunk_2_DataSamplingBlock_8",
+            "code": "        if input_data.random_seed is not None:\n            random.seed(input_data.random_seed)\n"
+        },
+        {
+            "id": "chunk_2_DataSamplingBlock_9",
+            "code": "        data_size = len(data_to_sample)\n\n        if input_data.sample_size > data_size:\n            raise ValueError(\n                f\"Sample size ({input_data.sample_size}) cannot be larger than the dataset size ({data_size}).\"\n            )\n"
+        },
+        {
+            "id": "chunk_2_DataSamplingBlock_10",
+            "code": "        indices = []\n"
+        },
+        {
+            "id": "chunk_2_DataSamplingBlock_11",
+            "code": "        if input_data.sampling_method == SamplingMethod.RANDOM:\n            indices = random.sample(range(data_size), input_data.sample_size)\n"
+        },
+        {
+            "id": "chunk_2_DataSamplingBlock_12",
+            "code": "            step = data_size // input_data.sample_size\n            start = random.randint(0, step - 1)\n            indices = list(range(start, data_size, step))[: input_data.sample_size]\n"
+        },
+        {
+            "id": "chunk_2_DataSamplingBlock_13",
+            "code": "            indices = list(range(input_data.sample_size))\n"
+        },
+        {
+            "id": "chunk_2_DataSamplingBlock_14",
+            "code": "            indices = list(range(data_size - input_data.sample_size, data_size))\n"
+        },
+        {
+            "id": "chunk_2_DataSamplingBlock_15",
+            "code": "            if not input_data.stratify_key:\n                raise ValueError(\n                    \"Stratify key must be provided for stratified sampling.\"\n                )\n"
+        },
+        {
+            "id": "chunk_2_DataSamplingBlock_16",
+            "code": "            strata = defaultdict(list)\n            for i, item in enumerate(data_to_sample):\n                if isinstance(item, dict):\n                    strata_value = item.get(input_data.stratify_key)\n                elif hasattr(item, input_data.stratify_key):\n                    strata_value = getattr(item, input_data.stratify_key)\n                else:\n                    raise ValueError(\n                        f\"Stratify key '{input_data.stratify_key}' not found in item {item}\"\n                    )\n"
+        },
+        {
+            "id": "chunk_2_DataSamplingBlock_17",
+            "code": "                if strata_value is None:\n                    raise ValueError(\n                        f\"Stratify value for key '{input_data.stratify_key}' is None\"\n                    )\n"
+        },
+        {
+            "id": "chunk_2_DataSamplingBlock_18",
+            "code": "                strata[str(strata_value)].append(i)\n"
+        },
+        {
+            "id": "chunk_2_DataSamplingBlock_19",
+            "code": "            # Calculate the number of samples to take from each stratum\n            stratum_sizes = {\n                k: max(1, int(len(v) / data_size * input_data.sample_size))\n                for k, v in strata.items()\n            }\n"
+        },
+        {
+            "id": "chunk_2_DataSamplingBlock_20",
+            "code": "            # Adjust sizes to ensure we get exactly sample_size samples\n            while sum(stratum_sizes.values()) != input_data.sample_size:\n                if sum(stratum_sizes.values()) < input_data.sample_size:\n                    stratum_sizes[\n                        max(stratum_sizes, key=lambda k: stratum_sizes[k])\n                    ] += 1\n                else:\n                    stratum_sizes[\n                        max(stratum_sizes, key=lambda k: stratum_sizes[k])\n                    ] -= 1\n"
+        },
+        {
+            "id": "chunk_2_DataSamplingBlock_21",
+            "code": "            for stratum, size in stratum_sizes.items():\n                indices.extend(random.sample(strata[stratum], size))\n"
+        },
+        {
+            "id": "chunk_2_DataSamplingBlock_22",
+            "code": "            if not input_data.weight_key:\n                raise ValueError(\"Weight key must be provided for weighted sampling.\")\n"
+        },
+        {
+            "id": "chunk_2_DataSamplingBlock_23",
+            "code": "            for item in data_to_sample:\n                if isinstance(item, dict):\n                    weight = item.get(input_data.weight_key)\n                elif hasattr(item, input_data.weight_key):\n                    weight = getattr(item, input_data.weight_key)\n                else:\n                    raise ValueError(\n                        f\"Weight key '{input_data.weight_key}' not found in item {item}\"\n                    )\n"
+        },
+        {
+            "id": "chunk_2_DataSamplingBlock_24",
+            "code": "                if weight is None:\n                    raise ValueError(\n                        f\"Weight value for key '{input_data.weight_key}' is None\"\n                    )\n"
+        },
+        {
+            "id": "chunk_2_DataSamplingBlock_25",
+            "code": "                    weights.append(float(weight))\n                except ValueError:\n                    raise ValueError(\n                        f\"Weight value '{weight}' cannot be converted to a number\"\n                    )\n"
+        },
+        {
+            "id": "chunk_2_DataSamplingBlock_26",
+            "code": "            if not weights:\n                raise ValueError(\n                    f\"No valid weights found using key '{input_data.weight_key}'\"\n                )\n"
+        },
+        {
+            "id": "chunk_2_DataSamplingBlock_27",
+            "code": "            indices = random.choices(\n                range(data_size), weights=weights, k=input_data.sample_size\n            )\n"
+        },
+        {
+            "id": "chunk_2_DataSamplingBlock_28",
+            "code": "            indices = list(range(input_data.sample_size))\n            for i in range(input_data.sample_size, data_size):\n                j = random.randint(0, i)\n                if j < input_data.sample_size:\n                    indices[j] = i\n"
+        },
+        {
+            "id": "chunk_2_DataSamplingBlock_29",
+            "code": "            if not input_data.cluster_key:\n                raise ValueError(\"Cluster key must be provided for cluster sampling.\")\n"
+        },
+        {
+            "id": "chunk_2_DataSamplingBlock_30",
+            "code": "            for i, item in enumerate(data_to_sample):\n                if isinstance(item, dict):\n                    cluster_value = item.get(input_data.cluster_key)\n                elif hasattr(item, input_data.cluster_key):\n                    cluster_value = getattr(item, input_data.cluster_key)\n                else:\n                    raise TypeError(\n                        f\"Item {item} does not have the cluster key '{input_data.cluster_key}'\"\n                    )\n"
+        },
+        {
+            "id": "chunk_2_DataSamplingBlock_31",
+            "code": "                clusters[str(cluster_value)].append(i)\n"
+        },
+        {
+            "id": "chunk_2_DataSamplingBlock_32",
+            "code": "            # Randomly select clusters until we have enough samples\n            selected_clusters = []\n            while (\n                sum(len(clusters[c]) for c in selected_clusters)\n                < input_data.sample_size\n            ):\n                available_clusters = [c for c in clusters if c not in selected_clusters]\n                if not available_clusters:\n                    break\n                selected_clusters.append(random.choice(available_clusters))\n"
+        },
+        {
+            "id": "chunk_2_DataSamplingBlock_33",
+            "code": "            for cluster in selected_clusters:\n                indices.extend(clusters[cluster])\n"
+        },
+        {
+            "id": "chunk_2_DataSamplingBlock_34",
+            "code": "            # If we have more samples than needed, randomly remove some\n            if len(indices) > input_data.sample_size:\n                indices = random.sample(indices, input_data.sample_size)\n"
+        },
+        {
+            "id": "chunk_2_DataSamplingBlock_35",
+            "code": "            raise ValueError(f\"Unknown sampling method: {input_data.sampling_method}\")\n"
+        },
+        {
+            "id": "chunk_2_DataSamplingBlock_36",
+            "code": "        sampled_data = [data_to_sample[i] for i in indices]\n"
+        },
+        {
+            "id": "chunk_2_DataSamplingBlock_37",
+            "code": "        # Clear accumulated data after sampling if accumulation is enabled\n        if input_data.accumulate:\n            self.accumulated_data = []\n"
+        },
+        {
+            "id": "chunk_2_DataSamplingBlock_38",
+            "code": "        yield \"sampled_data\", sampled_data\n        yield \"sample_indices\", indices\n"
+        },
+        {
+            "id": "chunk_3_DataSamplingBlock_Input_1",
+            "code": "    class Input(BlockSchema):\n"
+        },
+        {
+            "id": "chunk_3_DataSamplingBlock_Input_2",
+            "code": "        data: Union[Dict[str, Any], List[Union[dict, List[Any]]]] = SchemaField(\n            description=\"The dataset to sample from. Can be a single dictionary, a list of dictionaries, or a list of lists.\",\n            placeholder=\"{'id': 1, 'value': 'a'} or [{'id': 1, 'value': 'a'}, {'id': 2, 'value': 'b'}, ...]\",\n        )\n"
+        },
+        {
+            "id": "chunk_3_DataSamplingBlock_Input_3",
+            "code": "        sample_size: int = SchemaField(\n            description=\"The number of samples to take from the dataset.\",\n            placeholder=\"10\",\n            default=10,\n        )\n"
+        },
+        {
+            "id": "chunk_3_DataSamplingBlock_Input_4",
+            "code": "        sampling_method: SamplingMethod = SchemaField(\n            description=\"The method to use for sampling.\",\n            default=SamplingMethod.RANDOM,\n        )\n"
+        },
+        {
+            "id": "chunk_3_DataSamplingBlock_Input_5",
+            "code": "        accumulate: bool = SchemaField(\n            description=\"Whether to accumulate data before sampling.\",\n            default=False,\n        )\n"
+        },
+        {
+            "id": "chunk_3_DataSamplingBlock_Input_6",
+            "code": "        random_seed: Optional[int] = SchemaField(\n            description=\"Seed for random number generator (optional).\",\n            default=None,\n        )\n"
+        },
+        {
+            "id": "chunk_3_DataSamplingBlock_Input_7",
+            "code": "        stratify_key: Optional[str] = SchemaField(\n            description=\"Key to use for stratified sampling (required for stratified sampling).\",\n            default=None,\n        )\n"
+        },
+        {
+            "id": "chunk_3_DataSamplingBlock_Input_8",
+            "code": "        weight_key: Optional[str] = SchemaField(\n            description=\"Key to use for weighted sampling (required for weighted sampling).\",\n            default=None,\n        )\n"
+        },
+        {
+            "id": "chunk_3_DataSamplingBlock_Input_9",
+            "code": "        cluster_key: Optional[str] = SchemaField(\n            description=\"Key to use for cluster sampling (required for cluster sampling).\",\n            default=None,\n        )\n"
+        },
+        {
+            "id": "chunk_4_DataSamplingBlock_Output_1",
+            "code": "    class Output(BlockSchema):\n        sampled_data: List[Union[dict, List[Any]]] = SchemaField(\n            description=\"The sampled subset of the input data.\"\n        )\n"
+        },
+        {
+            "id": "chunk_4_DataSamplingBlock_Output_2",
+            "code": "        sample_indices: List[int] = SchemaField(\n            description=\"The indices of the sampled data in the original dataset.\"\n        )\n"
+        },
+        {
+            "id": "chunk_5_DataSamplingBlock___init___1",
+            "code": "    def __init__(self):\n        super().__init__(\n            id=\"4a448883-71fa-49cf-91cf-70d793bd7d87\",\n            description=\"This block samples data from a given dataset using various sampling methods.\",\n            categories={BlockCategory.LOGIC},\n            input_schema=DataSamplingBlock.Input,\n            output_schema=DataSamplingBlock.Output,\n            test_input={\n                \"data\": [\n                    {\"id\": i, \"value\": chr(97 + i), \"group\": i % 3} for i in range(10)\n                ],\n                \"sample_size\": 3,\n                \"sampling_method\": SamplingMethod.STRATIFIED,\n                \"accumulate\": False,\n                \"random_seed\": 42,\n                \"stratify_key\": \"group\",\n            },\n            test_output=[\n                (\n                    \"sampled_data\",\n                    [\n                        {\"id\": 0, \"value\": \"a\", \"group\": 0},\n                        {\"id\": 1, \"value\": \"b\", \"group\": 1},\n                        {\"id\": 8, \"value\": \"i\", \"group\": 2},\n                    ],\n                ),\n                (\"sample_indices\", [0, 1, 8]),\n            ],\n        )\n"
+        },
+        {
+            "id": "chunk_5_DataSamplingBlock___init___2",
+            "code": "        self.accumulated_data = []\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_1",
+            "code": "    def run(self, input_data: Input, **kwargs) -> BlockOutput:\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_2",
+            "code": "        if input_data.accumulate:\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_3",
+            "code": "            if isinstance(input_data.data, dict):\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_4",
+            "code": "                self.accumulated_data.append(input_data.data)\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_5",
+            "code": "            elif isinstance(input_data.data, list):\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_6",
+            "code": "                self.accumulated_data.extend(input_data.data)\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_7",
+            "code": "            else:\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_8",
+            "code": "                raise ValueError(f\"Unsupported data type: {type(input_data.data)}\")\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_9",
+            "code": "\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_10",
+            "code": "            # If we don't have enough data yet, return without sampling\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_11",
+            "code": "            if len(self.accumulated_data) < input_data.sample_size:\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_12",
+            "code": "                return\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_13",
+            "code": "\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_14",
+            "code": "            data_to_sample = self.accumulated_data\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_15",
+            "code": "        else:\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_16",
+            "code": "            # If not accumulating, use the input data directly\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_17",
+            "code": "            data_to_sample = (\n                input_data.data\n                if isinstance(input_data.data, list)\n                else [input_data.data]\n            )\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_18",
+            "code": "\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_19",
+            "code": "        if input_data.random_seed is not None:\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_20",
+            "code": "            random.seed(input_data.random_seed)\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_21",
+            "code": "\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_22",
+            "code": "        data_size = len(data_to_sample)\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_23",
+            "code": "\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_24",
+            "code": "        if input_data.sample_size > data_size:\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_25",
+            "code": "            raise ValueError(\n                f\"Sample size ({input_data.sample_size}) cannot be larger than the dataset size ({data_size}).\"\n            )\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_26",
+            "code": "\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_27",
+            "code": "        indices = []\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_28",
+            "code": "\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_29",
+            "code": "        if input_data.sampling_method == SamplingMethod.RANDOM:\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_30",
+            "code": "            indices = random.sample(range(data_size), input_data.sample_size)\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_31",
+            "code": "        elif input_data.sampling_method == SamplingMethod.SYSTEMATIC:\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_32",
+            "code": "            step = data_size // input_data.sample_size\n            start = random.randint(0, step - 1)\n            indices = list(range(start, data_size, step))[: input_data.sample_size]\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_33",
+            "code": "        elif input_data.sampling_method == SamplingMethod.TOP:\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_34",
+            "code": "            indices = list(range(input_data.sample_size))\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_35",
+            "code": "        elif input_data.sampling_method == SamplingMethod.BOTTOM:\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_36",
+            "code": "            indices = list(range(data_size - input_data.sample_size, data_size))\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_37",
+            "code": "        elif input_data.sampling_method == SamplingMethod.STRATIFIED:\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_38",
+            "code": "            if not input_data.stratify_key:\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_39",
+            "code": "                raise ValueError(\n                    \"Stratify key must be provided for stratified sampling.\"\n                )\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_40",
+            "code": "            strata = defaultdict(list)\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_41",
+            "code": "            for i, item in enumerate(data_to_sample):\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_42",
+            "code": "                if isinstance(item, dict):\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_43",
+            "code": "                    strata_value = item.get(input_data.stratify_key)\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_44",
+            "code": "                elif hasattr(item, input_data.stratify_key):\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_45",
+            "code": "                    strata_value = getattr(item, input_data.stratify_key)\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_46",
+            "code": "                else:\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_47",
+            "code": "                    raise ValueError(\n                        f\"Stratify key '{input_data.stratify_key}' not found in item {item}\"\n                    )\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_48",
+            "code": "\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_49",
+            "code": "                if strata_value is None:\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_50",
+            "code": "                    raise ValueError(\n                        f\"Stratify value for key '{input_data.stratify_key}' is None\"\n                    )\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_51",
+            "code": "\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_52",
+            "code": "                strata[str(strata_value)].append(i)\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_53",
+            "code": "\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_54",
+            "code": "            # Calculate the number of samples to take from each stratum\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_55",
+            "code": "            stratum_sizes = {\n                k: max(1, int(len(v) / data_size * input_data.sample_size))\n                for k, v in strata.items()\n            }\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_56",
+            "code": "\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_57",
+            "code": "            # Adjust sizes to ensure we get exactly sample_size samples\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_58",
+            "code": "            while sum(stratum_sizes.values()) != input_data.sample_size:\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_59",
+            "code": "                if sum(stratum_sizes.values()) < input_data.sample_size:\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_60",
+            "code": "                    stratum_sizes[\n                        max(stratum_sizes, key=lambda k: stratum_sizes[k])\n                    ] += 1\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_61",
+            "code": "                else:\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_62",
+            "code": "                    stratum_sizes[\n                        max(stratum_sizes, key=lambda k: stratum_sizes[k])\n                    ] -= 1\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_63",
+            "code": "\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_64",
+            "code": "            for stratum, size in stratum_sizes.items():\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_65",
+            "code": "                indices.extend(random.sample(strata[stratum], size))\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_66",
+            "code": "        elif input_data.sampling_method == SamplingMethod.WEIGHTED:\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_67",
+            "code": "            if not input_data.weight_key:\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_68",
+            "code": "                raise ValueError(\"Weight key must be provided for weighted sampling.\")\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_69",
+            "code": "            weights = []\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_70",
+            "code": "            for item in data_to_sample:\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_71",
+            "code": "                if isinstance(item, dict):\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_72",
+            "code": "                    weight = item.get(input_data.weight_key)\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_73",
+            "code": "                elif hasattr(item, input_data.weight_key):\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_74",
+            "code": "                    weight = getattr(item, input_data.weight_key)\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_75",
+            "code": "                else:\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_76",
+            "code": "                    raise ValueError(\n                        f\"Weight key '{input_data.weight_key}' not found in item {item}\"\n                    )\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_77",
+            "code": "\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_78",
+            "code": "                if weight is None:\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_79",
+            "code": "                    raise ValueError(\n                        f\"Weight value for key '{input_data.weight_key}' is None\"\n                    )\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_80",
+            "code": "                try:\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_81",
+            "code": "                    weights.append(float(weight))\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_82",
+            "code": "                except ValueError:\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_83",
+            "code": "                    raise ValueError(\n                        f\"Weight value '{weight}' cannot be converted to a number\"\n                    )\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_84",
+            "code": "\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_85",
+            "code": "            if not weights:\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_86",
+            "code": "                raise ValueError(\n                    f\"No valid weights found using key '{input_data.weight_key}'\"\n                )\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_87",
+            "code": "\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_88",
+            "code": "            indices = random.choices(\n                range(data_size), weights=weights, k=input_data.sample_size\n            )\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_89",
+            "code": "        elif input_data.sampling_method == SamplingMethod.RESERVOIR:\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_90",
+            "code": "            indices = list(range(input_data.sample_size))\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_91",
+            "code": "            for i in range(input_data.sample_size, data_size):\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_92",
+            "code": "                j = random.randint(0, i)\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_93",
+            "code": "                if j < input_data.sample_size:\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_94",
+            "code": "                    indices[j] = i\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_95",
+            "code": "        elif input_data.sampling_method == SamplingMethod.CLUSTER:\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_96",
+            "code": "            if not input_data.cluster_key:\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_97",
+            "code": "                raise ValueError(\"Cluster key must be provided for cluster sampling.\")\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_98",
+            "code": "            clusters = defaultdict(list)\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_99",
+            "code": "            for i, item in enumerate(data_to_sample):\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_100",
+            "code": "                if isinstance(item, dict):\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_101",
+            "code": "                    cluster_value = item.get(input_data.cluster_key)\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_102",
+            "code": "                elif hasattr(item, input_data.cluster_key):\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_103",
+            "code": "                    cluster_value = getattr(item, input_data.cluster_key)\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_104",
+            "code": "                else:\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_105",
+            "code": "                    raise TypeError(\n                        f\"Item {item} does not have the cluster key '{input_data.cluster_key}'\"\n                    )\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_106",
+            "code": "\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_107",
+            "code": "                clusters[str(cluster_value)].append(i)\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_108",
+            "code": "\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_109",
+            "code": "            # Randomly select clusters until we have enough samples\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_110",
+            "code": "            selected_clusters = []\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_111",
+            "code": "            while (\n                sum(len(clusters[c]) for c in selected_clusters)\n                < input_data.sample_size\n            ):\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_112",
+            "code": "                available_clusters = [c for c in clusters if c not in selected_clusters]\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_113",
+            "code": "                if not available_clusters:\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_114",
+            "code": "                    break\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_115",
+            "code": "                selected_clusters.append(random.choice(available_clusters))\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_116",
+            "code": "\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_117",
+            "code": "            for cluster in selected_clusters:\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_118",
+            "code": "                indices.extend(clusters[cluster])\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_119",
+            "code": "\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_120",
+            "code": "            # If we have more samples than needed, randomly remove some\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_121",
+            "code": "            if len(indices) > input_data.sample_size:\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_122",
+            "code": "                indices = random.sample(indices, input_data.sample_size)\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_123",
+            "code": "        else:\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_124",
+            "code": "            raise ValueError(f\"Unknown sampling method: {input_data.sampling_method}\")\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_125",
+            "code": "\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_126",
+            "code": "        sampled_data = [data_to_sample[i] for i in indices]\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_127",
+            "code": "\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_128",
+            "code": "        # Clear accumulated data after sampling if accumulation is enabled\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_129",
+            "code": "        if input_data.accumulate:\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_130",
+            "code": "            self.accumulated_data = []\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_131",
+            "code": "\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_132",
+            "code": "        yield \"sampled_data\", sampled_data\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_133",
+            "code": "        yield \"sample_indices\", indices\n"
+        },
+        {
+            "id": "chunk_6_DataSamplingBlock_run_134",
+            "code": "\n"
+        }
+    ],
+    "edges": [
+        {
+            "from": "chunk_0_GlobalBlock_1",
+            "to": "chunk_0_GlobalBlock_2"
+        },
+        {
+            "from": "chunk_0_GlobalBlock_2",
+            "to": "chunk_0_GlobalBlock_3"
+        },
+        {
+            "from": "chunk_2_DataSamplingBlock_1",
+            "to": "chunk_2_DataSamplingBlock_2"
+        },
+        {
+            "from": "chunk_2_DataSamplingBlock_2",
+            "to": "chunk_2_DataSamplingBlock_3"
+        },
+        {
+            "from": "chunk_2_DataSamplingBlock_3",
+            "to": "chunk_2_DataSamplingBlock_4"
+        },
+        {
+            "from": "chunk_2_DataSamplingBlock_4",
+            "to": "chunk_2_DataSamplingBlock_5"
+        },
+        {
+            "from": "chunk_2_DataSamplingBlock_5",
+            "to": "chunk_2_DataSamplingBlock_6"
+        },
+        {
+            "from": "chunk_2_DataSamplingBlock_5",
+            "to": "chunk_2_DataSamplingBlock_7"
+        },
+        {
+            "from": "chunk_2_DataSamplingBlock_7",
+            "to": "chunk_2_DataSamplingBlock_8"
+        },
+        {
+            "from": "chunk_2_DataSamplingBlock_8",
+            "to": "chunk_2_DataSamplingBlock_9"
+        },
+        {
+            "from": "chunk_2_DataSamplingBlock_9",
+            "to": "chunk_2_DataSamplingBlock_10"
+        },
+        {
+            "from": "chunk_2_DataSamplingBlock_10",
+            "to": "chunk_2_DataSamplingBlock_11"
+        },
+        {
+            "from": "chunk_2_DataSamplingBlock_10",
+            "to": "chunk_2_DataSamplingBlock_12"
+        },
+        {
+            "from": "chunk_2_DataSamplingBlock_10",
+            "to": "chunk_2_DataSamplingBlock_13"
+        },
+        {
+            "from": "chunk_2_DataSamplingBlock_10",
+            "to": "chunk_2_DataSamplingBlock_14"
+        },
+        {
+            "from": "chunk_2_DataSamplingBlock_10",
+            "to": "chunk_2_DataSamplingBlock_15"
+        },
+        {
+            "from": "chunk_2_DataSamplingBlock_10",
+            "to": "chunk_2_DataSamplingBlock_22"
+        },
+        {
+            "from": "chunk_2_DataSamplingBlock_10",
+            "to": "chunk_2_DataSamplingBlock_28"
+        },
+        {
+            "from": "chunk_2_DataSamplingBlock_10",
+            "to": "chunk_2_DataSamplingBlock_29"
+        },
+        {
+            "from": "chunk_2_DataSamplingBlock_11",
+            "to": "chunk_2_DataSamplingBlock_36"
+        },
+        {
+            "from": "chunk_2_DataSamplingBlock_12",
+            "to": "chunk_2_DataSamplingBlock_36"
+        },
+        {
+            "from": "chunk_2_DataSamplingBlock_13",
+            "to": "chunk_2_DataSamplingBlock_36"
+        },
+        {
+            "from": "chunk_2_DataSamplingBlock_14",
+            "to": "chunk_2_DataSamplingBlock_36"
+        },
+        {
+            "from": "chunk_2_DataSamplingBlock_15",
+            "to": "chunk_2_DataSamplingBlock_16"
+        },
+        {
+            "from": "chunk_2_DataSamplingBlock_16",
+            "to": "chunk_2_DataSamplingBlock_17"
+        },
+        {
+            "from": "chunk_2_DataSamplingBlock_17",
+            "to": "chunk_2_DataSamplingBlock_18"
+        },
+        {
+            "from": "chunk_2_DataSamplingBlock_18",
+            "to": "chunk_2_DataSamplingBlock_19"
+        },
+        {
+            "from": "chunk_2_DataSamplingBlock_19",
+            "to": "chunk_2_DataSamplingBlock_20"
+        },
+        {
+            "from": "chunk_2_DataSamplingBlock_20",
+            "to": "chunk_2_DataSamplingBlock_21"
+        },
+        {
+            "from": "chunk_2_DataSamplingBlock_21",
+            "to": "chunk_2_DataSamplingBlock_36"
+        },
+        {
+            "from": "chunk_2_DataSamplingBlock_22",
+            "to": "chunk_2_DataSamplingBlock_23"
+        },
+        {
+            "from": "chunk_2_DataSamplingBlock_23",
+            "to": "chunk_2_DataSamplingBlock_24"
+        },
+        {
+            "from": "chunk_2_DataSamplingBlock_24",
+            "to": "chunk_2_DataSamplingBlock_25"
+        },
+        {
+            "from": "chunk_2_DataSamplingBlock_25",
+            "to": "chunk_2_DataSamplingBlock_26"
+        },
+        {
+            "from": "chunk_2_DataSamplingBlock_26",
+            "to": "chunk_2_DataSamplingBlock_27"
+        },
+        {
+            "from": "chunk_2_DataSamplingBlock_27",
+            "to": "chunk_2_DataSamplingBlock_36"
+        },
+        {
+            "from": "chunk_2_DataSamplingBlock_28",
+            "to": "chunk_2_DataSamplingBlock_36"
+        },
+        {
+            "from": "chunk_2_DataSamplingBlock_29",
+            "to": "chunk_2_DataSamplingBlock_30"
+        },
+        {
+            "from": "chunk_2_DataSamplingBlock_30",
+            "to": "chunk_2_DataSamplingBlock_31"
+        },
+        {
+            "from": "chunk_2_DataSamplingBlock_31",
+            "to": "chunk_2_DataSamplingBlock_32"
+        },
+        {
+            "from": "chunk_2_DataSamplingBlock_32",
+            "to": "chunk_2_DataSamplingBlock_33"
+        },
+        {
+            "from": "chunk_2_DataSamplingBlock_33",
+            "to": "chunk_2_DataSamplingBlock_34"
+        },
+        {
+            "from": "chunk_2_DataSamplingBlock_34",
+            "to": "chunk_2_DataSamplingBlock_36"
+        },
+        {
+            "from": "chunk_2_DataSamplingBlock_36",
+            "to": "chunk_2_DataSamplingBlock_37"
+        },
+        {
+            "from": "chunk_2_DataSamplingBlock_37",
+            "to": "chunk_2_DataSamplingBlock_38"
+        },
+        {
+            "from": "chunk_3_DataSamplingBlock_Input_1",
+            "to": "chunk_3_DataSamplingBlock_Input_2"
+        },
+        {
+            "from": "chunk_3_DataSamplingBlock_Input_2",
+            "to": "chunk_3_DataSamplingBlock_Input_3"
+        },
+        {
+            "from": "chunk_3_DataSamplingBlock_Input_3",
+            "to": "chunk_3_DataSamplingBlock_Input_4"
+        },
+        {
+            "from": "chunk_3_DataSamplingBlock_Input_4",
+            "to": "chunk_3_DataSamplingBlock_Input_5"
+        },
+        {
+            "from": "chunk_3_DataSamplingBlock_Input_5",
+            "to": "chunk_3_DataSamplingBlock_Input_6"
+        },
+        {
+            "from": "chunk_3_DataSamplingBlock_Input_6",
+            "to": "chunk_3_DataSamplingBlock_Input_7"
+        },
+        {
+            "from": "chunk_3_DataSamplingBlock_Input_7",
+            "to": "chunk_3_DataSamplingBlock_Input_8"
+        },
+        {
+            "from": "chunk_3_DataSamplingBlock_Input_8",
+            "to": "chunk_3_DataSamplingBlock_Input_9"
+        },
+        {
+            "from": "chunk_4_DataSamplingBlock_Output_1",
+            "to": "chunk_4_DataSamplingBlock_Output_2"
+        },
+        {
+            "from": "chunk_5_DataSamplingBlock___init___1",
+            "to": "chunk_5_DataSamplingBlock___init___2"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_1",
+            "to": "chunk_6_DataSamplingBlock_run_2"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_2",
+            "to": "chunk_6_DataSamplingBlock_run_3"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_2",
+            "to": "chunk_6_DataSamplingBlock_run_15"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_3",
+            "to": "chunk_6_DataSamplingBlock_run_4"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_3",
+            "to": "chunk_6_DataSamplingBlock_run_5"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_4",
+            "to": "chunk_6_DataSamplingBlock_run_10"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_5",
+            "to": "chunk_6_DataSamplingBlock_run_6"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_5",
+            "to": "chunk_6_DataSamplingBlock_run_7"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_6",
+            "to": "chunk_6_DataSamplingBlock_run_10"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_7",
+            "to": "chunk_6_DataSamplingBlock_run_8"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_10",
+            "to": "chunk_6_DataSamplingBlock_run_11"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_11",
+            "to": "chunk_6_DataSamplingBlock_run_12"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_11",
+            "to": "chunk_6_DataSamplingBlock_run_14"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_14",
+            "to": "chunk_6_DataSamplingBlock_run_19"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_15",
+            "to": "chunk_6_DataSamplingBlock_run_16"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_16",
+            "to": "chunk_6_DataSamplingBlock_run_17"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_17",
+            "to": "chunk_6_DataSamplingBlock_run_19"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_19",
+            "to": "chunk_6_DataSamplingBlock_run_20"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_19",
+            "to": "chunk_6_DataSamplingBlock_run_21"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_20",
+            "to": "chunk_6_DataSamplingBlock_run_21"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_21",
+            "to": "chunk_6_DataSamplingBlock_run_22"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_22",
+            "to": "chunk_6_DataSamplingBlock_run_23"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_23",
+            "to": "chunk_6_DataSamplingBlock_run_24"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_24",
+            "to": "chunk_6_DataSamplingBlock_run_25"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_24",
+            "to": "chunk_6_DataSamplingBlock_run_27"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_27",
+            "to": "chunk_6_DataSamplingBlock_run_28"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_28",
+            "to": "chunk_6_DataSamplingBlock_run_29"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_29",
+            "to": "chunk_6_DataSamplingBlock_run_30"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_29",
+            "to": "chunk_6_DataSamplingBlock_run_31"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_30",
+            "to": "chunk_6_DataSamplingBlock_run_126"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_31",
+            "to": "chunk_6_DataSamplingBlock_run_32"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_31",
+            "to": "chunk_6_DataSamplingBlock_run_33"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_32",
+            "to": "chunk_6_DataSamplingBlock_run_126"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_33",
+            "to": "chunk_6_DataSamplingBlock_run_34"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_33",
+            "to": "chunk_6_DataSamplingBlock_run_35"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_34",
+            "to": "chunk_6_DataSamplingBlock_run_126"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_35",
+            "to": "chunk_6_DataSamplingBlock_run_36"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_35",
+            "to": "chunk_6_DataSamplingBlock_run_37"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_36",
+            "to": "chunk_6_DataSamplingBlock_run_126"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_37",
+            "to": "chunk_6_DataSamplingBlock_run_38"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_37",
+            "to": "chunk_6_DataSamplingBlock_run_66"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_38",
+            "to": "chunk_6_DataSamplingBlock_run_39"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_38",
+            "to": "chunk_6_DataSamplingBlock_run_40"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_40",
+            "to": "chunk_6_DataSamplingBlock_run_41"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_41",
+            "to": "chunk_6_DataSamplingBlock_run_42"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_42",
+            "to": "chunk_6_DataSamplingBlock_run_43"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_42",
+            "to": "chunk_6_DataSamplingBlock_run_44"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_43",
+            "to": "chunk_6_DataSamplingBlock_run_48"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_44",
+            "to": "chunk_6_DataSamplingBlock_run_45"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_44",
+            "to": "chunk_6_DataSamplingBlock_run_46"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_45",
+            "to": "chunk_6_DataSamplingBlock_run_48"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_46",
+            "to": "chunk_6_DataSamplingBlock_run_47"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_48",
+            "to": "chunk_6_DataSamplingBlock_run_49"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_49",
+            "to": "chunk_6_DataSamplingBlock_run_50"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_49",
+            "to": "chunk_6_DataSamplingBlock_run_51"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_51",
+            "to": "chunk_6_DataSamplingBlock_run_52"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_52",
+            "to": "chunk_6_DataSamplingBlock_run_53"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_53",
+            "to": "chunk_6_DataSamplingBlock_run_54"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_54",
+            "to": "chunk_6_DataSamplingBlock_run_55"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_55",
+            "to": "chunk_6_DataSamplingBlock_run_56"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_56",
+            "to": "chunk_6_DataSamplingBlock_run_57"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_57",
+            "to": "chunk_6_DataSamplingBlock_run_58"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_58",
+            "to": "chunk_6_DataSamplingBlock_run_59"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_58",
+            "to": "chunk_6_DataSamplingBlock_run_63"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_59",
+            "to": "chunk_6_DataSamplingBlock_run_60"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_59",
+            "to": "chunk_6_DataSamplingBlock_run_61"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_60",
+            "to": "chunk_6_DataSamplingBlock_run_58"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_61",
+            "to": "chunk_6_DataSamplingBlock_run_62"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_62",
+            "to": "chunk_6_DataSamplingBlock_run_58"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_63",
+            "to": "chunk_6_DataSamplingBlock_run_64"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_64",
+            "to": "chunk_6_DataSamplingBlock_run_65"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_65",
+            "to": "chunk_6_DataSamplingBlock_run_126"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_66",
+            "to": "chunk_6_DataSamplingBlock_run_67"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_66",
+            "to": "chunk_6_DataSamplingBlock_run_89"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_67",
+            "to": "chunk_6_DataSamplingBlock_run_68"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_67",
+            "to": "chunk_6_DataSamplingBlock_run_69"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_69",
+            "to": "chunk_6_DataSamplingBlock_run_70"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_70",
+            "to": "chunk_6_DataSamplingBlock_run_71"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_71",
+            "to": "chunk_6_DataSamplingBlock_run_72"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_71",
+            "to": "chunk_6_DataSamplingBlock_run_73"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_72",
+            "to": "chunk_6_DataSamplingBlock_run_77"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_73",
+            "to": "chunk_6_DataSamplingBlock_run_74"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_73",
+            "to": "chunk_6_DataSamplingBlock_run_75"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_74",
+            "to": "chunk_6_DataSamplingBlock_run_77"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_75",
+            "to": "chunk_6_DataSamplingBlock_run_76"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_77",
+            "to": "chunk_6_DataSamplingBlock_run_78"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_78",
+            "to": "chunk_6_DataSamplingBlock_run_79"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_78",
+            "to": "chunk_6_DataSamplingBlock_run_80"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_80",
+            "to": "chunk_6_DataSamplingBlock_run_81"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_81",
+            "to": "chunk_6_DataSamplingBlock_run_84"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_82",
+            "to": "chunk_6_DataSamplingBlock_run_83"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_84",
+            "to": "chunk_6_DataSamplingBlock_run_85"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_85",
+            "to": "chunk_6_DataSamplingBlock_run_86"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_85",
+            "to": "chunk_6_DataSamplingBlock_run_87"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_87",
+            "to": "chunk_6_DataSamplingBlock_run_88"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_88",
+            "to": "chunk_6_DataSamplingBlock_run_126"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_89",
+            "to": "chunk_6_DataSamplingBlock_run_90"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_89",
+            "to": "chunk_6_DataSamplingBlock_run_95"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_90",
+            "to": "chunk_6_DataSamplingBlock_run_91"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_91",
+            "to": "chunk_6_DataSamplingBlock_run_92"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_92",
+            "to": "chunk_6_DataSamplingBlock_run_93"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_93",
+            "to": "chunk_6_DataSamplingBlock_run_94"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_93",
+            "to": "chunk_6_DataSamplingBlock_run_91"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_94",
+            "to": "chunk_6_DataSamplingBlock_run_91"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_95",
+            "to": "chunk_6_DataSamplingBlock_run_96"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_95",
+            "to": "chunk_6_DataSamplingBlock_run_123"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_96",
+            "to": "chunk_6_DataSamplingBlock_run_97"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_96",
+            "to": "chunk_6_DataSamplingBlock_run_98"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_98",
+            "to": "chunk_6_DataSamplingBlock_run_99"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_99",
+            "to": "chunk_6_DataSamplingBlock_run_100"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_100",
+            "to": "chunk_6_DataSamplingBlock_run_101"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_100",
+            "to": "chunk_6_DataSamplingBlock_run_102"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_101",
+            "to": "chunk_6_DataSamplingBlock_run_106"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_102",
+            "to": "chunk_6_DataSamplingBlock_run_103"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_102",
+            "to": "chunk_6_DataSamplingBlock_run_104"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_103",
+            "to": "chunk_6_DataSamplingBlock_run_106"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_104",
+            "to": "chunk_6_DataSamplingBlock_run_105"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_106",
+            "to": "chunk_6_DataSamplingBlock_run_107"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_107",
+            "to": "chunk_6_DataSamplingBlock_run_108"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_108",
+            "to": "chunk_6_DataSamplingBlock_run_109"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_109",
+            "to": "chunk_6_DataSamplingBlock_run_110"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_110",
+            "to": "chunk_6_DataSamplingBlock_run_111"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_111",
+            "to": "chunk_6_DataSamplingBlock_run_112"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_111",
+            "to": "chunk_6_DataSamplingBlock_run_116"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_112",
+            "to": "chunk_6_DataSamplingBlock_run_113"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_113",
+            "to": "chunk_6_DataSamplingBlock_run_114"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_113",
+            "to": "chunk_6_DataSamplingBlock_run_115"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_115",
+            "to": "chunk_6_DataSamplingBlock_run_111"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_116",
+            "to": "chunk_6_DataSamplingBlock_run_117"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_117",
+            "to": "chunk_6_DataSamplingBlock_run_118"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_118",
+            "to": "chunk_6_DataSamplingBlock_run_119"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_119",
+            "to": "chunk_6_DataSamplingBlock_run_120"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_120",
+            "to": "chunk_6_DataSamplingBlock_run_121"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_121",
+            "to": "chunk_6_DataSamplingBlock_run_122"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_121",
+            "to": "chunk_6_DataSamplingBlock_run_126"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_122",
+            "to": "chunk_6_DataSamplingBlock_run_126"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_123",
+            "to": "chunk_6_DataSamplingBlock_run_124"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_126",
+            "to": "chunk_6_DataSamplingBlock_run_127"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_127",
+            "to": "chunk_6_DataSamplingBlock_run_128"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_128",
+            "to": "chunk_6_DataSamplingBlock_run_129"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_129",
+            "to": "chunk_6_DataSamplingBlock_run_130"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_129",
+            "to": "chunk_6_DataSamplingBlock_run_131"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_130",
+            "to": "chunk_6_DataSamplingBlock_run_131"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_131",
+            "to": "chunk_6_DataSamplingBlock_run_132"
+        },
+        {
+            "from": "chunk_6_DataSamplingBlock_run_132",
+            "to": "chunk_6_DataSamplingBlock_run_133"
+        }
+    ]
+}

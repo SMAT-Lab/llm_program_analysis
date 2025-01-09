@@ -1,0 +1,94 @@
+{
+  "nodes": [
+    {
+      "id": "n0",
+      "code": "import uuid\n\nfrom typing import List\n\nimport requests as baserequests\n\nfrom backend.data.block import BlockOutput, BlockSchema\nfrom backend.data.model import APIKeyCredentials, SchemaField\nfrom backend.util import settings\nfrom backend.util.settings import BehaveAs\n\nfrom ._api import (\n    TEST_CREDENTIALS,\n    TEST_CREDENTIALS_INPUT,\n    CustomerDetails,\n    OrderItem,\n    Slant3DCredentialsField,\n    Slant3DCredentialsInput,\n)\n\nfrom .base import Slant3DBlockBase\n"
+    },
+    {
+      "id": "n1",
+      "code": "class Slant3DCreateOrderBlock(Slant3DBlockBase):\n    \"\"\"Block for creating new orders\"\"\"\n\n\n    class Input(BlockSchema):\n        credentials: Slant3DCredentialsInput = Slant3DCredentialsField()\n        order_number: str = SchemaField(\n            description=\"Your custom order number (or leave blank for a random one)\",\n            default_factory=lambda: str(uuid.uuid4()),\n        )\n        customer: CustomerDetails = SchemaField(\n            description=\"Customer details for where to ship the item\",\n            advanced=False,\n        )\n        items: List[OrderItem] = SchemaField(\n            description=\"List of items to print\",\n            advanced=False,\n        )\n\n\n    class Output(BlockSchema):\n        order_id: str = SchemaField(description=\"Slant3D order ID\")\n        error: str = SchemaField(description=\"Error message if order failed\")\n\n\n    def __init__(self):\n        super().__init__(\n            id=\"f73007d6-f48f-4aaf-9e6b-6883998a09b4\",\n            description=\"Create a new print order\",\n            input_schema=self.Input,\n            output_schema=self.Output,\n            test_input={\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n                \"order_number\": \"TEST-001\",\n                \"customer\": {\n                    \"name\": \"John Doe\",\n                    \"email\": \"john@example.com\",\n                    \"phone\": \"123-456-7890\",\n                    \"address\": \"123 Test St\",\n                    \"city\": \"Test City\",\n                    \"state\": \"TS\",\n                    \"zip\": \"12345\",\n                },\n                \"items\": [\n                    {\n                        \"file_url\": \"https://example.com/model.stl\",\n                        \"quantity\": \"1\",\n                        \"color\": \"black\",\n                        \"profile\": \"PLA\",\n                    }\n                ],\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[(\"order_id\", \"314144241\")],\n            test_mock={\n                \"_make_request\": lambda *args, **kwargs: {\"orderId\": \"314144241\"},\n                \"_convert_to_color\": lambda *args, **kwargs: \"black\",\n            },\n        )\n\n    def run(\n        self, input_data: Input, *, credentials: APIKeyCredentials, **kwargs\n    ) -> BlockOutput:\n\n        try:\n            order_data = self._format_order_data(\n                input_data.customer,\n                input_data.order_number,\n                input_data.items,\n                credentials.api_key.get_secret_value(),\n            )\n            result = self._make_request(\n                \"POST\", \"order\", credentials.api_key.get_secret_value(), json=order_data\n            )\n            yield \"order_id\", result[\"orderId\"]\n"
+    },
+    {
+      "id": "n2",
+      "code": "        except Exception as e:\n            yield \"error\", str(e)\n            raise\n"
+    },
+    {
+      "id": "n3",
+      "code": "\n\n\n"
+    },
+    {
+      "id": "n4",
+      "code": "class Slant3DEstimateOrderBlock(Slant3DBlockBase):\n    \"\"\"Block for getting order cost estimates\"\"\"\n\n\n    class Input(BlockSchema):\n        credentials: Slant3DCredentialsInput = Slant3DCredentialsField()\n        order_number: str = SchemaField(\n            description=\"Your custom order number (or leave blank for a random one)\",\n            default_factory=lambda: str(uuid.uuid4()),\n        )\n        customer: CustomerDetails = SchemaField(\n            description=\"Customer details for where to ship the item\",\n            advanced=False,\n        )\n        items: List[OrderItem] = SchemaField(\n            description=\"List of items to print\",\n            advanced=False,\n        )\n\n    class Output(BlockSchema):\n        total_price: float = SchemaField(description=\"Total price in USD\")\n        shipping_cost: float = SchemaField(description=\"Shipping cost\")\n        printing_cost: float = SchemaField(description=\"Printing cost\")\n        error: str = SchemaField(description=\"Error message if estimation failed\")\n\n    def __init__(self):\n        super().__init__(\n            id=\"bf8823d6-b42a-48c7-b558-d7c117f2ae85\",\n            description=\"Get order cost estimate\",\n            input_schema=self.Input,\n            output_schema=self.Output,\n            test_input={\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n                \"order_number\": \"TEST-001\",\n                \"customer\": {\n                    \"name\": \"John Doe\",\n                    \"email\": \"john@example.com\",\n                    \"phone\": \"123-456-7890\",\n                    \"address\": \"123 Test St\",\n                    \"city\": \"Test City\",\n                    \"state\": \"TS\",\n                    \"zip\": \"12345\",\n                },\n                \"items\": [\n                    {\n                        \"file_url\": \"https://example.com/model.stl\",\n                        \"quantity\": \"1\",\n                        \"color\": \"black\",\n                        \"profile\": \"PLA\",\n                    }\n                ],\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[\n                (\"total_price\", 9.31),\n                (\"shipping_cost\", 5.56),\n                (\"printing_cost\", 3.75),\n            ],\n            test_mock={\n                \"_make_request\": lambda *args, **kwargs: {\n                    \"totalPrice\": 9.31,\n                    \"shippingCost\": 5.56,\n                    \"printingCost\": 3.75,\n                },\n                \"_convert_to_color\": lambda *args, **kwargs: \"black\",\n            },\n        )\n\n    def run(\n        self, input_data: Input, *, credentials: APIKeyCredentials, **kwargs\n    ) -> BlockOutput:\n        order_data = self._format_order_data(\n            input_data.customer,\n            input_data.order_number,\n            input_data.items,\n            credentials.api_key.get_secret_value(),\n        )\n\n        try:\n            result = self._make_request(\n                \"POST\",\n                \"order/estimate\",\n                credentials.api_key.get_secret_value(),\n                json=order_data,\n            )\n            yield \"total_price\", result[\"totalPrice\"]\n            yield \"shipping_cost\", result[\"shippingCost\"]\n            yield \"printing_cost\", result[\"printingCost\"]\n\n        except baserequests.HTTPError as e:\n            yield \"error\", str(f\"Error estimating order: {e} {e.response.text}\")\n            raise\n"
+    },
+    {
+      "id": "n5",
+      "code": "class Slant3DEstimateShippingBlock(Slant3DBlockBase):\n    \"\"\"Block for getting shipping cost estimates\"\"\"\n\n    class Input(BlockSchema):\n        credentials: Slant3DCredentialsInput = Slant3DCredentialsField()\n        order_number: str = SchemaField(\n            description=\"Your custom order number (or leave blank for a random one)\",\n            default_factory=lambda: str(uuid.uuid4()),\n        )\n        customer: CustomerDetails = SchemaField(\n            description=\"Customer details for where to ship the item\"\n        )\n        items: List[OrderItem] = SchemaField(\n            description=\"List of items to print\",\n            advanced=False,\n        )\n\n    class Output(BlockSchema):\n        shipping_cost: float = SchemaField(description=\"Estimated shipping cost\")\n        currency_code: str = SchemaField(description=\"Currency code (e.g., 'usd')\")\n        error: str = SchemaField(description=\"Error message if estimation failed\")\n\n    def __init__(self):\n        super().__init__(\n            id=\"00aae2a1-caf6-4a74-8175-39a0615d44e1\",\n            description=\"Get shipping cost estimate\",\n            input_schema=self.Input,\n            output_schema=self.Output,\n            test_input={\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n                \"order_number\": \"TEST-001\",\n                \"customer\": {\n                    \"name\": \"John Doe\",\n                    \"email\": \"john@example.com\",\n                    \"phone\": \"123-456-7890\",\n                    \"address\": \"123 Test St\",\n                    \"city\": \"Test City\",\n                    \"state\": \"TS\",\n                    \"zip\": \"12345\",\n                },\n                \"items\": [\n                    {\n                        \"file_url\": \"https://example.com/model.stl\",\n                        \"quantity\": \"1\",\n                        \"color\": \"black\",\n                        \"profile\": \"PLA\",\n                    }\n                ],\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[(\"shipping_cost\", 4.81), (\"currency_code\", \"usd\")],\n            test_mock={\n                \"_make_request\": lambda *args, **kwargs: {\n                    \"shippingCost\": 4.81,\n                    \"currencyCode\": \"usd\",\n                },\n                \"_convert_to_color\": lambda *args, **kwargs: \"black\",\n            },\n        )\n\n    def run(\n        self, input_data: Input, *, credentials: APIKeyCredentials, **kwargs\n    ) -> BlockOutput:\n\n        try:\n            order_data = self._format_order_data(\n                input_data.customer,\n                input_data.order_number,\n                input_data.items,\n                credentials.api_key.get_secret_value(),\n            )\n\n            result = self._make_request(\n                \"POST\",\n                \"order/estimateShipping\",\n                credentials.api_key.get_secret_value(),\n                json=order_data,\n            )\n\n            yield \"shipping_cost\", result[\"shippingCost\"]\n            yield \"currency_code\", result[\"currencyCode\"]\n"
+    },
+    {
+      "id": "n6",
+      "code": "        except Exception as e:\n            yield \"error\", str(e)\n            raise\n"
+    },
+    {
+      "id": "n7",
+      "code": "class Slant3DGetOrdersBlock(Slant3DBlockBase):\n    \"\"\"Block for retrieving all orders\"\"\"\n\n\n    class Input(BlockSchema):\n        credentials: Slant3DCredentialsInput = Slant3DCredentialsField()\n\n\n    class Output(BlockSchema):\n        orders: List[str] = SchemaField(description=\"List of orders with their details\")\n        error: str = SchemaField(description=\"Error message if request failed\")\n\n\n    def __init__(self):\n        super().__init__(\n            id=\"42283bf5-8a32-4fb4-92a2-60a9ea48e105\",\n            description=\"Get all orders for the account\",\n            input_schema=self.Input,\n            output_schema=self.Output,\n            # This block is disabled for cloud hosted because it allows access to all orders for the account\n            disabled=settings.Settings().config.behave_as == BehaveAs.CLOUD,\n            test_input={\"credentials\": TEST_CREDENTIALS_INPUT},\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[\n                (\n                    \"orders\",\n                    [\n                        \"1234567890\",\n                    ],\n                )\n            ],\n            test_mock={\n                \"_make_request\": lambda *args, **kwargs: {\n                    \"ordersData\": [\n                        {\n                            \"orderId\": 1234567890,\n                            \"orderTimestamp\": {\n                                \"_seconds\": 1719510986,\n                                \"_nanoseconds\": 710000000,\n                            },\n                        }\n                    ]\n                }\n            },\n        )\n\n\n    def run(\n        self, input_data: Input, *, credentials: APIKeyCredentials, **kwargs\n    ) -> BlockOutput:\n\n        try:\n            result = self._make_request(\n                \"GET\", \"order\", credentials.api_key.get_secret_value()\n            )\n            yield \"orders\", [str(order[\"orderId\"]) for order in result[\"ordersData\"]]\n"
+    },
+    {
+      "id": "n8",
+      "code": "        except Exception as e:\n            yield \"error\", str(e)\n            raise\n"
+    },
+    {
+      "id": "n9",
+      "code": "\n\n"
+    },
+    {
+      "id": "n10",
+      "code": "class Slant3DTrackingBlock(Slant3DBlockBase):\n    \"\"\"Block for tracking order status and shipping\"\"\"\n\n\n    class Input(BlockSchema):\n        credentials: Slant3DCredentialsInput = Slant3DCredentialsField()\n        order_id: str = SchemaField(description=\"Slant3D order ID to track\")\n\n\n    class Output(BlockSchema):\n        status: str = SchemaField(description=\"Order status\")\n        tracking_numbers: List[str] = SchemaField(\n            description=\"List of tracking numbers\"\n        )\n        error: str = SchemaField(description=\"Error message if tracking failed\")\n\n\n    def __init__(self):\n        super().__init__(\n            id=\"dd7c0293-c5af-4551-ba3e-fc162fb1fb89\",\n            description=\"Track order status and shipping\",\n            input_schema=self.Input,\n            output_schema=self.Output,\n            test_input={\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n                \"order_id\": \"314144241\",\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[(\"status\", \"awaiting_shipment\"), (\"tracking_numbers\", [])],\n            test_mock={\n                \"_make_request\": lambda *args, **kwargs: {\n                    \"status\": \"awaiting_shipment\",\n                    \"trackingNumbers\": [],\n                }\n            },\n        )\n\n\n    def run(\n        self, input_data: Input, *, credentials: APIKeyCredentials, **kwargs\n    ) -> BlockOutput:\n\n        try:\n            result = self._make_request(\n                \"GET\",\n                f\"order/{input_data.order_id}/get-tracking\",\n                credentials.api_key.get_secret_value(),\n            )\n"
+    },
+    {
+      "id": "n11",
+      "code": "            yield \"status\", result[\"status\"]\n            yield \"tracking_numbers\", result[\"trackingNumbers\"]\n"
+    },
+    {
+      "id": "n12",
+      "code": "        except Exception as e:\n            yield \"error\", str(e)\n            raise\n"
+    },
+    {
+      "id": "n13",
+      "code": "class Slant3DCancelOrderBlock(Slant3DBlockBase):\n    \"\"\"Block for canceling orders\"\"\"\n\n    class Input(BlockSchema):\n        credentials: Slant3DCredentialsInput = Slant3DCredentialsField()\n        order_id: str = SchemaField(description=\"Slant3D order ID to cancel\")\n\n    class Output(BlockSchema):\n        status: str = SchemaField(description=\"Cancellation status message\")\n        error: str = SchemaField(description=\"Error message if cancellation failed\")\n\n    def __init__(self):\n        super().__init__(\n            id=\"54de35e1-407f-450b-b5fa-3b5e2eba8185\",\n            description=\"Cancel an existing order\",\n            input_schema=self.Input,\n            output_schema=self.Output,\n            test_input={\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n                \"order_id\": \"314144241\",\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[(\"status\", \"Order cancelled\")],\n            test_mock={\n                \"_make_request\": lambda *args, **kwargs: {\"status\": \"Order cancelled\"}\n            },\n        )\n\n    def run(\n        self, input_data: Input, *, credentials: APIKeyCredentials, **kwargs\n    ) -> BlockOutput:\n\n        try:\n            result = self._make_request(\n                \"DELETE\",\n                f\"order/{input_data.order_id}\",\n                credentials.api_key.get_secret_value(),\n            )\n            yield \"status\", result[\"status\"]\n\n        except Exception as e:\n            yield \"error\", str(e)\n            raise\n"
+    }
+  ],
+  "edges": [
+    {
+      "source": "n1",
+      "target": "n3"
+    },
+    {
+      "source": "n8",
+      "target": "n9"
+    },
+    {
+      "source": "n1",
+      "target": "n2"
+    },
+    {
+      "source": "n10",
+      "target": "n12"
+    },
+    {
+      "source": "n10",
+      "target": "n11"
+    },
+    {
+      "source": "n7",
+      "target": "n8"
+    },
+    {
+      "source": "n2",
+      "target": "n3"
+    },
+    {
+      "source": "n7",
+      "target": "n9"
+    }
+  ]
+}

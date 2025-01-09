@@ -1,0 +1,274 @@
+{
+  "nodes": [
+    {
+      "id": "n0",
+      "code": "from collections import defaultdict\nfrom datetime import datetime, timezone\nfrom multiprocessing import Manager\nfrom typing import Any, AsyncGenerator, Generator, Generic, TypeVar\n\n\nfrom prisma.enums import AgentExecutionStatus\nfrom prisma.models import (\n    AgentGraphExecution,\n    AgentNodeExecution,\n    AgentNodeExecutionInputOutput,\n)\n\nfrom pydantic import BaseModel\n\n\nfrom backend.data.block import BlockData, BlockInput, CompletedBlockOutput\nfrom backend.data.includes import EXECUTION_RESULT_INCLUDE, GRAPH_EXECUTION_INCLUDE\nfrom backend.data.queue import AsyncRedisEventBus, RedisEventBus\nfrom backend.util import json, mock\nfrom backend.util.settings import Config\n\n\n\n\n"
+    },
+    {
+      "id": "n1",
+      "code": "class GraphExecutionEntry(BaseModel):\n    user_id: str\n    graph_exec_id: str\n    graph_id: str\n    start_node_execs: list[\"NodeExecutionEntry\"]\n"
+    },
+    {
+      "id": "n2",
+      "code": "class NodeExecutionEntry(BaseModel):\n    user_id: str\n    graph_exec_id: str\n    graph_id: str\n    node_exec_id: str\n    node_id: str\n    data: BlockInput\n"
+    },
+    {
+      "id": "n3",
+      "code": "class ExecutionQueue(Generic[T]):\n    \"\"\"\n    Queue for managing the execution of agents.\n    This will be shared between different processes\n    \"\"\"\n\n    def __init__(self):\n        self.queue = Manager().Queue()\n"
+    },
+    {
+      "id": "n4",
+      "code": "    def add(self, execution: T) -> T:\n        self.queue.put(execution)\n        return execution\n"
+    },
+    {
+      "id": "n5",
+      "code": "    def get(self) -> T:\n        return self.queue.get()\n"
+    },
+    {
+      "id": "n6",
+      "code": "    def empty(self) -> bool:\n        return self.queue.empty()\n"
+    },
+    {
+      "id": "n7",
+      "code": "class ExecutionResult(BaseModel):\n    graph_id: str\n    graph_version: int\n    graph_exec_id: str\n    node_exec_id: str\n    node_id: str\n    block_id: str\n    status: ExecutionStatus\n    input_data: BlockInput\n    output_data: CompletedBlockOutput\n    add_time: datetime\n    queue_time: datetime | None\n    start_time: datetime | None\n    end_time: datetime | None\n\n"
+    },
+    {
+      "id": "n8",
+      "code": "    @staticmethod\n    def from_graph(graph: AgentGraphExecution):\n        return ExecutionResult(\n            graph_id=graph.agentGraphId,\n            graph_version=graph.agentGraphVersion,\n            graph_exec_id=graph.id,\n            node_exec_id=\"\",\n            node_id=\"\",\n            block_id=\"\",\n            status=graph.executionStatus,\n            # TODO: Populate input_data & output_data from AgentNodeExecutions\n            #       Input & Output comes AgentInputBlock & AgentOutputBlock.\n            input_data={},\n            output_data={},\n            add_time=graph.createdAt,\n            queue_time=graph.createdAt,\n            start_time=graph.startedAt,\n            end_time=graph.updatedAt,\n        )\n\n"
+    },
+    {
+      "id": "n9",
+      "code": "    @staticmethod\n    def from_db(execution: AgentNodeExecution):\n        if execution.executionData:\n            # Execution that has been queued for execution will persist its data.\n            input_data = json.loads(execution.executionData, target_type=dict[str, Any])\n        else:\n            # For incomplete execution, executionData will not be yet available.\n            input_data: BlockInput = defaultdict()\n            for data in execution.Input or []:\n                input_data[data.name] = json.loads(data.data)\n\n        output_data: CompletedBlockOutput = defaultdict(list)\n        for data in execution.Output or []:\n            output_data[data.name].append(json.loads(data.data))\n\n        graph_execution: AgentGraphExecution | None = execution.AgentGraphExecution\n\n        return ExecutionResult(\n            graph_id=graph_execution.agentGraphId if graph_execution else \"\",\n            graph_version=graph_execution.agentGraphVersion if graph_execution else 0,\n            graph_exec_id=execution.agentGraphExecutionId,\n            block_id=execution.AgentNode.agentBlockId if execution.AgentNode else \"\",\n            node_exec_id=execution.id,\n            node_id=execution.agentNodeId,\n            status=execution.executionStatus,\n            input_data=input_data,\n            output_data=output_data,\n            add_time=execution.addedTime,\n            queue_time=execution.queuedTime,\n            start_time=execution.startedTime,\n            end_time=execution.endedTime,\n        )\n"
+    },
+    {
+      "id": "n10",
+      "code": "async def create_graph_execution(\n    graph_id: str,\n    graph_version: int,\n    nodes_input: list[tuple[str, BlockInput]],\n    user_id: str,\n) -> tuple[str, list[ExecutionResult]]:\n\n    \"\"\"\n    Create a new AgentGraphExecution record.\n    Returns:\n        The id of the AgentGraphExecution and the list of ExecutionResult for each node.\n    \"\"\"\n\n    result = await AgentGraphExecution.prisma().create(\n        data={\n            \"agentGraphId\": graph_id,\n            \"agentGraphVersion\": graph_version,\n            \"executionStatus\": ExecutionStatus.QUEUED,\n            \"AgentNodeExecutions\": {\n                \"create\": [  # type: ignore\n                    {\n                        \"agentNodeId\": node_id,\n                        \"executionStatus\": ExecutionStatus.INCOMPLETE,\n                        \"Input\": {\n                            \"create\": [\n                                {\"name\": name, \"data\": json.dumps(data)}\n                                for name, data in node_input.items()\n                            ]\n                        },\n                    }\n                    for node_id, node_input in nodes_input\n                ]\n            },\n            \"userId\": user_id,\n        },\n        include=GRAPH_EXECUTION_INCLUDE,\n    )\n\n    return result.id, [\n        ExecutionResult.from_db(execution)\n        for execution in result.AgentNodeExecutions or []\n    ]\n"
+    },
+    {
+      "id": "n11",
+      "code": "async def upsert_execution_input(\n    node_id: str,\n    graph_exec_id: str,\n    input_name: str,\n    input_data: Any,\n    node_exec_id: str | None = None,\n) -> tuple[str, BlockInput]:\n    \"\"\"\n    Insert AgentNodeExecutionInputOutput record for as one of AgentNodeExecution.Input.\n    If there is no AgentNodeExecution that has no `input_name` as input, create new one.\n\n    Args:\n        node_id: The id of the AgentNode.\n        graph_exec_id: The id of the AgentGraphExecution.\n        input_name: The name of the input data.\n        input_data: The input data to be inserted.\n        node_exec_id: [Optional] The id of the AgentNodeExecution that has no `input_name` as input. If not provided, it will find the eligible incomplete AgentNodeExecution or create a new one.\n\n    Returns:\n        * The id of the created or existing AgentNodeExecution.\n        * Dict of node input data, key is the input name, value is the input data.\n    \"\"\"\n\n    existing_execution = await AgentNodeExecution.prisma().find_first(\n        where={  # type: ignore\n            **({\"id\": node_exec_id} if node_exec_id else {}),\n            \"agentNodeId\": node_id,\n            \"agentGraphExecutionId\": graph_exec_id,\n            \"executionStatus\": ExecutionStatus.INCOMPLETE,\n            \"Input\": {\"every\": {\"name\": {\"not\": input_name}}},\n        },\n        order={\"addedTime\": \"asc\"},\n        include={\"Input\": True},\n    )\n\n    json_input_data = json.dumps(input_data)\n\n"
+    },
+    {
+      "id": "n12",
+      "code": "    if existing_execution:\n        await AgentNodeExecutionInputOutput.prisma().create(\n            data={\n                \"name\": input_name,\n                \"data\": json_input_data,\n                \"referencedByInputExecId\": existing_execution.id,\n            }\n        )\n        return existing_execution.id, {\n            **{\n                input_data.name: json.loads(input_data.data)\n                for input_data in existing_execution.Input or []\n            },\n            input_name: input_data,\n        }\n\n"
+    },
+    {
+      "id": "n13",
+      "code": "    elif not node_exec_id:\n        result = await AgentNodeExecution.prisma().create(\n            data={\n                \"agentNodeId\": node_id,\n                \"agentGraphExecutionId\": graph_exec_id,\n                \"executionStatus\": ExecutionStatus.INCOMPLETE,\n                \"Input\": {\"create\": {\"name\": input_name, \"data\": json_input_data}},\n            }\n        )\n        return result.id, {input_name: input_data}\n"
+    },
+    {
+      "id": "n14",
+      "code": "    else:\n        raise ValueError(\n            f\"NodeExecution {node_exec_id} not found or already has input {input_name}.\"\n        )\n"
+    },
+    {
+      "id": "n15",
+      "code": "async def upsert_execution_output(\n    node_exec_id: str,\n    output_name: str,\n    output_data: Any,\n) -> None:\n\n    \"\"\"\n    Insert AgentNodeExecutionInputOutput record for as one of AgentNodeExecution.Output.\n    \"\"\"\n\n    await AgentNodeExecutionInputOutput.prisma().create(\n        data={\n            \"name\": output_name,\n            \"data\": json.dumps(output_data),\n            \"referencedByOutputExecId\": node_exec_id,\n        }\n    )\n"
+    },
+    {
+      "id": "n16",
+      "code": "async def update_graph_execution_start_time(graph_exec_id: str):\n    await AgentGraphExecution.prisma().update(\n        where={\"id\": graph_exec_id},\n        data={\n            \"executionStatus\": ExecutionStatus.RUNNING,\n            \"startedAt\": datetime.now(tz=timezone.utc),\n        },\n    )\n"
+    },
+    {
+      "id": "n17",
+      "code": "async def update_graph_execution_stats(\n    graph_exec_id: str,\n    stats: dict[str, Any],\n) -> ExecutionResult:\n\n    status = ExecutionStatus.FAILED if stats.get(\"error\") else ExecutionStatus.COMPLETED\n\n    res = await AgentGraphExecution.prisma().update(\n        where={\"id\": graph_exec_id},\n        data={\n            \"executionStatus\": status,\n            \"stats\": json.dumps(stats),\n        },\n    )\n\n    if not res:\n        raise ValueError(f\"Execution {graph_exec_id} not found.\")\n\n    return ExecutionResult.from_graph(res)\n"
+    },
+    {
+      "id": "n18",
+      "code": "async def update_node_execution_stats(node_exec_id: str, stats: dict[str, Any]):\n    await AgentNodeExecution.prisma().update(\n        where={\"id\": node_exec_id},\n        data={\"stats\": json.dumps(stats)},\n    )\n"
+    },
+    {
+      "id": "n19",
+      "code": "async def update_execution_status(\n    node_exec_id: str,\n    status: ExecutionStatus,\n    execution_data: BlockInput | None = None,\n    stats: dict[str, Any] | None = None,\n) -> ExecutionResult:\n\n    if status == ExecutionStatus.QUEUED and execution_data is None:\n        raise ValueError(\"Execution data must be provided when queuing an execution.\")\n\n    now = datetime.now(tz=timezone.utc)\n    data = {\n        **({\"executionStatus\": status}),\n        **({\"queuedTime\": now} if status == ExecutionStatus.QUEUED else {}),\n        **({\"startedTime\": now} if status == ExecutionStatus.RUNNING else {}),\n        **({\"endedTime\": now} if status == ExecutionStatus.FAILED else {}),\n        **({\"endedTime\": now} if status == ExecutionStatus.COMPLETED else {}),\n        **({\"executionData\": json.dumps(execution_data)} if execution_data else {}),\n        **({\"stats\": json.dumps(stats)} if stats else {}),\n    }\n\n    res = await AgentNodeExecution.prisma().update(\n        where={\"id\": node_exec_id},\n        data=data,  # type: ignore\n        include=EXECUTION_RESULT_INCLUDE,\n    )\n\n    if not res:\n        raise ValueError(f\"Execution {node_exec_id} not found.\")\n\n    return ExecutionResult.from_db(res)\n"
+    },
+    {
+      "id": "n20",
+      "code": "async def get_execution_results(graph_exec_id: str) -> list[ExecutionResult]:\n\n    executions = await AgentNodeExecution.prisma().find_many(\n        where={\"agentGraphExecutionId\": graph_exec_id},\n        include=EXECUTION_RESULT_INCLUDE,\n        order=[\n            {\"queuedTime\": \"asc\"},\n            {\"addedTime\": \"asc\"},  # Fallback: Incomplete execs has no queuedTime.\n        ],\n    )\n\n    res = [ExecutionResult.from_db(execution) for execution in executions]\n\n    return res\n"
+    },
+    {
+      "id": "n21",
+      "code": "def parse_execution_output(output: BlockData, name: str) -> Any | None:\n    # Allow extracting partial output data by name.\n    output_name, output_data = output\n\n    if name == output_name:\n        return output_data\n"
+    },
+    {
+      "id": "n22",
+      "code": "    if name.startswith(f\"{output_name}{LIST_SPLIT}\"):\n        index = int(name.split(LIST_SPLIT)[1])\n        if not isinstance(output_data, list) or len(output_data) <= index:\n            return None\n        return output_data[int(name.split(LIST_SPLIT)[1])]\n"
+    },
+    {
+      "id": "n23",
+      "code": "    if name.startswith(f\"{output_name}{DICT_SPLIT}\"):\n        index = name.split(DICT_SPLIT)[1]\n        if not isinstance(output_data, dict) or index not in output_data:\n            return None\n        return output_data[index]\n"
+    },
+    {
+      "id": "n24",
+      "code": "    if name.startswith(f\"{output_name}{OBJC_SPLIT}\"):\n        index = name.split(OBJC_SPLIT)[1]\n        if isinstance(output_data, object) and hasattr(output_data, index):\n            return getattr(output_data, index)\n        return None\n"
+    },
+    {
+      "id": "n25",
+      "code": "    return None\n"
+    },
+    {
+      "id": "n26",
+      "code": "def merge_execution_input(data: BlockInput) -> BlockInput:\n    \"\"\"\n    Merge all dynamic input pins which described by the following pattern:\n    - <input_name>_$_<index> for list input.\n    - <input_name>_#_<index> for dict input.\n    - <input_name>_@_<index> for object input.\n    This function will construct pins with the same name into a single list/dict/object.\n    \"\"\"\n\n    # Merge all input with <input_name>_$_<index> into a single list.\n    items = list(data.items())\n"
+    },
+    {
+      "id": "n27",
+      "code": "    for key, value in items:\n        if LIST_SPLIT not in key:\n            continue\n"
+    },
+    {
+      "id": "n28",
+      "code": "        name, index = key.split(LIST_SPLIT)\n        if not index.isdigit():\n            raise ValueError(f\"Invalid key: {key}, #{index} index must be an integer.\")\n\n        data[name] = data.get(name, [])\n        if int(index) >= len(data[name]):\n            # Pad list with empty string on missing indices.\n            data[name].extend([\"\"] * (int(index) - len(data[name]) + 1))\n        data[name][int(index)] = value\n"
+    },
+    {
+      "id": "n29",
+      "code": "    # Merge all input with <input_name>_#_<index> into a single dict.\n    for key, value in items:\n        if DICT_SPLIT not in key:\n            continue\n"
+    },
+    {
+      "id": "n30",
+      "code": "        name, index = key.split(DICT_SPLIT)\n        data[name] = data.get(name, {})\n        data[name][index] = value\n"
+    },
+    {
+      "id": "n31",
+      "code": "    # Merge all input with <input_name>_@_<index> into a single object.\n    for key, value in items:\n        if OBJC_SPLIT not in key:\n            continue\n"
+    },
+    {
+      "id": "n32",
+      "code": "        name, index = key.split(OBJC_SPLIT)\n        if name not in data or not isinstance(data[name], object):\n            data[name] = mock.MockObject()\n        setattr(data[name], index, value)\n"
+    },
+    {
+      "id": "n33",
+      "code": "    return data\n"
+    },
+    {
+      "id": "n34",
+      "code": "async def get_latest_execution(node_id: str, graph_eid: str) -> ExecutionResult | None:\n    execution = await AgentNodeExecution.prisma().find_first(\n        where={\n            \"agentNodeId\": node_id,\n            \"agentGraphExecutionId\": graph_eid,\n            \"executionStatus\": {\"not\": ExecutionStatus.INCOMPLETE},\n            \"executionData\": {\"not\": None},  # type: ignore\n        },\n        order={\"queuedTime\": \"desc\"},\n        include=EXECUTION_RESULT_INCLUDE,\n    )\n\n    if not execution:\n        return None\n\n    return ExecutionResult.from_db(execution)\n"
+    },
+    {
+      "id": "n35",
+      "code": "async def get_incomplete_executions(\n    node_id: str, graph_eid: str\n) -> list[ExecutionResult]:\n\n    executions = await AgentNodeExecution.prisma().find_many(\n        where={\n            \"agentNodeId\": node_id,\n            \"agentGraphExecutionId\": graph_eid,\n            \"executionStatus\": ExecutionStatus.INCOMPLETE,\n        },\n        include=EXECUTION_RESULT_INCLUDE,\n    )\n\n    return [ExecutionResult.from_db(execution) for execution in executions]\n"
+    },
+    {
+      "id": "n36",
+      "code": "class RedisExecutionEventBus(RedisEventBus[ExecutionResult]):\n    Model = ExecutionResult\n"
+    },
+    {
+      "id": "n37",
+      "code": "    @property\n    def event_bus_name(self) -> str:\n        return config.execution_event_bus_name\n"
+    },
+    {
+      "id": "n38",
+      "code": "    def publish(self, res: ExecutionResult):\n        self.publish_event(res, f\"{res.graph_id}/{res.graph_exec_id}\")\n"
+    },
+    {
+      "id": "n39",
+      "code": "    def listen(\n        self, graph_id: str = \"*\", graph_exec_id: str = \"*\"\n    ) -> Generator[ExecutionResult, None, None]:\n        for execution_result in self.listen_events(f\"{graph_id}/{graph_exec_id}\"):\n            yield execution_result\n"
+    },
+    {
+      "id": "n40",
+      "code": "class AsyncRedisExecutionEventBus(AsyncRedisEventBus[ExecutionResult]):\n    Model = ExecutionResult\n"
+    },
+    {
+      "id": "n41",
+      "code": "    @property\n    def event_bus_name(self) -> str:\n        return config.execution_event_bus_name\n"
+    },
+    {
+      "id": "n42",
+      "code": "    async def publish(self, res: ExecutionResult):\n        await self.publish_event(res, f\"{res.graph_id}/{res.graph_exec_id}\")\n"
+    },
+    {
+      "id": "n43",
+      "code": "    async def listen(\n        self, graph_id: str = \"*\", graph_exec_id: str = \"*\"\n    ) -> AsyncGenerator[ExecutionResult, None]:\n        async for execution_result in self.listen_events(f\"{graph_id}/{graph_exec_id}\"):\n            yield execution_result\n"
+    }
+  ],
+  "edges": [
+    {
+      "source": "n23",
+      "target": "n25"
+    },
+    {
+      "source": "n21",
+      "target": "n22"
+    },
+    {
+      "source": "n22",
+      "target": "n23"
+    },
+    {
+      "source": "n26",
+      "target": "n27"
+    },
+    {
+      "source": "n32",
+      "target": "n31"
+    },
+    {
+      "source": "n28",
+      "target": "n27"
+    },
+    {
+      "source": "n30",
+      "target": "n29"
+    },
+    {
+      "source": "n23",
+      "target": "n24"
+    },
+    {
+      "source": "n24",
+      "target": "n25"
+    },
+    {
+      "source": "n36",
+      "target": "n39"
+    },
+    {
+      "source": "n31",
+      "target": "n33"
+    },
+    {
+      "source": "n29",
+      "target": "n30"
+    },
+    {
+      "source": "n36",
+      "target": "n38"
+    },
+    {
+      "source": "n22",
+      "target": "n25"
+    },
+    {
+      "source": "n31",
+      "target": "n32"
+    },
+    {
+      "source": "n11",
+      "target": "n12"
+    },
+    {
+      "source": "n29",
+      "target": "n31"
+    },
+    {
+      "source": "n27",
+      "target": "n29"
+    },
+    {
+      "source": "n27",
+      "target": "n28"
+    },
+    {
+      "source": "n36",
+      "target": "n37"
+    },
+    {
+      "source": "n11",
+      "target": "n13"
+    },
+    {
+      "source": "n21",
+      "target": "n25"
+    },
+    {
+      "source": "n11",
+      "target": "n14"
+    }
+  ]
+}

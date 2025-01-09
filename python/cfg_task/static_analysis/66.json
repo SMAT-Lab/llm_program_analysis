@@ -1,0 +1,179 @@
+{
+  "nodes": [
+    {
+      "id": "n0",
+      "type": "block",
+      "statements": [
+        "import logging",
+        "import os",
+        "import signal",
+        "import sys",
+        "from abc import ABC, abstractmethod",
+        "from multiprocessing import Process, set_start_method",
+        "from typing import Optional",
+        "from backend.util.logging import configure_logging",
+        "from backend.util.metrics import sentry_init",
+        "logger = logging.getLogger(__name__)",
+        "_SERVICE_NAME = 'MainProcess'",
+        "def get_service_name():\n    return _SERVICE_NAME",
+        "return _SERVICE_NAME"
+      ],
+      "code": "import logging\nimport os\nimport signal\nimport sys\nfrom abc import ABC, abstractmethod\nfrom multiprocessing import Process, set_start_method\nfrom typing import Optional\nfrom backend.util.logging import configure_logging\nfrom backend.util.metrics import sentry_init\nlogger = logging.getLogger(__name__)\n_SERVICE_NAME = 'MainProcess'\ndef get_service_name():\n    return _SERVICE_NAME\nreturn _SERVICE_NAME"
+    },
+    {
+      "id": "n1",
+      "type": "block",
+      "statements": [
+        "def set_service_name(name: str):\n    global _SERVICE_NAME\n    _SERVICE_NAME = name",
+        "global _SERVICE_NAME",
+        "_SERVICE_NAME = name",
+        "class AppProcess(ABC):\n    \"\"\"\n    A class to represent an object that can be executed in a background process.\n    \"\"\"\n    process: Optional[Process] = None\n    set_start_method('spawn', force=True)\n    configure_logging()\n    sentry_init()\n\n    @abstractmethod\n    def run(self):\n        \"\"\"\n        The method that will be executed in the process.\n        \"\"\"\n        pass\n\n    @classmethod\n    @property\n    def service_name(cls) -> str:\n        return cls.__name__\n\n    def cleanup(self):\n        \"\"\"\n        Implement this method on a subclass to do post-execution cleanup,\n        e.g. disconnecting from a database or terminating child processes.\n        \"\"\"\n        pass\n\n    def health_check(self):\n        \"\"\"\n        A method to check the health of the process.\n        \"\"\"\n        pass\n\n    def execute_run_command(self, silent):\n        signal.signal(signal.SIGTERM, self._self_terminate)\n        try:\n            if silent:\n                sys.stdout = open(os.devnull, 'w')\n                sys.stderr = open(os.devnull, 'w')\n            set_service_name(self.service_name)\n            logger.info(f'[{self.service_name}] Starting...')\n            self.run()\n        except (KeyboardInterrupt, SystemExit) as e:\n            logger.warning(f'[{self.service_name}] Terminated: {e}; quitting...')\n\n    def _self_terminate(self, signum: int, frame):\n        self.cleanup()\n        sys.exit(0)\n\n    def __enter__(self):\n        self.start(background=True)\n        return self\n\n    def __exit__(self, *args, **kwargs):\n        self.stop()\n\n    def start(self, background: bool=False, silent: bool=False, **proc_args) -> int:\n        \"\"\"\n        Start the background process.\n        Args:\n            background: Whether to run the process in the background.\n            silent: Whether to disable stdout and stderr.\n            proc_args: Additional arguments to pass to the process.\n        Returns:\n            the process id or 0 if the process is not running in the background.\n        \"\"\"\n        if not background:\n            self.execute_run_command(silent)\n            return 0\n        self.process = Process(name=self.__class__.__name__, target=self.execute_run_command, args=(silent,), **proc_args)\n        self.process.start()\n        self.health_check()\n        return self.process.pid or 0\n\n    def stop(self):\n        \"\"\"\n        Stop the background process.\n        \"\"\"\n        if not self.process:\n            return\n        self.process.terminate()\n        self.process.join()\n        self.process = None",
+        "'\\n    A class to represent an object that can be executed in a background process.\\n    '",
+        "process: Optional[Process] = None",
+        "set_start_method('spawn')",
+        "configure_logging()",
+        "sentry_init()",
+        "@abstractmethod\ndef run(self):\n    \"\"\"\n        The method that will be executed in the process.\n        \"\"\"\n    pass",
+        "'\\n        The method that will be executed in the process.\\n        '",
+        "pass",
+        "@classmethod\n@property\ndef service_name(cls) -> str:\n    return cls.__name__",
+        "return cls.__name__"
+      ],
+      "code": "def set_service_name(name: str):\n    global _SERVICE_NAME\n    _SERVICE_NAME = name\nglobal _SERVICE_NAME\n_SERVICE_NAME = name\nclass AppProcess(ABC):\n    \"\"\"\n    A class to represent an object that can be executed in a background process.\n    \"\"\"\n    process: Optional[Process] = None\n    set_start_method('spawn', force=True)\n    configure_logging()\n    sentry_init()\n\n    @abstractmethod\n    def run(self):\n        \"\"\"\n        The method that will be executed in the process.\n        \"\"\"\n        pass\n\n    @classmethod\n    @property\n    def service_name(cls) -> str:\n        return cls.__name__\n\n    def cleanup(self):\n        \"\"\"\n        Implement this method on a subclass to do post-execution cleanup,\n        e.g. disconnecting from a database or terminating child processes.\n        \"\"\"\n        pass\n\n    def health_check(self):\n        \"\"\"\n        A method to check the health of the process.\n        \"\"\"\n        pass\n\n    def execute_run_command(self, silent):\n        signal.signal(signal.SIGTERM, self._self_terminate)\n        try:\n            if silent:\n                sys.stdout = open(os.devnull, 'w')\n                sys.stderr = open(os.devnull, 'w')\n            set_service_name(self.service_name)\n            logger.info(f'[{self.service_name}] Starting...')\n            self.run()\n        except (KeyboardInterrupt, SystemExit) as e:\n            logger.warning(f'[{self.service_name}] Terminated: {e}; quitting...')\n\n    def _self_terminate(self, signum: int, frame):\n        self.cleanup()\n        sys.exit(0)\n\n    def __enter__(self):\n        self.start(background=True)\n        return self\n\n    def __exit__(self, *args, **kwargs):\n        self.stop()\n\n    def start(self, background: bool=False, silent: bool=False, **proc_args) -> int:\n        \"\"\"\n        Start the background process.\n        Args:\n            background: Whether to run the process in the background.\n            silent: Whether to disable stdout and stderr.\n            proc_args: Additional arguments to pass to the process.\n        Returns:\n            the process id or 0 if the process is not running in the background.\n        \"\"\"\n        if not background:\n            self.execute_run_command(silent)\n            return 0\n        self.process = Process(name=self.__class__.__name__, target=self.execute_run_command, args=(silent,), **proc_args)\n        self.process.start()\n        self.health_check()\n        return self.process.pid or 0\n\n    def stop(self):\n        \"\"\"\n        Stop the background process.\n        \"\"\"\n        if not self.process:\n            return\n        self.process.terminate()\n        self.process.join()\n        self.process = None\n'\\n    A class to represent an object that can be executed in a background process.\\n    '\nprocess: Optional[Process] = None\nset_start_method('spawn')\nconfigure_logging()\nsentry_init()\n@abstractmethod\ndef run(self):\n    \"\"\"\n        The method that will be executed in the process.\n        \"\"\"\n    pass\n'\\n        The method that will be executed in the process.\\n        '\npass\n@classmethod\n@property\ndef service_name(cls) -> str:\n    return cls.__name__\nreturn cls.__name__"
+    },
+    {
+      "id": "n2",
+      "type": "block",
+      "statements": [
+        "def cleanup(self):\n    \"\"\"\n        Implement this method on a subclass to do post-execution cleanup,\n        e.g. disconnecting from a database or terminating child processes.\n        \"\"\"\n    pass",
+        "'\\n        Implement this method on a subclass to do post-execution cleanup,\\n        e.g. disconnecting from a database or terminating child processes.\\n        '",
+        "pass",
+        "def health_check(self):\n    \"\"\"\n        A method to check the health of the process.\n        \"\"\"\n    pass",
+        "'\\n        A method to check the health of the process.\\n        '",
+        "pass",
+        "def execute_run_command(self, silent):\n    signal.signal(signal.SIGTERM, self._self_terminate)\n    try:\n        if silent:\n            sys.stdout = open(os.devnull, 'w')\n            sys.stderr = open(os.devnull, 'w')\n        set_service_name(self.service_name)\n        logger.info(f'[{self.service_name}] Starting...')\n        self.run()\n    except (KeyboardInterrupt, SystemExit) as e:\n        logger.warning(f'[{self.service_name}] Terminated: {e}; quitting...')",
+        "signal.signal(signal.SIGTERM, self._self_terminate)",
+        "try:\n    if silent:\n        sys.stdout = open(os.devnull, 'w')\n        sys.stderr = open(os.devnull, 'w')\n    set_service_name(self.service_name)\n    logger.info(f'[{self.service_name}] Starting...')\n    self.run()\nexcept (KeyboardInterrupt, SystemExit) as e:\n    logger.warning(f'[{self.service_name}] Terminated: {e}; quitting...')",
+        "silent"
+      ],
+      "code": "def cleanup(self):\n    \"\"\"\n        Implement this method on a subclass to do post-execution cleanup,\n        e.g. disconnecting from a database or terminating child processes.\n        \"\"\"\n    pass\n'\\n        Implement this method on a subclass to do post-execution cleanup,\\n        e.g. disconnecting from a database or terminating child processes.\\n        '\npass\ndef health_check(self):\n    \"\"\"\n        A method to check the health of the process.\n        \"\"\"\n    pass\n'\\n        A method to check the health of the process.\\n        '\npass\ndef execute_run_command(self, silent):\n    signal.signal(signal.SIGTERM, self._self_terminate)\n    try:\n        if silent:\n            sys.stdout = open(os.devnull, 'w')\n            sys.stderr = open(os.devnull, 'w')\n        set_service_name(self.service_name)\n        logger.info(f'[{self.service_name}] Starting...')\n        self.run()\n    except (KeyboardInterrupt, SystemExit) as e:\n        logger.warning(f'[{self.service_name}] Terminated: {e}; quitting...')\nsignal.signal(signal.SIGTERM, self._self_terminate)\ntry:\n    if silent:\n        sys.stdout = open(os.devnull, 'w')\n        sys.stderr = open(os.devnull, 'w')\n    set_service_name(self.service_name)\n    logger.info(f'[{self.service_name}] Starting...')\n    self.run()\nexcept (KeyboardInterrupt, SystemExit) as e:\n    logger.warning(f'[{self.service_name}] Terminated: {e}; quitting...')\nsilent"
+    },
+    {
+      "id": "n3",
+      "type": "block",
+      "statements": [
+        "sys.stdout = open(os.devnull, 'w')",
+        "sys.stderr = open(os.devnull, 'w')"
+      ],
+      "code": "sys.stdout = open(os.devnull, 'w')\nsys.stderr = open(os.devnull, 'w')"
+    },
+    {
+      "id": "n4",
+      "type": "block",
+      "statements": [],
+      "code": ""
+    },
+    {
+      "id": "n5",
+      "type": "block",
+      "statements": [
+        "set_service_name(self.service_name)",
+        "logger.info(f'[{self.service_name}] Starting...')",
+        "self.run()",
+        "logger.warning(f'[{self.service_name}] Terminated: {e}; quitting...')",
+        "def _self_terminate(self, signum: int, frame):\n    self.cleanup()\n    sys.exit(0)",
+        "self.cleanup()",
+        "sys.exit(0)",
+        "def __enter__(self):\n    self.start(background=True)\n    return self",
+        "self.start()",
+        "return self"
+      ],
+      "code": "set_service_name(self.service_name)\nlogger.info(f'[{self.service_name}] Starting...')\nself.run()\nlogger.warning(f'[{self.service_name}] Terminated: {e}; quitting...')\ndef _self_terminate(self, signum: int, frame):\n    self.cleanup()\n    sys.exit(0)\nself.cleanup()\nsys.exit(0)\ndef __enter__(self):\n    self.start(background=True)\n    return self\nself.start()\nreturn self"
+    },
+    {
+      "id": "n6",
+      "type": "block",
+      "statements": [
+        "def __exit__(self, *args, **kwargs):\n    self.stop()",
+        "self.stop()",
+        "def start(self, background: bool=False, silent: bool=False, **proc_args) -> int:\n    \"\"\"\n        Start the background process.\n        Args:\n            background: Whether to run the process in the background.\n            silent: Whether to disable stdout and stderr.\n            proc_args: Additional arguments to pass to the process.\n        Returns:\n            the process id or 0 if the process is not running in the background.\n        \"\"\"\n    if not background:\n        self.execute_run_command(silent)\n        return 0\n    self.process = Process(name=self.__class__.__name__, target=self.execute_run_command, args=(silent,), **proc_args)\n    self.process.start()\n    self.health_check()\n    return self.process.pid or 0",
+        "'\\n        Start the background process.\\n        Args:\\n            background: Whether to run the process in the background.\\n            silent: Whether to disable stdout and stderr.\\n            proc_args: Additional arguments to pass to the process.\\n        Returns:\\n            the process id or 0 if the process is not running in the background.\\n        '",
+        "not background"
+      ],
+      "code": "def __exit__(self, *args, **kwargs):\n    self.stop()\nself.stop()\ndef start(self, background: bool=False, silent: bool=False, **proc_args) -> int:\n    \"\"\"\n        Start the background process.\n        Args:\n            background: Whether to run the process in the background.\n            silent: Whether to disable stdout and stderr.\n            proc_args: Additional arguments to pass to the process.\n        Returns:\n            the process id or 0 if the process is not running in the background.\n        \"\"\"\n    if not background:\n        self.execute_run_command(silent)\n        return 0\n    self.process = Process(name=self.__class__.__name__, target=self.execute_run_command, args=(silent,), **proc_args)\n    self.process.start()\n    self.health_check()\n    return self.process.pid or 0\n'\\n        Start the background process.\\n        Args:\\n            background: Whether to run the process in the background.\\n            silent: Whether to disable stdout and stderr.\\n            proc_args: Additional arguments to pass to the process.\\n        Returns:\\n            the process id or 0 if the process is not running in the background.\\n        '\nnot background"
+    },
+    {
+      "id": "n7",
+      "type": "block",
+      "statements": [
+        "self.execute_run_command(silent)",
+        "return 0"
+      ],
+      "code": "self.execute_run_command(silent)\nreturn 0"
+    },
+    {
+      "id": "n8",
+      "type": "block",
+      "statements": [],
+      "code": "\nself.process = Process(name=self.__class__.__name__, target=self.execute_run_command, args=(silent,), **proc_args)\nself.process.start()\nself.health_check()\nreturn self.process.pid or 0"
+    },
+    {
+      "id": "n9",
+      "type": "block",
+      "statements": [
+        "def stop(self):\n    \"\"\"\n        Stop the background process.\n        \"\"\"\n    if not self.process:\n        return\n    self.process.terminate()\n    self.process.join()\n    self.process = None",
+        "'\\n        Stop the background process.\\n        '",
+        "not self.process"
+      ],
+      "code": "def stop(self):\n    \"\"\"\n        Stop the background process.\n        \"\"\"\n    if not self.process:\n        return\n    self.process.terminate()\n    self.process.join()\n    self.process = None\n'\\n        Stop the background process.\\n        '\nnot self.process"
+    },
+    {
+      "id": "n10",
+      "type": "block",
+      "statements": [
+        "return"
+      ],
+      "code": "return"
+    },
+    {
+      "id": "n11",
+      "type": "block",
+      "statements": [],
+      "code": "\nself.process.terminate()\nself.process.join()\nself.process = None"
+    }
+  ],
+  "edges": [
+    {
+      "source": "n9",
+      "target": "n11"
+    },
+    {
+      "source": "n6",
+      "target": "n7"
+    },
+    {
+      "source": "n2",
+      "target": "n4"
+    },
+    {
+      "source": "n9",
+      "target": "n10"
+    },
+    {
+      "source": "n3",
+      "target": "n5"
+    },
+    {
+      "source": "n4",
+      "target": "n5"
+    },
+    {
+      "source": "n6",
+      "target": "n8"
+    },
+    {
+      "source": "n2",
+      "target": "n3"
+    }
+  ]
+}

@@ -1,0 +1,3089 @@
+{
+  "value": "import logging\nimport secrets\nfrom abc import ABC, abstractmethod\nfrom typing import ClassVar, Generic, Optional, TypeVar\nfrom uuid import uuid4\n\nfrom fastapi import Request\nfrom strenum import StrEnum\n\nfrom backend.data import integrations\nfrom backend.data.model import Credentials\nfrom backend.integrations.providers import ProviderName\nfrom backend.integrations.webhooks.utils import webhook_ingress_url\nfrom backend.util.exceptions import MissingConfigError\nfrom backend.util.settings import Config\n\nlogger = logging.getLogger(__name__)\napp_config = Config()\n\nWT = TypeVar(\"WT\", bound=StrEnum)\n\n\nclass BaseWebhooksManager(ABC, Generic[WT]):\n    # --8<-- [start:BaseWebhooksManager1]\n    PROVIDER_NAME: ClassVar[ProviderName]\n    # --8<-- [end:BaseWebhooksManager1]\n\n    WebhookType: WT\n\n    async def get_suitable_auto_webhook(\n        self,\n        user_id: str,\n        credentials: Credentials,\n        webhook_type: WT,\n        resource: str,\n        events: list[str],\n    ) -> integrations.Webhook:\n        if not app_config.platform_base_url:\n            raise MissingConfigError(\n                \"PLATFORM_BASE_URL must be set to use Webhook functionality\"\n            )\n\n        if webhook := await integrations.find_webhook_by_credentials_and_props(\n            credentials.id, webhook_type, resource, events\n        ):\n            return webhook\n        return await self._create_webhook(\n            user_id, webhook_type, events, resource, credentials\n        )\n\n    async def get_manual_webhook(\n        self,\n        user_id: str,\n        graph_id: str,\n        webhook_type: WT,\n        events: list[str],\n    ):\n        if current_webhook := await integrations.find_webhook_by_graph_and_props(\n            graph_id, self.PROVIDER_NAME, webhook_type, events\n        ):\n            return current_webhook\n        return await self._create_webhook(\n            user_id,\n            webhook_type,\n            events,\n            register=False,\n        )\n\n    async def prune_webhook_if_dangling(\n        self, webhook_id: str, credentials: Optional[Credentials]\n    ) -> bool:\n        webhook = await integrations.get_webhook(webhook_id)\n        if webhook.attached_nodes is None:\n            raise ValueError(\"Error retrieving webhook including attached nodes\")\n        if webhook.attached_nodes:\n            # Don't prune webhook if in use\n            return False\n\n        if credentials:\n            await self._deregister_webhook(webhook, credentials)\n        await integrations.delete_webhook(webhook.id)\n        return True\n\n    # --8<-- [start:BaseWebhooksManager3]\n    @classmethod\n    @abstractmethod\n    async def validate_payload(\n        cls, webhook: integrations.Webhook, request: Request\n    ) -> tuple[dict, str]:\n        \"\"\"\n        Validates an incoming webhook request and returns its payload and type.\n\n        Params:\n            webhook: Object representing the configured webhook and its properties in our system.\n            request: Incoming FastAPI `Request`\n\n        Returns:\n            dict: The validated payload\n            str: The event type associated with the payload\n        \"\"\"\n\n    # --8<-- [end:BaseWebhooksManager3]\n\n    # --8<-- [start:BaseWebhooksManager5]\n    async def trigger_ping(\n        self, webhook: integrations.Webhook, credentials: Credentials | None\n    ) -> None:\n        \"\"\"\n        Triggers a ping to the given webhook.\n\n        Raises:\n            NotImplementedError: if the provider doesn't support pinging\n        \"\"\"\n        # --8<-- [end:BaseWebhooksManager5]\n        raise NotImplementedError(f\"{self.__class__.__name__} doesn't support pinging\")\n\n    # --8<-- [start:BaseWebhooksManager2]\n    @abstractmethod\n    async def _register_webhook(\n        self,\n        credentials: Credentials,\n        webhook_type: WT,\n        resource: str,\n        events: list[str],\n        ingress_url: str,\n        secret: str,\n    ) -> tuple[str, dict]:\n        \"\"\"\n        Registers a new webhook with the provider.\n\n        Params:\n            credentials: The credentials with which to create the webhook\n            webhook_type: The provider-specific webhook type to create\n            resource: The resource to receive events for\n            events: The events to subscribe to\n            ingress_url: The ingress URL for webhook payloads\n            secret: Secret used to verify webhook payloads\n\n        Returns:\n            str: Webhook ID assigned by the provider\n            config: Provider-specific configuration for the webhook\n        \"\"\"\n        ...\n\n    # --8<-- [end:BaseWebhooksManager2]\n\n    # --8<-- [start:BaseWebhooksManager4]\n    @abstractmethod\n    async def _deregister_webhook(\n        self, webhook: integrations.Webhook, credentials: Credentials\n    ) -> None: ...\n\n    # --8<-- [end:BaseWebhooksManager4]\n\n    async def _create_webhook(\n        self,\n        user_id: str,\n        webhook_type: WT,\n        events: list[str],\n        resource: str = \"\",\n        credentials: Optional[Credentials] = None,\n        register: bool = True,\n    ) -> integrations.Webhook:\n        if not app_config.platform_base_url:\n            raise MissingConfigError(\n                \"PLATFORM_BASE_URL must be set to use Webhook functionality\"\n            )\n\n        id = str(uuid4())\n        secret = secrets.token_hex(32)\n        provider_name = self.PROVIDER_NAME\n        ingress_url = webhook_ingress_url(provider_name=provider_name, webhook_id=id)\n        if register:\n            if not credentials:\n                raise TypeError(\"credentials are required if register = True\")\n            provider_webhook_id, config = await self._register_webhook(\n                credentials, webhook_type, resource, events, ingress_url, secret\n            )\n        else:\n            provider_webhook_id, config = \"\", {}\n\n        return await integrations.create_webhook(\n            integrations.Webhook(\n                id=id,\n                user_id=user_id,\n                provider=provider_name,\n                credentials_id=credentials.id if credentials else \"\",\n                webhook_type=webhook_type,\n                resource=resource,\n                events=events,\n                provider_webhook_id=provider_webhook_id,\n                config=config,\n                secret=secret,\n            )\n        )",
+  "children": [
+    {
+      "value": "import logging",
+      "children": [
+        {
+          "value": "logging",
+          "children": [
+            {
+              "value": "logging",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "import secrets",
+      "children": [
+        {
+          "value": "secrets",
+          "children": [
+            {
+              "value": "secrets",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "from abc import ABC, abstractmethod",
+      "children": [
+        {
+          "value": "abc",
+          "children": [
+            {
+              "value": "abc",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "ABC",
+          "children": [
+            {
+              "value": "ABC",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "abstractmethod",
+          "children": [
+            {
+              "value": "abstractmethod",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "from typing import ClassVar, Generic, Optional, TypeVar",
+      "children": [
+        {
+          "value": "typing",
+          "children": [
+            {
+              "value": "typing",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "ClassVar",
+          "children": [
+            {
+              "value": "ClassVar",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "Generic",
+          "children": [
+            {
+              "value": "Generic",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "Optional",
+          "children": [
+            {
+              "value": "Optional",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "TypeVar",
+          "children": [
+            {
+              "value": "TypeVar",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "from uuid import uuid4",
+      "children": [
+        {
+          "value": "uuid",
+          "children": [
+            {
+              "value": "uuid",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "uuid4",
+          "children": [
+            {
+              "value": "uuid4",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "from fastapi import Request",
+      "children": [
+        {
+          "value": "fastapi",
+          "children": [
+            {
+              "value": "fastapi",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "Request",
+          "children": [
+            {
+              "value": "Request",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "from strenum import StrEnum",
+      "children": [
+        {
+          "value": "strenum",
+          "children": [
+            {
+              "value": "strenum",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "StrEnum",
+          "children": [
+            {
+              "value": "StrEnum",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "from backend.data import integrations",
+      "children": [
+        {
+          "value": "backend.data",
+          "children": [
+            {
+              "value": "backend",
+              "children": []
+            },
+            {
+              "value": "data",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "integrations",
+          "children": [
+            {
+              "value": "integrations",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "from backend.data.model import Credentials",
+      "children": [
+        {
+          "value": "backend.data.model",
+          "children": [
+            {
+              "value": "backend",
+              "children": []
+            },
+            {
+              "value": "data",
+              "children": []
+            },
+            {
+              "value": "model",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "Credentials",
+          "children": [
+            {
+              "value": "Credentials",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "from backend.integrations.providers import ProviderName",
+      "children": [
+        {
+          "value": "backend.integrations.providers",
+          "children": [
+            {
+              "value": "backend",
+              "children": []
+            },
+            {
+              "value": "integrations",
+              "children": []
+            },
+            {
+              "value": "providers",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "ProviderName",
+          "children": [
+            {
+              "value": "ProviderName",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "from backend.integrations.webhooks.utils import webhook_ingress_url",
+      "children": [
+        {
+          "value": "backend.integrations.webhooks.utils",
+          "children": [
+            {
+              "value": "backend",
+              "children": []
+            },
+            {
+              "value": "integrations",
+              "children": []
+            },
+            {
+              "value": "webhooks",
+              "children": []
+            },
+            {
+              "value": "utils",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "webhook_ingress_url",
+          "children": [
+            {
+              "value": "webhook_ingress_url",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "from backend.util.exceptions import MissingConfigError",
+      "children": [
+        {
+          "value": "backend.util.exceptions",
+          "children": [
+            {
+              "value": "backend",
+              "children": []
+            },
+            {
+              "value": "util",
+              "children": []
+            },
+            {
+              "value": "exceptions",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "MissingConfigError",
+          "children": [
+            {
+              "value": "MissingConfigError",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "from backend.util.settings import Config",
+      "children": [
+        {
+          "value": "backend.util.settings",
+          "children": [
+            {
+              "value": "backend",
+              "children": []
+            },
+            {
+              "value": "util",
+              "children": []
+            },
+            {
+              "value": "settings",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "Config",
+          "children": [
+            {
+              "value": "Config",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "logger = logging.getLogger(__name__)",
+      "children": [
+        {
+          "value": "logger = logging.getLogger(__name__)",
+          "children": [
+            {
+              "value": "logger",
+              "children": []
+            },
+            {
+              "value": "logging.getLogger(__name__)",
+              "children": [
+                {
+                  "value": "logging.getLogger",
+                  "children": [
+                    {
+                      "value": "logging",
+                      "children": []
+                    },
+                    {
+                      "value": "getLogger",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "value": "(__name__)",
+                  "children": [
+                    {
+                      "value": "__name__",
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "app_config = Config()",
+      "children": [
+        {
+          "value": "app_config = Config()",
+          "children": [
+            {
+              "value": "app_config",
+              "children": []
+            },
+            {
+              "value": "Config()",
+              "children": [
+                {
+                  "value": "Config",
+                  "children": []
+                },
+                {
+                  "value": "()",
+                  "children": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "WT = TypeVar(\"WT\", bound=StrEnum)",
+      "children": [
+        {
+          "value": "WT = TypeVar(\"WT\", bound=StrEnum)",
+          "children": [
+            {
+              "value": "WT",
+              "children": []
+            },
+            {
+              "value": "TypeVar(\"WT\", bound=StrEnum)",
+              "children": [
+                {
+                  "value": "TypeVar",
+                  "children": []
+                },
+                {
+                  "value": "(\"WT\", bound=StrEnum)",
+                  "children": [
+                    {
+                      "value": "\"WT\"",
+                      "children": [
+                        {
+                          "value": "\"",
+                          "children": []
+                        },
+                        {
+                          "value": "WT",
+                          "children": []
+                        },
+                        {
+                          "value": "\"",
+                          "children": []
+                        }
+                      ]
+                    },
+                    {
+                      "value": "bound=StrEnum",
+                      "children": [
+                        {
+                          "value": "bound",
+                          "children": []
+                        },
+                        {
+                          "value": "StrEnum",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "class BaseWebhooksManager(ABC, Generic[WT]):\n    # --8<-- [start:BaseWebhooksManager1]\n    PROVIDER_NAME: ClassVar[ProviderName]\n    # --8<-- [end:BaseWebhooksManager1]\n\n    WebhookType: WT\n\n    async def get_suitable_auto_webhook(\n        self,\n        user_id: str,\n        credentials: Credentials,\n        webhook_type: WT,\n        resource: str,\n        events: list[str],\n    ) -> integrations.Webhook:\n        if not app_config.platform_base_url:\n            raise MissingConfigError(\n                \"PLATFORM_BASE_URL must be set to use Webhook functionality\"\n            )\n\n        if webhook := await integrations.find_webhook_by_credentials_and_props(\n            credentials.id, webhook_type, resource, events\n        ):\n            return webhook\n        return await self._create_webhook(\n            user_id, webhook_type, events, resource, credentials\n        )\n\n    async def get_manual_webhook(\n        self,\n        user_id: str,\n        graph_id: str,\n        webhook_type: WT,\n        events: list[str],\n    ):\n        if current_webhook := await integrations.find_webhook_by_graph_and_props(\n            graph_id, self.PROVIDER_NAME, webhook_type, events\n        ):\n            return current_webhook\n        return await self._create_webhook(\n            user_id,\n            webhook_type,\n            events,\n            register=False,\n        )\n\n    async def prune_webhook_if_dangling(\n        self, webhook_id: str, credentials: Optional[Credentials]\n    ) -> bool:\n        webhook = await integrations.get_webhook(webhook_id)\n        if webhook.attached_nodes is None:\n            raise ValueError(\"Error retrieving webhook including attached nodes\")\n        if webhook.attached_nodes:\n            # Don't prune webhook if in use\n            return False\n\n        if credentials:\n            await self._deregister_webhook(webhook, credentials)\n        await integrations.delete_webhook(webhook.id)\n        return True\n\n    # --8<-- [start:BaseWebhooksManager3]\n    @classmethod\n    @abstractmethod\n    async def validate_payload(\n        cls, webhook: integrations.Webhook, request: Request\n    ) -> tuple[dict, str]:\n        \"\"\"\n        Validates an incoming webhook request and returns its payload and type.\n\n        Params:\n            webhook: Object representing the configured webhook and its properties in our system.\n            request: Incoming FastAPI `Request`\n\n        Returns:\n            dict: The validated payload\n            str: The event type associated with the payload\n        \"\"\"\n\n    # --8<-- [end:BaseWebhooksManager3]\n\n    # --8<-- [start:BaseWebhooksManager5]\n    async def trigger_ping(\n        self, webhook: integrations.Webhook, credentials: Credentials | None\n    ) -> None:\n        \"\"\"\n        Triggers a ping to the given webhook.\n\n        Raises:\n            NotImplementedError: if the provider doesn't support pinging\n        \"\"\"\n        # --8<-- [end:BaseWebhooksManager5]\n        raise NotImplementedError(f\"{self.__class__.__name__} doesn't support pinging\")\n\n    # --8<-- [start:BaseWebhooksManager2]\n    @abstractmethod\n    async def _register_webhook(\n        self,\n        credentials: Credentials,\n        webhook_type: WT,\n        resource: str,\n        events: list[str],\n        ingress_url: str,\n        secret: str,\n    ) -> tuple[str, dict]:\n        \"\"\"\n        Registers a new webhook with the provider.\n\n        Params:\n            credentials: The credentials with which to create the webhook\n            webhook_type: The provider-specific webhook type to create\n            resource: The resource to receive events for\n            events: The events to subscribe to\n            ingress_url: The ingress URL for webhook payloads\n            secret: Secret used to verify webhook payloads\n\n        Returns:\n            str: Webhook ID assigned by the provider\n            config: Provider-specific configuration for the webhook\n        \"\"\"\n        ...\n\n    # --8<-- [end:BaseWebhooksManager2]\n\n    # --8<-- [start:BaseWebhooksManager4]\n    @abstractmethod\n    async def _deregister_webhook(\n        self, webhook: integrations.Webhook, credentials: Credentials\n    ) -> None: ...\n\n    # --8<-- [end:BaseWebhooksManager4]\n\n    async def _create_webhook(\n        self,\n        user_id: str,\n        webhook_type: WT,\n        events: list[str],\n        resource: str = \"\",\n        credentials: Optional[Credentials] = None,\n        register: bool = True,\n    ) -> integrations.Webhook:\n        if not app_config.platform_base_url:\n            raise MissingConfigError(\n                \"PLATFORM_BASE_URL must be set to use Webhook functionality\"\n            )\n\n        id = str(uuid4())\n        secret = secrets.token_hex(32)\n        provider_name = self.PROVIDER_NAME\n        ingress_url = webhook_ingress_url(provider_name=provider_name, webhook_id=id)\n        if register:\n            if not credentials:\n                raise TypeError(\"credentials are required if register = True\")\n            provider_webhook_id, config = await self._register_webhook(\n                credentials, webhook_type, resource, events, ingress_url, secret\n            )\n        else:\n            provider_webhook_id, config = \"\", {}\n\n        return await integrations.create_webhook(\n            integrations.Webhook(\n                id=id,\n                user_id=user_id,\n                provider=provider_name,\n                credentials_id=credentials.id if credentials else \"\",\n                webhook_type=webhook_type,\n                resource=resource,\n                events=events,\n                provider_webhook_id=provider_webhook_id,\n                config=config,\n                secret=secret,\n            )\n        )",
+      "children": [
+        {
+          "value": "BaseWebhooksManager",
+          "children": []
+        },
+        {
+          "value": "(ABC, Generic[WT])",
+          "children": [
+            {
+              "value": "ABC",
+              "children": []
+            },
+            {
+              "value": "Generic[WT]",
+              "children": [
+                {
+                  "value": "Generic",
+                  "children": []
+                },
+                {
+                  "value": "WT",
+                  "children": []
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "value": "# --8<-- [start:BaseWebhooksManager1]",
+          "children": []
+        },
+        {
+          "value": "PROVIDER_NAME: ClassVar[ProviderName]\n    # --8<-- [end:BaseWebhooksManager1]\n\n    WebhookType: WT\n\n    async def get_suitable_auto_webhook(\n        self,\n        user_id: str,\n        credentials: Credentials,\n        webhook_type: WT,\n        resource: str,\n        events: list[str],\n    ) -> integrations.Webhook:\n        if not app_config.platform_base_url:\n            raise MissingConfigError(\n                \"PLATFORM_BASE_URL must be set to use Webhook functionality\"\n            )\n\n        if webhook := await integrations.find_webhook_by_credentials_and_props(\n            credentials.id, webhook_type, resource, events\n        ):\n            return webhook\n        return await self._create_webhook(\n            user_id, webhook_type, events, resource, credentials\n        )\n\n    async def get_manual_webhook(\n        self,\n        user_id: str,\n        graph_id: str,\n        webhook_type: WT,\n        events: list[str],\n    ):\n        if current_webhook := await integrations.find_webhook_by_graph_and_props(\n            graph_id, self.PROVIDER_NAME, webhook_type, events\n        ):\n            return current_webhook\n        return await self._create_webhook(\n            user_id,\n            webhook_type,\n            events,\n            register=False,\n        )\n\n    async def prune_webhook_if_dangling(\n        self, webhook_id: str, credentials: Optional[Credentials]\n    ) -> bool:\n        webhook = await integrations.get_webhook(webhook_id)\n        if webhook.attached_nodes is None:\n            raise ValueError(\"Error retrieving webhook including attached nodes\")\n        if webhook.attached_nodes:\n            # Don't prune webhook if in use\n            return False\n\n        if credentials:\n            await self._deregister_webhook(webhook, credentials)\n        await integrations.delete_webhook(webhook.id)\n        return True\n\n    # --8<-- [start:BaseWebhooksManager3]\n    @classmethod\n    @abstractmethod\n    async def validate_payload(\n        cls, webhook: integrations.Webhook, request: Request\n    ) -> tuple[dict, str]:\n        \"\"\"\n        Validates an incoming webhook request and returns its payload and type.\n\n        Params:\n            webhook: Object representing the configured webhook and its properties in our system.\n            request: Incoming FastAPI `Request`\n\n        Returns:\n            dict: The validated payload\n            str: The event type associated with the payload\n        \"\"\"\n\n    # --8<-- [end:BaseWebhooksManager3]\n\n    # --8<-- [start:BaseWebhooksManager5]\n    async def trigger_ping(\n        self, webhook: integrations.Webhook, credentials: Credentials | None\n    ) -> None:\n        \"\"\"\n        Triggers a ping to the given webhook.\n\n        Raises:\n            NotImplementedError: if the provider doesn't support pinging\n        \"\"\"\n        # --8<-- [end:BaseWebhooksManager5]\n        raise NotImplementedError(f\"{self.__class__.__name__} doesn't support pinging\")\n\n    # --8<-- [start:BaseWebhooksManager2]\n    @abstractmethod\n    async def _register_webhook(\n        self,\n        credentials: Credentials,\n        webhook_type: WT,\n        resource: str,\n        events: list[str],\n        ingress_url: str,\n        secret: str,\n    ) -> tuple[str, dict]:\n        \"\"\"\n        Registers a new webhook with the provider.\n\n        Params:\n            credentials: The credentials with which to create the webhook\n            webhook_type: The provider-specific webhook type to create\n            resource: The resource to receive events for\n            events: The events to subscribe to\n            ingress_url: The ingress URL for webhook payloads\n            secret: Secret used to verify webhook payloads\n\n        Returns:\n            str: Webhook ID assigned by the provider\n            config: Provider-specific configuration for the webhook\n        \"\"\"\n        ...\n\n    # --8<-- [end:BaseWebhooksManager2]\n\n    # --8<-- [start:BaseWebhooksManager4]\n    @abstractmethod\n    async def _deregister_webhook(\n        self, webhook: integrations.Webhook, credentials: Credentials\n    ) -> None: ...\n\n    # --8<-- [end:BaseWebhooksManager4]\n\n    async def _create_webhook(\n        self,\n        user_id: str,\n        webhook_type: WT,\n        events: list[str],\n        resource: str = \"\",\n        credentials: Optional[Credentials] = None,\n        register: bool = True,\n    ) -> integrations.Webhook:\n        if not app_config.platform_base_url:\n            raise MissingConfigError(\n                \"PLATFORM_BASE_URL must be set to use Webhook functionality\"\n            )\n\n        id = str(uuid4())\n        secret = secrets.token_hex(32)\n        provider_name = self.PROVIDER_NAME\n        ingress_url = webhook_ingress_url(provider_name=provider_name, webhook_id=id)\n        if register:\n            if not credentials:\n                raise TypeError(\"credentials are required if register = True\")\n            provider_webhook_id, config = await self._register_webhook(\n                credentials, webhook_type, resource, events, ingress_url, secret\n            )\n        else:\n            provider_webhook_id, config = \"\", {}\n\n        return await integrations.create_webhook(\n            integrations.Webhook(\n                id=id,\n                user_id=user_id,\n                provider=provider_name,\n                credentials_id=credentials.id if credentials else \"\",\n                webhook_type=webhook_type,\n                resource=resource,\n                events=events,\n                provider_webhook_id=provider_webhook_id,\n                config=config,\n                secret=secret,\n            )\n        )",
+          "children": [
+            {
+              "value": "PROVIDER_NAME: ClassVar[ProviderName]",
+              "children": [
+                {
+                  "value": "PROVIDER_NAME: ClassVar[ProviderName]",
+                  "children": [
+                    {
+                      "value": "PROVIDER_NAME",
+                      "children": []
+                    },
+                    {
+                      "value": "ClassVar[ProviderName]",
+                      "children": [
+                        {
+                          "value": "ClassVar[ProviderName]",
+                          "children": [
+                            {
+                              "value": "ClassVar",
+                              "children": []
+                            },
+                            {
+                              "value": "[ProviderName]",
+                              "children": [
+                                {
+                                  "value": "ProviderName",
+                                  "children": [
+                                    {
+                                      "value": "ProviderName",
+                                      "children": []
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "# --8<-- [end:BaseWebhooksManager1]",
+              "children": []
+            },
+            {
+              "value": "WebhookType: WT",
+              "children": [
+                {
+                  "value": "WebhookType: WT",
+                  "children": [
+                    {
+                      "value": "WebhookType",
+                      "children": []
+                    },
+                    {
+                      "value": "WT",
+                      "children": [
+                        {
+                          "value": "WT",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "async def get_suitable_auto_webhook(\n        self,\n        user_id: str,\n        credentials: Credentials,\n        webhook_type: WT,\n        resource: str,\n        events: list[str],\n    ) -> integrations.Webhook:\n        if not app_config.platform_base_url:\n            raise MissingConfigError(\n                \"PLATFORM_BASE_URL must be set to use Webhook functionality\"\n            )\n\n        if webhook := await integrations.find_webhook_by_credentials_and_props(\n            credentials.id, webhook_type, resource, events\n        ):\n            return webhook\n        return await self._create_webhook(\n            user_id, webhook_type, events, resource, credentials\n        )",
+              "children": [
+                {
+                  "value": "get_suitable_auto_webhook",
+                  "children": []
+                },
+                {
+                  "value": "(\n        self,\n        user_id: str,\n        credentials: Credentials,\n        webhook_type: WT,\n        resource: str,\n        events: list[str],\n    )",
+                  "children": [
+                    {
+                      "value": "self",
+                      "children": []
+                    },
+                    {
+                      "value": "user_id: str",
+                      "children": [
+                        {
+                          "value": "user_id",
+                          "children": []
+                        },
+                        {
+                          "value": "str",
+                          "children": [
+                            {
+                              "value": "str",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "credentials: Credentials",
+                      "children": [
+                        {
+                          "value": "credentials",
+                          "children": []
+                        },
+                        {
+                          "value": "Credentials",
+                          "children": [
+                            {
+                              "value": "Credentials",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "webhook_type: WT",
+                      "children": [
+                        {
+                          "value": "webhook_type",
+                          "children": []
+                        },
+                        {
+                          "value": "WT",
+                          "children": [
+                            {
+                              "value": "WT",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "resource: str",
+                      "children": [
+                        {
+                          "value": "resource",
+                          "children": []
+                        },
+                        {
+                          "value": "str",
+                          "children": [
+                            {
+                              "value": "str",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "events: list[str]",
+                      "children": [
+                        {
+                          "value": "events",
+                          "children": []
+                        },
+                        {
+                          "value": "list[str]",
+                          "children": [
+                            {
+                              "value": "list[str]",
+                              "children": [
+                                {
+                                  "value": "list",
+                                  "children": []
+                                },
+                                {
+                                  "value": "[str]",
+                                  "children": [
+                                    {
+                                      "value": "str",
+                                      "children": [
+                                        {
+                                          "value": "str",
+                                          "children": []
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "value": "integrations.Webhook",
+                  "children": [
+                    {
+                      "value": "integrations.Webhook",
+                      "children": [
+                        {
+                          "value": "integrations",
+                          "children": []
+                        },
+                        {
+                          "value": "Webhook",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "value": "if not app_config.platform_base_url:\n            raise MissingConfigError(\n                \"PLATFORM_BASE_URL must be set to use Webhook functionality\"\n            )\n\n        if webhook := await integrations.find_webhook_by_credentials_and_props(\n            credentials.id, webhook_type, resource, events\n        ):\n            return webhook\n        return await self._create_webhook(\n            user_id, webhook_type, events, resource, credentials\n        )",
+                  "children": [
+                    {
+                      "value": "if not app_config.platform_base_url:\n            raise MissingConfigError(\n                \"PLATFORM_BASE_URL must be set to use Webhook functionality\"\n            )",
+                      "children": [
+                        {
+                          "value": "not app_config.platform_base_url",
+                          "children": [
+                            {
+                              "value": "app_config.platform_base_url",
+                              "children": [
+                                {
+                                  "value": "app_config",
+                                  "children": []
+                                },
+                                {
+                                  "value": "platform_base_url",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "value": "raise MissingConfigError(\n                \"PLATFORM_BASE_URL must be set to use Webhook functionality\"\n            )",
+                          "children": [
+                            {
+                              "value": "raise MissingConfigError(\n                \"PLATFORM_BASE_URL must be set to use Webhook functionality\"\n            )",
+                              "children": [
+                                {
+                                  "value": "MissingConfigError(\n                \"PLATFORM_BASE_URL must be set to use Webhook functionality\"\n            )",
+                                  "children": [
+                                    {
+                                      "value": "MissingConfigError",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "(\n                \"PLATFORM_BASE_URL must be set to use Webhook functionality\"\n            )",
+                                      "children": [
+                                        {
+                                          "value": "\"PLATFORM_BASE_URL must be set to use Webhook functionality\"",
+                                          "children": [
+                                            {
+                                              "value": "\"",
+                                              "children": []
+                                            },
+                                            {
+                                              "value": "PLATFORM_BASE_URL must be set to use Webhook functionality",
+                                              "children": []
+                                            },
+                                            {
+                                              "value": "\"",
+                                              "children": []
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "if webhook := await integrations.find_webhook_by_credentials_and_props(\n            credentials.id, webhook_type, resource, events\n        ):\n            return webhook",
+                      "children": [
+                        {
+                          "value": "webhook := await integrations.find_webhook_by_credentials_and_props(\n            credentials.id, webhook_type, resource, events\n        )",
+                          "children": [
+                            {
+                              "value": "webhook",
+                              "children": []
+                            },
+                            {
+                              "value": "await integrations.find_webhook_by_credentials_and_props(\n            credentials.id, webhook_type, resource, events\n        )",
+                              "children": [
+                                {
+                                  "value": "integrations.find_webhook_by_credentials_and_props(\n            credentials.id, webhook_type, resource, events\n        )",
+                                  "children": [
+                                    {
+                                      "value": "integrations.find_webhook_by_credentials_and_props",
+                                      "children": [
+                                        {
+                                          "value": "integrations",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "find_webhook_by_credentials_and_props",
+                                          "children": []
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "value": "(\n            credentials.id, webhook_type, resource, events\n        )",
+                                      "children": [
+                                        {
+                                          "value": "credentials.id",
+                                          "children": [
+                                            {
+                                              "value": "credentials",
+                                              "children": []
+                                            },
+                                            {
+                                              "value": "id",
+                                              "children": []
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "value": "webhook_type",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "resource",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "events",
+                                          "children": []
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "value": "return webhook",
+                          "children": [
+                            {
+                              "value": "return webhook",
+                              "children": [
+                                {
+                                  "value": "webhook",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "return await self._create_webhook(\n            user_id, webhook_type, events, resource, credentials\n        )",
+                      "children": [
+                        {
+                          "value": "await self._create_webhook(\n            user_id, webhook_type, events, resource, credentials\n        )",
+                          "children": [
+                            {
+                              "value": "self._create_webhook(\n            user_id, webhook_type, events, resource, credentials\n        )",
+                              "children": [
+                                {
+                                  "value": "self._create_webhook",
+                                  "children": [
+                                    {
+                                      "value": "self",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "_create_webhook",
+                                      "children": []
+                                    }
+                                  ]
+                                },
+                                {
+                                  "value": "(\n            user_id, webhook_type, events, resource, credentials\n        )",
+                                  "children": [
+                                    {
+                                      "value": "user_id",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "webhook_type",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "events",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "resource",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "credentials",
+                                      "children": []
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "async def get_manual_webhook(\n        self,\n        user_id: str,\n        graph_id: str,\n        webhook_type: WT,\n        events: list[str],\n    ):\n        if current_webhook := await integrations.find_webhook_by_graph_and_props(\n            graph_id, self.PROVIDER_NAME, webhook_type, events\n        ):\n            return current_webhook\n        return await self._create_webhook(\n            user_id,\n            webhook_type,\n            events,\n            register=False,\n        )",
+              "children": [
+                {
+                  "value": "get_manual_webhook",
+                  "children": []
+                },
+                {
+                  "value": "(\n        self,\n        user_id: str,\n        graph_id: str,\n        webhook_type: WT,\n        events: list[str],\n    )",
+                  "children": [
+                    {
+                      "value": "self",
+                      "children": []
+                    },
+                    {
+                      "value": "user_id: str",
+                      "children": [
+                        {
+                          "value": "user_id",
+                          "children": []
+                        },
+                        {
+                          "value": "str",
+                          "children": [
+                            {
+                              "value": "str",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "graph_id: str",
+                      "children": [
+                        {
+                          "value": "graph_id",
+                          "children": []
+                        },
+                        {
+                          "value": "str",
+                          "children": [
+                            {
+                              "value": "str",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "webhook_type: WT",
+                      "children": [
+                        {
+                          "value": "webhook_type",
+                          "children": []
+                        },
+                        {
+                          "value": "WT",
+                          "children": [
+                            {
+                              "value": "WT",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "events: list[str]",
+                      "children": [
+                        {
+                          "value": "events",
+                          "children": []
+                        },
+                        {
+                          "value": "list[str]",
+                          "children": [
+                            {
+                              "value": "list[str]",
+                              "children": [
+                                {
+                                  "value": "list",
+                                  "children": []
+                                },
+                                {
+                                  "value": "[str]",
+                                  "children": [
+                                    {
+                                      "value": "str",
+                                      "children": [
+                                        {
+                                          "value": "str",
+                                          "children": []
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "value": "if current_webhook := await integrations.find_webhook_by_graph_and_props(\n            graph_id, self.PROVIDER_NAME, webhook_type, events\n        ):\n            return current_webhook\n        return await self._create_webhook(\n            user_id,\n            webhook_type,\n            events,\n            register=False,\n        )",
+                  "children": [
+                    {
+                      "value": "if current_webhook := await integrations.find_webhook_by_graph_and_props(\n            graph_id, self.PROVIDER_NAME, webhook_type, events\n        ):\n            return current_webhook",
+                      "children": [
+                        {
+                          "value": "current_webhook := await integrations.find_webhook_by_graph_and_props(\n            graph_id, self.PROVIDER_NAME, webhook_type, events\n        )",
+                          "children": [
+                            {
+                              "value": "current_webhook",
+                              "children": []
+                            },
+                            {
+                              "value": "await integrations.find_webhook_by_graph_and_props(\n            graph_id, self.PROVIDER_NAME, webhook_type, events\n        )",
+                              "children": [
+                                {
+                                  "value": "integrations.find_webhook_by_graph_and_props(\n            graph_id, self.PROVIDER_NAME, webhook_type, events\n        )",
+                                  "children": [
+                                    {
+                                      "value": "integrations.find_webhook_by_graph_and_props",
+                                      "children": [
+                                        {
+                                          "value": "integrations",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "find_webhook_by_graph_and_props",
+                                          "children": []
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "value": "(\n            graph_id, self.PROVIDER_NAME, webhook_type, events\n        )",
+                                      "children": [
+                                        {
+                                          "value": "graph_id",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "self.PROVIDER_NAME",
+                                          "children": [
+                                            {
+                                              "value": "self",
+                                              "children": []
+                                            },
+                                            {
+                                              "value": "PROVIDER_NAME",
+                                              "children": []
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "value": "webhook_type",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "events",
+                                          "children": []
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "value": "return current_webhook",
+                          "children": [
+                            {
+                              "value": "return current_webhook",
+                              "children": [
+                                {
+                                  "value": "current_webhook",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "return await self._create_webhook(\n            user_id,\n            webhook_type,\n            events,\n            register=False,\n        )",
+                      "children": [
+                        {
+                          "value": "await self._create_webhook(\n            user_id,\n            webhook_type,\n            events,\n            register=False,\n        )",
+                          "children": [
+                            {
+                              "value": "self._create_webhook(\n            user_id,\n            webhook_type,\n            events,\n            register=False,\n        )",
+                              "children": [
+                                {
+                                  "value": "self._create_webhook",
+                                  "children": [
+                                    {
+                                      "value": "self",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "_create_webhook",
+                                      "children": []
+                                    }
+                                  ]
+                                },
+                                {
+                                  "value": "(\n            user_id,\n            webhook_type,\n            events,\n            register=False,\n        )",
+                                  "children": [
+                                    {
+                                      "value": "user_id",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "webhook_type",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "events",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "register=False",
+                                      "children": [
+                                        {
+                                          "value": "register",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "False",
+                                          "children": []
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "async def prune_webhook_if_dangling(\n        self, webhook_id: str, credentials: Optional[Credentials]\n    ) -> bool:\n        webhook = await integrations.get_webhook(webhook_id)\n        if webhook.attached_nodes is None:\n            raise ValueError(\"Error retrieving webhook including attached nodes\")\n        if webhook.attached_nodes:\n            # Don't prune webhook if in use\n            return False\n\n        if credentials:\n            await self._deregister_webhook(webhook, credentials)\n        await integrations.delete_webhook(webhook.id)\n        return True",
+              "children": [
+                {
+                  "value": "prune_webhook_if_dangling",
+                  "children": []
+                },
+                {
+                  "value": "(\n        self, webhook_id: str, credentials: Optional[Credentials]\n    )",
+                  "children": [
+                    {
+                      "value": "self",
+                      "children": []
+                    },
+                    {
+                      "value": "webhook_id: str",
+                      "children": [
+                        {
+                          "value": "webhook_id",
+                          "children": []
+                        },
+                        {
+                          "value": "str",
+                          "children": [
+                            {
+                              "value": "str",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "credentials: Optional[Credentials]",
+                      "children": [
+                        {
+                          "value": "credentials",
+                          "children": []
+                        },
+                        {
+                          "value": "Optional[Credentials]",
+                          "children": [
+                            {
+                              "value": "Optional[Credentials]",
+                              "children": [
+                                {
+                                  "value": "Optional",
+                                  "children": []
+                                },
+                                {
+                                  "value": "[Credentials]",
+                                  "children": [
+                                    {
+                                      "value": "Credentials",
+                                      "children": [
+                                        {
+                                          "value": "Credentials",
+                                          "children": []
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "value": "bool",
+                  "children": [
+                    {
+                      "value": "bool",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "value": "webhook = await integrations.get_webhook(webhook_id)\n        if webhook.attached_nodes is None:\n            raise ValueError(\"Error retrieving webhook including attached nodes\")\n        if webhook.attached_nodes:\n            # Don't prune webhook if in use\n            return False\n\n        if credentials:\n            await self._deregister_webhook(webhook, credentials)\n        await integrations.delete_webhook(webhook.id)\n        return True",
+                  "children": [
+                    {
+                      "value": "webhook = await integrations.get_webhook(webhook_id)",
+                      "children": [
+                        {
+                          "value": "webhook = await integrations.get_webhook(webhook_id)",
+                          "children": [
+                            {
+                              "value": "webhook",
+                              "children": []
+                            },
+                            {
+                              "value": "await integrations.get_webhook(webhook_id)",
+                              "children": [
+                                {
+                                  "value": "integrations.get_webhook(webhook_id)",
+                                  "children": [
+                                    {
+                                      "value": "integrations.get_webhook",
+                                      "children": [
+                                        {
+                                          "value": "integrations",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "get_webhook",
+                                          "children": []
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "value": "(webhook_id)",
+                                      "children": [
+                                        {
+                                          "value": "webhook_id",
+                                          "children": []
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "if webhook.attached_nodes is None:\n            raise ValueError(\"Error retrieving webhook including attached nodes\")",
+                      "children": [
+                        {
+                          "value": "webhook.attached_nodes is None",
+                          "children": [
+                            {
+                              "value": "webhook.attached_nodes",
+                              "children": [
+                                {
+                                  "value": "webhook",
+                                  "children": []
+                                },
+                                {
+                                  "value": "attached_nodes",
+                                  "children": []
+                                }
+                              ]
+                            },
+                            {
+                              "value": "None",
+                              "children": []
+                            }
+                          ]
+                        },
+                        {
+                          "value": "raise ValueError(\"Error retrieving webhook including attached nodes\")",
+                          "children": [
+                            {
+                              "value": "raise ValueError(\"Error retrieving webhook including attached nodes\")",
+                              "children": [
+                                {
+                                  "value": "ValueError(\"Error retrieving webhook including attached nodes\")",
+                                  "children": [
+                                    {
+                                      "value": "ValueError",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "(\"Error retrieving webhook including attached nodes\")",
+                                      "children": [
+                                        {
+                                          "value": "\"Error retrieving webhook including attached nodes\"",
+                                          "children": [
+                                            {
+                                              "value": "\"",
+                                              "children": []
+                                            },
+                                            {
+                                              "value": "Error retrieving webhook including attached nodes",
+                                              "children": []
+                                            },
+                                            {
+                                              "value": "\"",
+                                              "children": []
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "if webhook.attached_nodes:\n            # Don't prune webhook if in use\n            return False",
+                      "children": [
+                        {
+                          "value": "webhook.attached_nodes",
+                          "children": [
+                            {
+                              "value": "webhook",
+                              "children": []
+                            },
+                            {
+                              "value": "attached_nodes",
+                              "children": []
+                            }
+                          ]
+                        },
+                        {
+                          "value": "# Don't prune webhook if in use",
+                          "children": []
+                        },
+                        {
+                          "value": "return False",
+                          "children": [
+                            {
+                              "value": "return False",
+                              "children": [
+                                {
+                                  "value": "False",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "if credentials:\n            await self._deregister_webhook(webhook, credentials)",
+                      "children": [
+                        {
+                          "value": "credentials",
+                          "children": []
+                        },
+                        {
+                          "value": "await self._deregister_webhook(webhook, credentials)",
+                          "children": [
+                            {
+                              "value": "await self._deregister_webhook(webhook, credentials)",
+                              "children": [
+                                {
+                                  "value": "await self._deregister_webhook(webhook, credentials)",
+                                  "children": [
+                                    {
+                                      "value": "self._deregister_webhook(webhook, credentials)",
+                                      "children": [
+                                        {
+                                          "value": "self._deregister_webhook",
+                                          "children": [
+                                            {
+                                              "value": "self",
+                                              "children": []
+                                            },
+                                            {
+                                              "value": "_deregister_webhook",
+                                              "children": []
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "value": "(webhook, credentials)",
+                                          "children": [
+                                            {
+                                              "value": "webhook",
+                                              "children": []
+                                            },
+                                            {
+                                              "value": "credentials",
+                                              "children": []
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "await integrations.delete_webhook(webhook.id)",
+                      "children": [
+                        {
+                          "value": "await integrations.delete_webhook(webhook.id)",
+                          "children": [
+                            {
+                              "value": "integrations.delete_webhook(webhook.id)",
+                              "children": [
+                                {
+                                  "value": "integrations.delete_webhook",
+                                  "children": [
+                                    {
+                                      "value": "integrations",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "delete_webhook",
+                                      "children": []
+                                    }
+                                  ]
+                                },
+                                {
+                                  "value": "(webhook.id)",
+                                  "children": [
+                                    {
+                                      "value": "webhook.id",
+                                      "children": [
+                                        {
+                                          "value": "webhook",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "id",
+                                          "children": []
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "return True",
+                      "children": [
+                        {
+                          "value": "True",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "# --8<-- [start:BaseWebhooksManager3]",
+              "children": []
+            },
+            {
+              "value": "@classmethod\n    @abstractmethod\n    async def validate_payload(\n        cls, webhook: integrations.Webhook, request: Request\n    ) -> tuple[dict, str]:\n        \"\"\"\n        Validates an incoming webhook request and returns its payload and type.\n\n        Params:\n            webhook: Object representing the configured webhook and its properties in our system.\n            request: Incoming FastAPI `Request`\n\n        Returns:\n            dict: The validated payload\n            str: The event type associated with the payload\n        \"\"\"",
+              "children": [
+                {
+                  "value": "@classmethod",
+                  "children": [
+                    {
+                      "value": "classmethod",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "value": "@abstractmethod",
+                  "children": [
+                    {
+                      "value": "abstractmethod",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "value": "async def validate_payload(\n        cls, webhook: integrations.Webhook, request: Request\n    ) -> tuple[dict, str]:\n        \"\"\"\n        Validates an incoming webhook request and returns its payload and type.\n\n        Params:\n            webhook: Object representing the configured webhook and its properties in our system.\n            request: Incoming FastAPI `Request`\n\n        Returns:\n            dict: The validated payload\n            str: The event type associated with the payload\n        \"\"\"",
+                  "children": [
+                    {
+                      "value": "validate_payload",
+                      "children": []
+                    },
+                    {
+                      "value": "(\n        cls, webhook: integrations.Webhook, request: Request\n    )",
+                      "children": [
+                        {
+                          "value": "cls",
+                          "children": []
+                        },
+                        {
+                          "value": "webhook: integrations.Webhook",
+                          "children": [
+                            {
+                              "value": "webhook",
+                              "children": []
+                            },
+                            {
+                              "value": "integrations.Webhook",
+                              "children": [
+                                {
+                                  "value": "integrations.Webhook",
+                                  "children": [
+                                    {
+                                      "value": "integrations",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "Webhook",
+                                      "children": []
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "value": "request: Request",
+                          "children": [
+                            {
+                              "value": "request",
+                              "children": []
+                            },
+                            {
+                              "value": "Request",
+                              "children": [
+                                {
+                                  "value": "Request",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "tuple[dict, str]",
+                      "children": [
+                        {
+                          "value": "tuple[dict, str]",
+                          "children": [
+                            {
+                              "value": "tuple",
+                              "children": []
+                            },
+                            {
+                              "value": "[dict, str]",
+                              "children": [
+                                {
+                                  "value": "dict",
+                                  "children": [
+                                    {
+                                      "value": "dict",
+                                      "children": []
+                                    }
+                                  ]
+                                },
+                                {
+                                  "value": "str",
+                                  "children": [
+                                    {
+                                      "value": "str",
+                                      "children": []
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "\"\"\"\n        Validates an incoming webhook request and returns its payload and type.\n\n        Params:\n            webhook: Object representing the configured webhook and its properties in our system.\n            request: Incoming FastAPI `Request`\n\n        Returns:\n            dict: The validated payload\n            str: The event type associated with the payload\n        \"\"\"",
+                      "children": [
+                        {
+                          "value": "\"\"\"\n        Validates an incoming webhook request and returns its payload and type.\n\n        Params:\n            webhook: Object representing the configured webhook and its properties in our system.\n            request: Incoming FastAPI `Request`\n\n        Returns:\n            dict: The validated payload\n            str: The event type associated with the payload\n        \"\"\"",
+                          "children": [
+                            {
+                              "value": "\"\"\"\n        Validates an incoming webhook request and returns its payload and type.\n\n        Params:\n            webhook: Object representing the configured webhook and its properties in our system.\n            request: Incoming FastAPI `Request`\n\n        Returns:\n            dict: The validated payload\n            str: The event type associated with the payload\n        \"\"\"",
+                              "children": [
+                                {
+                                  "value": "\"\"\"",
+                                  "children": []
+                                },
+                                {
+                                  "value": "Validates an incoming webhook request and returns its payload and type.\n\n        Params:\n            webhook: Object representing the configured webhook and its properties in our system.\n            request: Incoming FastAPI `Request`\n\n        Returns:\n            dict: The validated payload\n            str: The event type associated with the payload",
+                                  "children": []
+                                },
+                                {
+                                  "value": "\"\"\"",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "# --8<-- [end:BaseWebhooksManager3]",
+              "children": []
+            },
+            {
+              "value": "# --8<-- [start:BaseWebhooksManager5]",
+              "children": []
+            },
+            {
+              "value": "async def trigger_ping(\n        self, webhook: integrations.Webhook, credentials: Credentials | None\n    ) -> None:\n        \"\"\"\n        Triggers a ping to the given webhook.\n\n        Raises:\n            NotImplementedError: if the provider doesn't support pinging\n        \"\"\"\n        # --8<-- [end:BaseWebhooksManager5]\n        raise NotImplementedError(f\"{self.__class__.__name__} doesn't support pinging\")",
+              "children": [
+                {
+                  "value": "trigger_ping",
+                  "children": []
+                },
+                {
+                  "value": "(\n        self, webhook: integrations.Webhook, credentials: Credentials | None\n    )",
+                  "children": [
+                    {
+                      "value": "self",
+                      "children": []
+                    },
+                    {
+                      "value": "webhook: integrations.Webhook",
+                      "children": [
+                        {
+                          "value": "webhook",
+                          "children": []
+                        },
+                        {
+                          "value": "integrations.Webhook",
+                          "children": [
+                            {
+                              "value": "integrations.Webhook",
+                              "children": [
+                                {
+                                  "value": "integrations",
+                                  "children": []
+                                },
+                                {
+                                  "value": "Webhook",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "credentials: Credentials | None",
+                      "children": [
+                        {
+                          "value": "credentials",
+                          "children": []
+                        },
+                        {
+                          "value": "Credentials | None",
+                          "children": [
+                            {
+                              "value": "Credentials | None",
+                              "children": [
+                                {
+                                  "value": "Credentials",
+                                  "children": []
+                                },
+                                {
+                                  "value": "None",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "value": "None",
+                  "children": [
+                    {
+                      "value": "None",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "value": "\"\"\"\n        Triggers a ping to the given webhook.\n\n        Raises:\n            NotImplementedError: if the provider doesn't support pinging\n        \"\"\"\n        # --8<-- [end:BaseWebhooksManager5]\n        raise NotImplementedError(f\"{self.__class__.__name__} doesn't support pinging\")",
+                  "children": [
+                    {
+                      "value": "\"\"\"\n        Triggers a ping to the given webhook.\n\n        Raises:\n            NotImplementedError: if the provider doesn't support pinging\n        \"\"\"",
+                      "children": [
+                        {
+                          "value": "\"\"\"\n        Triggers a ping to the given webhook.\n\n        Raises:\n            NotImplementedError: if the provider doesn't support pinging\n        \"\"\"",
+                          "children": [
+                            {
+                              "value": "\"\"\"",
+                              "children": []
+                            },
+                            {
+                              "value": "Triggers a ping to the given webhook.\n\n        Raises:\n            NotImplementedError: if the provider doesn't support pinging",
+                              "children": []
+                            },
+                            {
+                              "value": "\"\"\"",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "# --8<-- [end:BaseWebhooksManager5]",
+                      "children": []
+                    },
+                    {
+                      "value": "raise NotImplementedError(f\"{self.__class__.__name__} doesn't support pinging\")",
+                      "children": [
+                        {
+                          "value": "NotImplementedError(f\"{self.__class__.__name__} doesn't support pinging\")",
+                          "children": [
+                            {
+                              "value": "NotImplementedError",
+                              "children": []
+                            },
+                            {
+                              "value": "(f\"{self.__class__.__name__} doesn't support pinging\")",
+                              "children": [
+                                {
+                                  "value": "f\"{self.__class__.__name__} doesn't support pinging\"",
+                                  "children": [
+                                    {
+                                      "value": "f\"",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "{self.__class__.__name__}",
+                                      "children": [
+                                        {
+                                          "value": "self.__class__.__name__",
+                                          "children": [
+                                            {
+                                              "value": "self.__class__",
+                                              "children": [
+                                                {
+                                                  "value": "self",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "__class__",
+                                                  "children": []
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "value": "__name__",
+                                              "children": []
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "value": "doesn't support pinging",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "\"",
+                                      "children": []
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "# --8<-- [start:BaseWebhooksManager2]",
+              "children": []
+            },
+            {
+              "value": "@abstractmethod\n    async def _register_webhook(\n        self,\n        credentials: Credentials,\n        webhook_type: WT,\n        resource: str,\n        events: list[str],\n        ingress_url: str,\n        secret: str,\n    ) -> tuple[str, dict]:\n        \"\"\"\n        Registers a new webhook with the provider.\n\n        Params:\n            credentials: The credentials with which to create the webhook\n            webhook_type: The provider-specific webhook type to create\n            resource: The resource to receive events for\n            events: The events to subscribe to\n            ingress_url: The ingress URL for webhook payloads\n            secret: Secret used to verify webhook payloads\n\n        Returns:\n            str: Webhook ID assigned by the provider\n            config: Provider-specific configuration for the webhook\n        \"\"\"\n        ...",
+              "children": [
+                {
+                  "value": "@abstractmethod",
+                  "children": [
+                    {
+                      "value": "abstractmethod",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "value": "async def _register_webhook(\n        self,\n        credentials: Credentials,\n        webhook_type: WT,\n        resource: str,\n        events: list[str],\n        ingress_url: str,\n        secret: str,\n    ) -> tuple[str, dict]:\n        \"\"\"\n        Registers a new webhook with the provider.\n\n        Params:\n            credentials: The credentials with which to create the webhook\n            webhook_type: The provider-specific webhook type to create\n            resource: The resource to receive events for\n            events: The events to subscribe to\n            ingress_url: The ingress URL for webhook payloads\n            secret: Secret used to verify webhook payloads\n\n        Returns:\n            str: Webhook ID assigned by the provider\n            config: Provider-specific configuration for the webhook\n        \"\"\"\n        ...",
+                  "children": [
+                    {
+                      "value": "_register_webhook",
+                      "children": []
+                    },
+                    {
+                      "value": "(\n        self,\n        credentials: Credentials,\n        webhook_type: WT,\n        resource: str,\n        events: list[str],\n        ingress_url: str,\n        secret: str,\n    )",
+                      "children": [
+                        {
+                          "value": "self",
+                          "children": []
+                        },
+                        {
+                          "value": "credentials: Credentials",
+                          "children": [
+                            {
+                              "value": "credentials",
+                              "children": []
+                            },
+                            {
+                              "value": "Credentials",
+                              "children": [
+                                {
+                                  "value": "Credentials",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "value": "webhook_type: WT",
+                          "children": [
+                            {
+                              "value": "webhook_type",
+                              "children": []
+                            },
+                            {
+                              "value": "WT",
+                              "children": [
+                                {
+                                  "value": "WT",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "value": "resource: str",
+                          "children": [
+                            {
+                              "value": "resource",
+                              "children": []
+                            },
+                            {
+                              "value": "str",
+                              "children": [
+                                {
+                                  "value": "str",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "value": "events: list[str]",
+                          "children": [
+                            {
+                              "value": "events",
+                              "children": []
+                            },
+                            {
+                              "value": "list[str]",
+                              "children": [
+                                {
+                                  "value": "list[str]",
+                                  "children": [
+                                    {
+                                      "value": "list",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "[str]",
+                                      "children": [
+                                        {
+                                          "value": "str",
+                                          "children": [
+                                            {
+                                              "value": "str",
+                                              "children": []
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "value": "ingress_url: str",
+                          "children": [
+                            {
+                              "value": "ingress_url",
+                              "children": []
+                            },
+                            {
+                              "value": "str",
+                              "children": [
+                                {
+                                  "value": "str",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "value": "secret: str",
+                          "children": [
+                            {
+                              "value": "secret",
+                              "children": []
+                            },
+                            {
+                              "value": "str",
+                              "children": [
+                                {
+                                  "value": "str",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "tuple[str, dict]",
+                      "children": [
+                        {
+                          "value": "tuple[str, dict]",
+                          "children": [
+                            {
+                              "value": "tuple",
+                              "children": []
+                            },
+                            {
+                              "value": "[str, dict]",
+                              "children": [
+                                {
+                                  "value": "str",
+                                  "children": [
+                                    {
+                                      "value": "str",
+                                      "children": []
+                                    }
+                                  ]
+                                },
+                                {
+                                  "value": "dict",
+                                  "children": [
+                                    {
+                                      "value": "dict",
+                                      "children": []
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "\"\"\"\n        Registers a new webhook with the provider.\n\n        Params:\n            credentials: The credentials with which to create the webhook\n            webhook_type: The provider-specific webhook type to create\n            resource: The resource to receive events for\n            events: The events to subscribe to\n            ingress_url: The ingress URL for webhook payloads\n            secret: Secret used to verify webhook payloads\n\n        Returns:\n            str: Webhook ID assigned by the provider\n            config: Provider-specific configuration for the webhook\n        \"\"\"\n        ...",
+                      "children": [
+                        {
+                          "value": "\"\"\"\n        Registers a new webhook with the provider.\n\n        Params:\n            credentials: The credentials with which to create the webhook\n            webhook_type: The provider-specific webhook type to create\n            resource: The resource to receive events for\n            events: The events to subscribe to\n            ingress_url: The ingress URL for webhook payloads\n            secret: Secret used to verify webhook payloads\n\n        Returns:\n            str: Webhook ID assigned by the provider\n            config: Provider-specific configuration for the webhook\n        \"\"\"",
+                          "children": [
+                            {
+                              "value": "\"\"\"\n        Registers a new webhook with the provider.\n\n        Params:\n            credentials: The credentials with which to create the webhook\n            webhook_type: The provider-specific webhook type to create\n            resource: The resource to receive events for\n            events: The events to subscribe to\n            ingress_url: The ingress URL for webhook payloads\n            secret: Secret used to verify webhook payloads\n\n        Returns:\n            str: Webhook ID assigned by the provider\n            config: Provider-specific configuration for the webhook\n        \"\"\"",
+                              "children": [
+                                {
+                                  "value": "\"\"\"",
+                                  "children": []
+                                },
+                                {
+                                  "value": "Registers a new webhook with the provider.\n\n        Params:\n            credentials: The credentials with which to create the webhook\n            webhook_type: The provider-specific webhook type to create\n            resource: The resource to receive events for\n            events: The events to subscribe to\n            ingress_url: The ingress URL for webhook payloads\n            secret: Secret used to verify webhook payloads\n\n        Returns:\n            str: Webhook ID assigned by the provider\n            config: Provider-specific configuration for the webhook",
+                                  "children": []
+                                },
+                                {
+                                  "value": "\"\"\"",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "value": "...",
+                          "children": [
+                            {
+                              "value": "...",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "# --8<-- [end:BaseWebhooksManager2]",
+              "children": []
+            },
+            {
+              "value": "# --8<-- [start:BaseWebhooksManager4]",
+              "children": []
+            },
+            {
+              "value": "@abstractmethod\n    async def _deregister_webhook(\n        self, webhook: integrations.Webhook, credentials: Credentials\n    ) -> None: ...",
+              "children": [
+                {
+                  "value": "@abstractmethod",
+                  "children": [
+                    {
+                      "value": "abstractmethod",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "value": "async def _deregister_webhook(\n        self, webhook: integrations.Webhook, credentials: Credentials\n    ) -> None: ...",
+                  "children": [
+                    {
+                      "value": "_deregister_webhook",
+                      "children": []
+                    },
+                    {
+                      "value": "(\n        self, webhook: integrations.Webhook, credentials: Credentials\n    )",
+                      "children": [
+                        {
+                          "value": "self",
+                          "children": []
+                        },
+                        {
+                          "value": "webhook: integrations.Webhook",
+                          "children": [
+                            {
+                              "value": "webhook",
+                              "children": []
+                            },
+                            {
+                              "value": "integrations.Webhook",
+                              "children": [
+                                {
+                                  "value": "integrations.Webhook",
+                                  "children": [
+                                    {
+                                      "value": "integrations",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "Webhook",
+                                      "children": []
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "value": "credentials: Credentials",
+                          "children": [
+                            {
+                              "value": "credentials",
+                              "children": []
+                            },
+                            {
+                              "value": "Credentials",
+                              "children": [
+                                {
+                                  "value": "Credentials",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "None",
+                      "children": [
+                        {
+                          "value": "None",
+                          "children": []
+                        }
+                      ]
+                    },
+                    {
+                      "value": "...",
+                      "children": [
+                        {
+                          "value": "...",
+                          "children": [
+                            {
+                              "value": "...",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "# --8<-- [end:BaseWebhooksManager4]",
+              "children": []
+            },
+            {
+              "value": "async def _create_webhook(\n        self,\n        user_id: str,\n        webhook_type: WT,\n        events: list[str],\n        resource: str = \"\",\n        credentials: Optional[Credentials] = None,\n        register: bool = True,\n    ) -> integrations.Webhook:\n        if not app_config.platform_base_url:\n            raise MissingConfigError(\n                \"PLATFORM_BASE_URL must be set to use Webhook functionality\"\n            )\n\n        id = str(uuid4())\n        secret = secrets.token_hex(32)\n        provider_name = self.PROVIDER_NAME\n        ingress_url = webhook_ingress_url(provider_name=provider_name, webhook_id=id)\n        if register:\n            if not credentials:\n                raise TypeError(\"credentials are required if register = True\")\n            provider_webhook_id, config = await self._register_webhook(\n                credentials, webhook_type, resource, events, ingress_url, secret\n            )\n        else:\n            provider_webhook_id, config = \"\", {}\n\n        return await integrations.create_webhook(\n            integrations.Webhook(\n                id=id,\n                user_id=user_id,\n                provider=provider_name,\n                credentials_id=credentials.id if credentials else \"\",\n                webhook_type=webhook_type,\n                resource=resource,\n                events=events,\n                provider_webhook_id=provider_webhook_id,\n                config=config,\n                secret=secret,\n            )\n        )",
+              "children": [
+                {
+                  "value": "_create_webhook",
+                  "children": []
+                },
+                {
+                  "value": "(\n        self,\n        user_id: str,\n        webhook_type: WT,\n        events: list[str],\n        resource: str = \"\",\n        credentials: Optional[Credentials] = None,\n        register: bool = True,\n    )",
+                  "children": [
+                    {
+                      "value": "self",
+                      "children": []
+                    },
+                    {
+                      "value": "user_id: str",
+                      "children": [
+                        {
+                          "value": "user_id",
+                          "children": []
+                        },
+                        {
+                          "value": "str",
+                          "children": [
+                            {
+                              "value": "str",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "webhook_type: WT",
+                      "children": [
+                        {
+                          "value": "webhook_type",
+                          "children": []
+                        },
+                        {
+                          "value": "WT",
+                          "children": [
+                            {
+                              "value": "WT",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "events: list[str]",
+                      "children": [
+                        {
+                          "value": "events",
+                          "children": []
+                        },
+                        {
+                          "value": "list[str]",
+                          "children": [
+                            {
+                              "value": "list[str]",
+                              "children": [
+                                {
+                                  "value": "list",
+                                  "children": []
+                                },
+                                {
+                                  "value": "[str]",
+                                  "children": [
+                                    {
+                                      "value": "str",
+                                      "children": [
+                                        {
+                                          "value": "str",
+                                          "children": []
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "resource: str = \"\"",
+                      "children": [
+                        {
+                          "value": "resource",
+                          "children": []
+                        },
+                        {
+                          "value": "str",
+                          "children": [
+                            {
+                              "value": "str",
+                              "children": []
+                            }
+                          ]
+                        },
+                        {
+                          "value": "\"\"",
+                          "children": [
+                            {
+                              "value": "\"",
+                              "children": []
+                            },
+                            {
+                              "value": "\"",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "credentials: Optional[Credentials] = None",
+                      "children": [
+                        {
+                          "value": "credentials",
+                          "children": []
+                        },
+                        {
+                          "value": "Optional[Credentials]",
+                          "children": [
+                            {
+                              "value": "Optional[Credentials]",
+                              "children": [
+                                {
+                                  "value": "Optional",
+                                  "children": []
+                                },
+                                {
+                                  "value": "[Credentials]",
+                                  "children": [
+                                    {
+                                      "value": "Credentials",
+                                      "children": [
+                                        {
+                                          "value": "Credentials",
+                                          "children": []
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "value": "None",
+                          "children": []
+                        }
+                      ]
+                    },
+                    {
+                      "value": "register: bool = True",
+                      "children": [
+                        {
+                          "value": "register",
+                          "children": []
+                        },
+                        {
+                          "value": "bool",
+                          "children": [
+                            {
+                              "value": "bool",
+                              "children": []
+                            }
+                          ]
+                        },
+                        {
+                          "value": "True",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "value": "integrations.Webhook",
+                  "children": [
+                    {
+                      "value": "integrations.Webhook",
+                      "children": [
+                        {
+                          "value": "integrations",
+                          "children": []
+                        },
+                        {
+                          "value": "Webhook",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "value": "if not app_config.platform_base_url:\n            raise MissingConfigError(\n                \"PLATFORM_BASE_URL must be set to use Webhook functionality\"\n            )\n\n        id = str(uuid4())\n        secret = secrets.token_hex(32)\n        provider_name = self.PROVIDER_NAME\n        ingress_url = webhook_ingress_url(provider_name=provider_name, webhook_id=id)\n        if register:\n            if not credentials:\n                raise TypeError(\"credentials are required if register = True\")\n            provider_webhook_id, config = await self._register_webhook(\n                credentials, webhook_type, resource, events, ingress_url, secret\n            )\n        else:\n            provider_webhook_id, config = \"\", {}\n\n        return await integrations.create_webhook(\n            integrations.Webhook(\n                id=id,\n                user_id=user_id,\n                provider=provider_name,\n                credentials_id=credentials.id if credentials else \"\",\n                webhook_type=webhook_type,\n                resource=resource,\n                events=events,\n                provider_webhook_id=provider_webhook_id,\n                config=config,\n                secret=secret,\n            )\n        )",
+                  "children": [
+                    {
+                      "value": "if not app_config.platform_base_url:\n            raise MissingConfigError(\n                \"PLATFORM_BASE_URL must be set to use Webhook functionality\"\n            )",
+                      "children": [
+                        {
+                          "value": "not app_config.platform_base_url",
+                          "children": [
+                            {
+                              "value": "app_config.platform_base_url",
+                              "children": [
+                                {
+                                  "value": "app_config",
+                                  "children": []
+                                },
+                                {
+                                  "value": "platform_base_url",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "value": "raise MissingConfigError(\n                \"PLATFORM_BASE_URL must be set to use Webhook functionality\"\n            )",
+                          "children": [
+                            {
+                              "value": "raise MissingConfigError(\n                \"PLATFORM_BASE_URL must be set to use Webhook functionality\"\n            )",
+                              "children": [
+                                {
+                                  "value": "MissingConfigError(\n                \"PLATFORM_BASE_URL must be set to use Webhook functionality\"\n            )",
+                                  "children": [
+                                    {
+                                      "value": "MissingConfigError",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "(\n                \"PLATFORM_BASE_URL must be set to use Webhook functionality\"\n            )",
+                                      "children": [
+                                        {
+                                          "value": "\"PLATFORM_BASE_URL must be set to use Webhook functionality\"",
+                                          "children": [
+                                            {
+                                              "value": "\"",
+                                              "children": []
+                                            },
+                                            {
+                                              "value": "PLATFORM_BASE_URL must be set to use Webhook functionality",
+                                              "children": []
+                                            },
+                                            {
+                                              "value": "\"",
+                                              "children": []
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "id = str(uuid4())",
+                      "children": [
+                        {
+                          "value": "id = str(uuid4())",
+                          "children": [
+                            {
+                              "value": "id",
+                              "children": []
+                            },
+                            {
+                              "value": "str(uuid4())",
+                              "children": [
+                                {
+                                  "value": "str",
+                                  "children": []
+                                },
+                                {
+                                  "value": "(uuid4())",
+                                  "children": [
+                                    {
+                                      "value": "uuid4()",
+                                      "children": [
+                                        {
+                                          "value": "uuid4",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "()",
+                                          "children": []
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "secret = secrets.token_hex(32)",
+                      "children": [
+                        {
+                          "value": "secret = secrets.token_hex(32)",
+                          "children": [
+                            {
+                              "value": "secret",
+                              "children": []
+                            },
+                            {
+                              "value": "secrets.token_hex(32)",
+                              "children": [
+                                {
+                                  "value": "secrets.token_hex",
+                                  "children": [
+                                    {
+                                      "value": "secrets",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "token_hex",
+                                      "children": []
+                                    }
+                                  ]
+                                },
+                                {
+                                  "value": "(32)",
+                                  "children": [
+                                    {
+                                      "value": "32",
+                                      "children": []
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "provider_name = self.PROVIDER_NAME",
+                      "children": [
+                        {
+                          "value": "provider_name = self.PROVIDER_NAME",
+                          "children": [
+                            {
+                              "value": "provider_name",
+                              "children": []
+                            },
+                            {
+                              "value": "self.PROVIDER_NAME",
+                              "children": [
+                                {
+                                  "value": "self",
+                                  "children": []
+                                },
+                                {
+                                  "value": "PROVIDER_NAME",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "ingress_url = webhook_ingress_url(provider_name=provider_name, webhook_id=id)",
+                      "children": [
+                        {
+                          "value": "ingress_url = webhook_ingress_url(provider_name=provider_name, webhook_id=id)",
+                          "children": [
+                            {
+                              "value": "ingress_url",
+                              "children": []
+                            },
+                            {
+                              "value": "webhook_ingress_url(provider_name=provider_name, webhook_id=id)",
+                              "children": [
+                                {
+                                  "value": "webhook_ingress_url",
+                                  "children": []
+                                },
+                                {
+                                  "value": "(provider_name=provider_name, webhook_id=id)",
+                                  "children": [
+                                    {
+                                      "value": "provider_name=provider_name",
+                                      "children": [
+                                        {
+                                          "value": "provider_name",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "provider_name",
+                                          "children": []
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "value": "webhook_id=id",
+                                      "children": [
+                                        {
+                                          "value": "webhook_id",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "id",
+                                          "children": []
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "if register:\n            if not credentials:\n                raise TypeError(\"credentials are required if register = True\")\n            provider_webhook_id, config = await self._register_webhook(\n                credentials, webhook_type, resource, events, ingress_url, secret\n            )\n        else:\n            provider_webhook_id, config = \"\", {}",
+                      "children": [
+                        {
+                          "value": "register",
+                          "children": []
+                        },
+                        {
+                          "value": "if not credentials:\n                raise TypeError(\"credentials are required if register = True\")\n            provider_webhook_id, config = await self._register_webhook(\n                credentials, webhook_type, resource, events, ingress_url, secret\n            )",
+                          "children": [
+                            {
+                              "value": "if not credentials:\n                raise TypeError(\"credentials are required if register = True\")",
+                              "children": [
+                                {
+                                  "value": "not credentials",
+                                  "children": [
+                                    {
+                                      "value": "credentials",
+                                      "children": []
+                                    }
+                                  ]
+                                },
+                                {
+                                  "value": "raise TypeError(\"credentials are required if register = True\")",
+                                  "children": [
+                                    {
+                                      "value": "raise TypeError(\"credentials are required if register = True\")",
+                                      "children": [
+                                        {
+                                          "value": "TypeError(\"credentials are required if register = True\")",
+                                          "children": [
+                                            {
+                                              "value": "TypeError",
+                                              "children": []
+                                            },
+                                            {
+                                              "value": "(\"credentials are required if register = True\")",
+                                              "children": [
+                                                {
+                                                  "value": "\"credentials are required if register = True\"",
+                                                  "children": [
+                                                    {
+                                                      "value": "\"",
+                                                      "children": []
+                                                    },
+                                                    {
+                                                      "value": "credentials are required if register = True",
+                                                      "children": []
+                                                    },
+                                                    {
+                                                      "value": "\"",
+                                                      "children": []
+                                                    }
+                                                  ]
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "value": "provider_webhook_id, config = await self._register_webhook(\n                credentials, webhook_type, resource, events, ingress_url, secret\n            )",
+                              "children": [
+                                {
+                                  "value": "provider_webhook_id, config = await self._register_webhook(\n                credentials, webhook_type, resource, events, ingress_url, secret\n            )",
+                                  "children": [
+                                    {
+                                      "value": "provider_webhook_id, config",
+                                      "children": [
+                                        {
+                                          "value": "provider_webhook_id",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "config",
+                                          "children": []
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "value": "await self._register_webhook(\n                credentials, webhook_type, resource, events, ingress_url, secret\n            )",
+                                      "children": [
+                                        {
+                                          "value": "self._register_webhook(\n                credentials, webhook_type, resource, events, ingress_url, secret\n            )",
+                                          "children": [
+                                            {
+                                              "value": "self._register_webhook",
+                                              "children": [
+                                                {
+                                                  "value": "self",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "_register_webhook",
+                                                  "children": []
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "value": "(\n                credentials, webhook_type, resource, events, ingress_url, secret\n            )",
+                                              "children": [
+                                                {
+                                                  "value": "credentials",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "webhook_type",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "resource",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "events",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "ingress_url",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "secret",
+                                                  "children": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "value": "else:\n            provider_webhook_id, config = \"\", {}",
+                          "children": [
+                            {
+                              "value": "provider_webhook_id, config = \"\", {}",
+                              "children": [
+                                {
+                                  "value": "provider_webhook_id, config = \"\", {}",
+                                  "children": [
+                                    {
+                                      "value": "provider_webhook_id, config = \"\", {}",
+                                      "children": [
+                                        {
+                                          "value": "provider_webhook_id, config",
+                                          "children": [
+                                            {
+                                              "value": "provider_webhook_id",
+                                              "children": []
+                                            },
+                                            {
+                                              "value": "config",
+                                              "children": []
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "value": "\"\", {}",
+                                          "children": [
+                                            {
+                                              "value": "\"\"",
+                                              "children": [
+                                                {
+                                                  "value": "\"",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "\"",
+                                                  "children": []
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "value": "{}",
+                                              "children": []
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "return await integrations.create_webhook(\n            integrations.Webhook(\n                id=id,\n                user_id=user_id,\n                provider=provider_name,\n                credentials_id=credentials.id if credentials else \"\",\n                webhook_type=webhook_type,\n                resource=resource,\n                events=events,\n                provider_webhook_id=provider_webhook_id,\n                config=config,\n                secret=secret,\n            )\n        )",
+                      "children": [
+                        {
+                          "value": "await integrations.create_webhook(\n            integrations.Webhook(\n                id=id,\n                user_id=user_id,\n                provider=provider_name,\n                credentials_id=credentials.id if credentials else \"\",\n                webhook_type=webhook_type,\n                resource=resource,\n                events=events,\n                provider_webhook_id=provider_webhook_id,\n                config=config,\n                secret=secret,\n            )\n        )",
+                          "children": [
+                            {
+                              "value": "integrations.create_webhook(\n            integrations.Webhook(\n                id=id,\n                user_id=user_id,\n                provider=provider_name,\n                credentials_id=credentials.id if credentials else \"\",\n                webhook_type=webhook_type,\n                resource=resource,\n                events=events,\n                provider_webhook_id=provider_webhook_id,\n                config=config,\n                secret=secret,\n            )\n        )",
+                              "children": [
+                                {
+                                  "value": "integrations.create_webhook",
+                                  "children": [
+                                    {
+                                      "value": "integrations",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "create_webhook",
+                                      "children": []
+                                    }
+                                  ]
+                                },
+                                {
+                                  "value": "(\n            integrations.Webhook(\n                id=id,\n                user_id=user_id,\n                provider=provider_name,\n                credentials_id=credentials.id if credentials else \"\",\n                webhook_type=webhook_type,\n                resource=resource,\n                events=events,\n                provider_webhook_id=provider_webhook_id,\n                config=config,\n                secret=secret,\n            )\n        )",
+                                  "children": [
+                                    {
+                                      "value": "integrations.Webhook(\n                id=id,\n                user_id=user_id,\n                provider=provider_name,\n                credentials_id=credentials.id if credentials else \"\",\n                webhook_type=webhook_type,\n                resource=resource,\n                events=events,\n                provider_webhook_id=provider_webhook_id,\n                config=config,\n                secret=secret,\n            )",
+                                      "children": [
+                                        {
+                                          "value": "integrations.Webhook",
+                                          "children": [
+                                            {
+                                              "value": "integrations",
+                                              "children": []
+                                            },
+                                            {
+                                              "value": "Webhook",
+                                              "children": []
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "value": "(\n                id=id,\n                user_id=user_id,\n                provider=provider_name,\n                credentials_id=credentials.id if credentials else \"\",\n                webhook_type=webhook_type,\n                resource=resource,\n                events=events,\n                provider_webhook_id=provider_webhook_id,\n                config=config,\n                secret=secret,\n            )",
+                                          "children": [
+                                            {
+                                              "value": "id=id",
+                                              "children": [
+                                                {
+                                                  "value": "id",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "id",
+                                                  "children": []
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "value": "user_id=user_id",
+                                              "children": [
+                                                {
+                                                  "value": "user_id",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "user_id",
+                                                  "children": []
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "value": "provider=provider_name",
+                                              "children": [
+                                                {
+                                                  "value": "provider",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "provider_name",
+                                                  "children": []
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "value": "credentials_id=credentials.id if credentials else \"\"",
+                                              "children": [
+                                                {
+                                                  "value": "credentials_id",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "credentials.id if credentials else \"\"",
+                                                  "children": [
+                                                    {
+                                                      "value": "credentials.id",
+                                                      "children": [
+                                                        {
+                                                          "value": "credentials",
+                                                          "children": []
+                                                        },
+                                                        {
+                                                          "value": "id",
+                                                          "children": []
+                                                        }
+                                                      ]
+                                                    },
+                                                    {
+                                                      "value": "credentials",
+                                                      "children": []
+                                                    },
+                                                    {
+                                                      "value": "\"\"",
+                                                      "children": [
+                                                        {
+                                                          "value": "\"",
+                                                          "children": []
+                                                        },
+                                                        {
+                                                          "value": "\"",
+                                                          "children": []
+                                                        }
+                                                      ]
+                                                    }
+                                                  ]
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "value": "webhook_type=webhook_type",
+                                              "children": [
+                                                {
+                                                  "value": "webhook_type",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "webhook_type",
+                                                  "children": []
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "value": "resource=resource",
+                                              "children": [
+                                                {
+                                                  "value": "resource",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "resource",
+                                                  "children": []
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "value": "events=events",
+                                              "children": [
+                                                {
+                                                  "value": "events",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "events",
+                                                  "children": []
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "value": "provider_webhook_id=provider_webhook_id",
+                                              "children": [
+                                                {
+                                                  "value": "provider_webhook_id",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "provider_webhook_id",
+                                                  "children": []
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "value": "config=config",
+                                              "children": [
+                                                {
+                                                  "value": "config",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "config",
+                                                  "children": []
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "value": "secret=secret",
+                                              "children": [
+                                                {
+                                                  "value": "secret",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "secret",
+                                                  "children": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

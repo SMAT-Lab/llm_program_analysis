@@ -1,0 +1,560 @@
+{
+  "nodes": [
+    {
+      "id": "1",
+      "type": "block",
+      "statements": [
+        "import asyncio",
+        "import logging",
+        "from contextlib import asynccontextmanager",
+        "import uvicorn",
+        "from autogpt_libs.auth import parse_jwt_token",
+        "from fastapi import Depends, FastAPI, WebSocket, WebSocketDisconnect",
+        "from starlette.middleware.cors import CORSMiddleware",
+        "from backend.data import redis",
+        "from backend.data.execution import AsyncRedisExecutionEventBus",
+        "from backend.data.user import DEFAULT_USER_ID",
+        "from backend.server.conn_manager import ConnectionManager",
+        "from backend.server.model import ExecutionSubscription, Methods, WsMessage",
+        "from backend.util.service import AppProcess",
+        "from backend.util.settings import AppEnvironment, Config, Settings",
+        "logger = logging.getLogger(__name__)",
+        "settings = Settings()",
+        "@asynccontextmanager\nasync def lifespan(app: FastAPI):\n    manager = get_connection_manager()\n    fut = asyncio.create_task(event_broadcaster(manager))\n    fut.add_done_callback(lambda _: logger.info('Event broadcaster stopped'))\n    yield",
+        "manager = get_connection_manager()",
+        "fut = asyncio.create_task(event_broadcaster(manager))",
+        "fut.add_done_callback(lambda _: logger.info('Event broadcaster stopped'))",
+        "(yield)",
+        "docs_url = '/docs' if settings.config.app_env == AppEnvironment.LOCAL else None",
+        "app = FastAPI(lifespan=lifespan, docs_url=docs_url)",
+        "_connection_manager = None",
+        "def get_connection_manager():\n    global _connection_manager\n    if _connection_manager is None:\n        _connection_manager = ConnectionManager()\n    return _connection_manager",
+        "global _connection_manager",
+        "_connection_manager Is None"
+      ]
+    },
+    {
+      "id": "2",
+      "type": "block",
+      "statements": [
+        "_connection_manager = ConnectionManager()"
+      ]
+    },
+    {
+      "id": "3",
+      "type": "block",
+      "statements": []
+    },
+    {
+      "id": "4",
+      "type": "block",
+      "statements": [
+        "return _connection_manager"
+      ]
+    },
+    {
+      "id": "5",
+      "type": "block",
+      "statements": [
+        "async def event_broadcaster(manager: ConnectionManager):\n    try:\n        redis.connect()\n        event_queue = AsyncRedisExecutionEventBus()\n        async for event in event_queue.listen():\n            await manager.send_execution_result(event)\n    except Exception as e:\n        logger.exception(f'Event broadcaster error: {e}')\n        raise\n    finally:\n        redis.disconnect()",
+        "try:\n    redis.connect()\n    event_queue = AsyncRedisExecutionEventBus()\n    async for event in event_queue.listen():\n        await manager.send_execution_result(event)\nexcept Exception as e:\n    logger.exception(f'Event broadcaster error: {e}')\n    raise\nfinally:\n    redis.disconnect()",
+        "redis.connect()",
+        "event_queue = AsyncRedisExecutionEventBus()",
+        "async for event in event_queue.listen():\n    await manager.send_execution_result(event)",
+        "await manager.send_execution_result(event)",
+        "logger.exception(f'Event broadcaster error: {e}')",
+        "raise",
+        "redis.disconnect()",
+        "async def authenticate_websocket(websocket: WebSocket) -> str:\n    if not settings.config.enable_auth:\n        return DEFAULT_USER_ID\n    token = websocket.query_params.get('token')\n    if not token:\n        await websocket.close(code=4001, reason='Missing authentication token')\n        return ''\n    try:\n        payload = parse_jwt_token(token)\n        user_id = payload.get('sub')\n        if not user_id:\n            await websocket.close(code=4002, reason='Invalid token')\n            return ''\n        return user_id\n    except ValueError:\n        await websocket.close(code=4003, reason='Invalid token')\n        return ''",
+        "not settings.config.enable_auth"
+      ]
+    },
+    {
+      "id": "6",
+      "type": "block",
+      "statements": [
+        "return DEFAULT_USER_ID"
+      ]
+    },
+    {
+      "id": "7",
+      "type": "block",
+      "statements": []
+    },
+    {
+      "id": "8",
+      "type": "block",
+      "statements": [
+        "token = websocket.query_params.get('token')",
+        "not token"
+      ]
+    },
+    {
+      "id": "9",
+      "type": "block",
+      "statements": [
+        "await websocket.close(code=4001, reason='Missing authentication token')",
+        "return ''"
+      ]
+    },
+    {
+      "id": "10",
+      "type": "block",
+      "statements": []
+    },
+    {
+      "id": "11",
+      "type": "block",
+      "statements": [
+        "try:\n    payload = parse_jwt_token(token)\n    user_id = payload.get('sub')\n    if not user_id:\n        await websocket.close(code=4002, reason='Invalid token')\n        return ''\n    return user_id\nexcept ValueError:\n    await websocket.close(code=4003, reason='Invalid token')\n    return ''",
+        "payload = parse_jwt_token(token)",
+        "user_id = payload.get('sub')",
+        "not user_id"
+      ]
+    },
+    {
+      "id": "12",
+      "type": "block",
+      "statements": [
+        "await websocket.close(code=4002, reason='Invalid token')",
+        "return ''"
+      ]
+    },
+    {
+      "id": "13",
+      "type": "block",
+      "statements": []
+    },
+    {
+      "id": "14",
+      "type": "block",
+      "statements": [
+        "return user_id"
+      ]
+    },
+    {
+      "id": "15",
+      "type": "block",
+      "statements": [
+        "await websocket.close(code=4003, reason='Invalid token')",
+        "return ''"
+      ]
+    },
+    {
+      "id": "16",
+      "type": "block",
+      "statements": [
+        "async def handle_subscribe(websocket: WebSocket, manager: ConnectionManager, message: WsMessage):\n    if not message.data:\n        await websocket.send_text(WsMessage(method=Methods.ERROR, success=False, error='Subscription data missing').model_dump_json())\n    else:\n        ex_sub = ExecutionSubscription.model_validate(message.data)\n        await manager.subscribe(ex_sub.graph_id, websocket)\n        logger.debug(f'New execution subscription for graph {ex_sub.graph_id}')\n        await websocket.send_text(WsMessage(method=Methods.SUBSCRIBE, success=True, channel=ex_sub.graph_id).model_dump_json())",
+        "not message.data"
+      ]
+    },
+    {
+      "id": "17",
+      "type": "block",
+      "statements": [
+        "await websocket.send_text(WsMessage(method=Methods.ERROR, success=False, error='Subscription data missing').model_dump_json())"
+      ]
+    },
+    {
+      "id": "18",
+      "type": "block",
+      "statements": [
+        "ex_sub = ExecutionSubscription.model_validate(message.data)",
+        "await manager.subscribe(ex_sub.graph_id, websocket)",
+        "logger.debug(f'New execution subscription for graph {ex_sub.graph_id}')",
+        "await websocket.send_text(WsMessage(method=Methods.SUBSCRIBE, success=True, channel=ex_sub.graph_id).model_dump_json())"
+      ]
+    },
+    {
+      "id": "19",
+      "type": "block",
+      "statements": [
+        "async def handle_unsubscribe(websocket: WebSocket, manager: ConnectionManager, message: WsMessage):\n    if not message.data:\n        await websocket.send_text(WsMessage(method=Methods.ERROR, success=False, error='Subscription data missing').model_dump_json())\n    else:\n        ex_sub = ExecutionSubscription.model_validate(message.data)\n        await manager.unsubscribe(ex_sub.graph_id, websocket)\n        logger.debug(f'Removed execution subscription for graph {ex_sub.graph_id}')\n        await websocket.send_text(WsMessage(method=Methods.UNSUBSCRIBE, success=True, channel=ex_sub.graph_id).model_dump_json())",
+        "not message.data"
+      ]
+    },
+    {
+      "id": "20",
+      "type": "block",
+      "statements": [
+        "await websocket.send_text(WsMessage(method=Methods.ERROR, success=False, error='Subscription data missing').model_dump_json())"
+      ]
+    },
+    {
+      "id": "21",
+      "type": "block",
+      "statements": [
+        "ex_sub = ExecutionSubscription.model_validate(message.data)",
+        "await manager.unsubscribe(ex_sub.graph_id, websocket)",
+        "logger.debug(f'Removed execution subscription for graph {ex_sub.graph_id}')",
+        "await websocket.send_text(WsMessage(method=Methods.UNSUBSCRIBE, success=True, channel=ex_sub.graph_id).model_dump_json())"
+      ]
+    },
+    {
+      "id": "22",
+      "type": "block",
+      "statements": [
+        "@app.get('/')\nasync def health():\n    return {'status': 'healthy'}",
+        "return {'status': 'healthy'}"
+      ]
+    },
+    {
+      "id": "23",
+      "type": "block",
+      "statements": [
+        "@app.websocket('/ws')\nasync def websocket_router(websocket: WebSocket, manager: ConnectionManager=Depends(get_connection_manager)):\n    user_id = await authenticate_websocket(websocket)\n    if not user_id:\n        return\n    await manager.connect(websocket)\n    try:\n        while True:\n            data = await websocket.receive_text()\n            message = WsMessage.model_validate_json(data)\n            if message.method == Methods.HEARTBEAT:\n                await websocket.send_json({'method': Methods.HEARTBEAT.value, 'data': 'pong', 'success': True})\n                continue\n            if message.method == Methods.SUBSCRIBE:\n                await handle_subscribe(websocket, manager, message)\n            elif message.method == Methods.UNSUBSCRIBE:\n                await handle_unsubscribe(websocket, manager, message)\n            elif message.method == Methods.ERROR:\n                logger.error(f'WebSocket Error message received: {message.data}')\n            else:\n                logger.warning(f'Unknown WebSocket message type {message.method} received: {message.data}')\n                await websocket.send_text(WsMessage(method=Methods.ERROR, success=False, error='Message type is not processed by the server').model_dump_json())\n    except WebSocketDisconnect:\n        manager.disconnect(websocket)\n        logger.debug('WebSocket client disconnected')",
+        "user_id = await authenticate_websocket(websocket)",
+        "not user_id"
+      ]
+    },
+    {
+      "id": "24",
+      "type": "block",
+      "statements": [
+        "return"
+      ]
+    },
+    {
+      "id": "25",
+      "type": "block",
+      "statements": []
+    },
+    {
+      "id": "26",
+      "type": "block",
+      "statements": [
+        "await manager.connect(websocket)",
+        "try:\n    while True:\n        data = await websocket.receive_text()\n        message = WsMessage.model_validate_json(data)\n        if message.method == Methods.HEARTBEAT:\n            await websocket.send_json({'method': Methods.HEARTBEAT.value, 'data': 'pong', 'success': True})\n            continue\n        if message.method == Methods.SUBSCRIBE:\n            await handle_subscribe(websocket, manager, message)\n        elif message.method == Methods.UNSUBSCRIBE:\n            await handle_unsubscribe(websocket, manager, message)\n        elif message.method == Methods.ERROR:\n            logger.error(f'WebSocket Error message received: {message.data}')\n        else:\n            logger.warning(f'Unknown WebSocket message type {message.method} received: {message.data}')\n            await websocket.send_text(WsMessage(method=Methods.ERROR, success=False, error='Message type is not processed by the server').model_dump_json())\nexcept WebSocketDisconnect:\n    manager.disconnect(websocket)\n    logger.debug('WebSocket client disconnected')"
+      ]
+    },
+    {
+      "id": "27",
+      "type": "block",
+      "statements": [
+        "True"
+      ]
+    },
+    {
+      "id": "28",
+      "type": "block",
+      "statements": [
+        "data = await websocket.receive_text()",
+        "message = WsMessage.model_validate_json(data)",
+        "message.method Eq Methods.HEARTBEAT"
+      ]
+    },
+    {
+      "id": "29",
+      "type": "block",
+      "statements": [
+        "manager.disconnect(websocket)",
+        "logger.debug('WebSocket client disconnected')",
+        "class WebsocketServer(AppProcess):\n\n    def run(self):\n        logger.info(f'CORS allow origins: {settings.config.backend_cors_allow_origins}')\n        server_app = CORSMiddleware(app=app, allow_origins=settings.config.backend_cors_allow_origins, allow_credentials=True, allow_methods=['*'], allow_headers=['*'])\n        uvicorn.run(server_app, host=Config().websocket_server_host, port=Config().websocket_server_port)",
+        "def run(self):\n    logger.info(f'CORS allow origins: {settings.config.backend_cors_allow_origins}')\n    server_app = CORSMiddleware(app=app, allow_origins=settings.config.backend_cors_allow_origins, allow_credentials=True, allow_methods=['*'], allow_headers=['*'])\n    uvicorn.run(server_app, host=Config().websocket_server_host, port=Config().websocket_server_port)",
+        "logger.info(f'CORS allow origins: {settings.config.backend_cors_allow_origins}')",
+        "server_app = CORSMiddleware(app=app, allow_origins=settings.config.backend_cors_allow_origins, allow_credentials=True, allow_methods=['*'], allow_headers=['*'])",
+        "uvicorn.run(server_app)"
+      ]
+    },
+    {
+      "id": "30",
+      "type": "block",
+      "statements": [
+        "await websocket.send_json({'method': Methods.HEARTBEAT.value, 'data': 'pong', 'success': True})",
+        "continue"
+      ]
+    },
+    {
+      "id": "31",
+      "type": "block",
+      "statements": []
+    },
+    {
+      "id": "32",
+      "type": "block",
+      "statements": [
+        "message.method Eq Methods.SUBSCRIBE"
+      ]
+    },
+    {
+      "id": "33",
+      "type": "block",
+      "statements": [
+        "await handle_subscribe(websocket, manager, message)"
+      ]
+    },
+    {
+      "id": "34",
+      "type": "block",
+      "statements": [
+        "message.method Eq Methods.UNSUBSCRIBE"
+      ]
+    },
+    {
+      "id": "35",
+      "type": "block",
+      "statements": []
+    },
+    {
+      "id": "36",
+      "type": "block",
+      "statements": [
+        "await handle_unsubscribe(websocket, manager, message)"
+      ]
+    },
+    {
+      "id": "37",
+      "type": "block",
+      "statements": [
+        "message.method Eq Methods.ERROR"
+      ]
+    },
+    {
+      "id": "38",
+      "type": "block",
+      "statements": []
+    },
+    {
+      "id": "39",
+      "type": "block",
+      "statements": [
+        "logger.error(f'WebSocket Error message received: {message.data}')"
+      ]
+    },
+    {
+      "id": "40",
+      "type": "block",
+      "statements": [
+        "logger.warning(f'Unknown WebSocket message type {message.method} received: {message.data}')",
+        "await websocket.send_text(WsMessage(method=Methods.ERROR, success=False, error='Message type is not processed by the server').model_dump_json())"
+      ]
+    },
+    {
+      "id": "41",
+      "type": "block",
+      "statements": []
+    }
+  ],
+  "edges": [
+    {
+      "source": "1",
+      "target": "2",
+      "type": "true"
+    },
+    {
+      "source": "1",
+      "target": "3",
+      "type": "false"
+    },
+    {
+      "source": "2",
+      "target": "4",
+      "type": "next"
+    },
+    {
+      "source": "3",
+      "target": "4",
+      "type": "next"
+    },
+    {
+      "source": "5",
+      "target": "6",
+      "type": "true"
+    },
+    {
+      "source": "5",
+      "target": "7",
+      "type": "false"
+    },
+    {
+      "source": "7",
+      "target": "8",
+      "type": "next"
+    },
+    {
+      "source": "8",
+      "target": "9",
+      "type": "true"
+    },
+    {
+      "source": "8",
+      "target": "10",
+      "type": "false"
+    },
+    {
+      "source": "10",
+      "target": "11",
+      "type": "next"
+    },
+    {
+      "source": "11",
+      "target": "12",
+      "type": "true"
+    },
+    {
+      "source": "11",
+      "target": "13",
+      "type": "false"
+    },
+    {
+      "source": "13",
+      "target": "14",
+      "type": "next"
+    },
+    {
+      "source": "16",
+      "target": "17",
+      "type": "true"
+    },
+    {
+      "source": "16",
+      "target": "18",
+      "type": "false"
+    },
+    {
+      "source": "17",
+      "target": "19",
+      "type": "next"
+    },
+    {
+      "source": "18",
+      "target": "19",
+      "type": "next"
+    },
+    {
+      "source": "19",
+      "target": "20",
+      "type": "true"
+    },
+    {
+      "source": "19",
+      "target": "21",
+      "type": "false"
+    },
+    {
+      "source": "20",
+      "target": "22",
+      "type": "next"
+    },
+    {
+      "source": "21",
+      "target": "22",
+      "type": "next"
+    },
+    {
+      "source": "23",
+      "target": "24",
+      "type": "true"
+    },
+    {
+      "source": "23",
+      "target": "25",
+      "type": "false"
+    },
+    {
+      "source": "25",
+      "target": "26",
+      "type": "next"
+    },
+    {
+      "source": "26",
+      "target": "27",
+      "type": "next"
+    },
+    {
+      "source": "27",
+      "target": "28",
+      "type": "true"
+    },
+    {
+      "source": "27",
+      "target": "29",
+      "type": "false"
+    },
+    {
+      "source": "28",
+      "target": "30",
+      "type": "true"
+    },
+    {
+      "source": "28",
+      "target": "31",
+      "type": "false"
+    },
+    {
+      "source": "30",
+      "target": "32",
+      "type": "next"
+    },
+    {
+      "source": "31",
+      "target": "32",
+      "type": "next"
+    },
+    {
+      "source": "32",
+      "target": "33",
+      "type": "true"
+    },
+    {
+      "source": "32",
+      "target": "34",
+      "type": "false"
+    },
+    {
+      "source": "33",
+      "target": "35",
+      "type": "next"
+    },
+    {
+      "source": "34",
+      "target": "36",
+      "type": "true"
+    },
+    {
+      "source": "34",
+      "target": "37",
+      "type": "false"
+    },
+    {
+      "source": "35",
+      "target": "27",
+      "type": "next"
+    },
+    {
+      "source": "36",
+      "target": "38",
+      "type": "next"
+    },
+    {
+      "source": "37",
+      "target": "39",
+      "type": "true"
+    },
+    {
+      "source": "37",
+      "target": "40",
+      "type": "false"
+    },
+    {
+      "source": "38",
+      "target": "35",
+      "type": "next"
+    },
+    {
+      "source": "39",
+      "target": "41",
+      "type": "next"
+    },
+    {
+      "source": "40",
+      "target": "41",
+      "type": "next"
+    },
+    {
+      "source": "41",
+      "target": "38",
+      "type": "next"
+    }
+  ]
+}

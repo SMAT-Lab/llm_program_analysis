@@ -1,0 +1,326 @@
+{
+    "nodes": [
+        {
+            "id": "chunk_0_GlobalBlock_1",
+            "code": "from typing import Literal\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_2",
+            "code": "import googlemaps\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_3",
+            "code": "from pydantic import BaseModel, SecretStr\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_4",
+            "code": "from backend.data.block import Block, BlockCategory, BlockOutput, BlockSchema\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_5",
+            "code": "from backend.data.model import (\n    APIKeyCredentials,\n    CredentialsField,\n    CredentialsMetaInput,\n    SchemaField,\n)\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_6",
+            "code": "from backend.integrations.providers import ProviderName\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_7",
+            "code": "TEST_CREDENTIALS = APIKeyCredentials(\n    id=\"01234567-89ab-cdef-0123-456789abcdef\",\n    provider=\"google_maps\",\n    api_key=SecretStr(\"mock-google-maps-api-key\"),\n    title=\"Mock Google Maps API key\",\n    expires_at=None,\n)\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_8",
+            "code": "TEST_CREDENTIALS_INPUT = {\n    \"provider\": TEST_CREDENTIALS.provider,\n    \"id\": TEST_CREDENTIALS.id,\n    \"type\": TEST_CREDENTIALS.type,\n    \"title\": TEST_CREDENTIALS.type,\n}\n"
+        },
+        {
+            "id": "chunk_1_Place_1",
+            "code": "class Place(BaseModel):\n    name: str\n    address: str\n    phone: str\n    rating: float\n    reviews: int\n    website: str\n\n"
+        },
+        {
+            "id": "chunk_2_GoogleMapsSearchBlock_1",
+            "code": "class GoogleMapsSearchBlock(Block):\n"
+        },
+        {
+            "id": "chunk_2_GoogleMapsSearchBlock_2",
+            "code": "    class Input(BlockSchema):\n        credentials: CredentialsMetaInput[\n            Literal[ProviderName.GOOGLE_MAPS], Literal[\"api_key\"]\n        ] = CredentialsField(description=\"Google Maps API Key\")\n"
+        },
+        {
+            "id": "chunk_2_GoogleMapsSearchBlock_3",
+            "code": "        query: str = SchemaField(\n            description=\"Search query for local businesses\",\n            placeholder=\"e.g., 'restaurants in New York'\",\n        )\n"
+        },
+        {
+            "id": "chunk_2_GoogleMapsSearchBlock_4",
+            "code": "        radius: int = SchemaField(\n            description=\"Search radius in meters (max 50000)\",\n            default=5000,\n            ge=1,\n            le=50000,\n        )\n"
+        },
+        {
+            "id": "chunk_2_GoogleMapsSearchBlock_5",
+            "code": "        max_results: int = SchemaField(\n            description=\"Maximum number of results to return (max 60)\",\n            default=20,\n            ge=1,\n            le=60,\n        )\n"
+        },
+        {
+            "id": "chunk_2_GoogleMapsSearchBlock_6",
+            "code": "    class Output(BlockSchema):\n        place: Place = SchemaField(description=\"Place found\")\n        error: str = SchemaField(description=\"Error message if the search failed\")\n"
+        },
+        {
+            "id": "chunk_2_GoogleMapsSearchBlock_7",
+            "code": "    def __init__(self):\n        super().__init__(\n            id=\"f47ac10b-58cc-4372-a567-0e02b2c3d479\",\n            description=\"This block searches for local businesses using Google Maps API.\",\n            categories={BlockCategory.SEARCH},\n            input_schema=GoogleMapsSearchBlock.Input,\n            output_schema=GoogleMapsSearchBlock.Output,\n            test_input={\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n                \"query\": \"restaurants in new york\",\n                \"radius\": 5000,\n                \"max_results\": 5,\n            },\n            test_output=[\n                (\n                    \"place\",\n                    {\n                        \"name\": \"Test Restaurant\",\n                        \"address\": \"123 Test St, New York, NY 10001\",\n                        \"phone\": \"+1 (555) 123-4567\",\n                        \"rating\": 4.5,\n                        \"reviews\": 100,\n                        \"website\": \"https://testrestaurant.com\",\n                    },\n                ),\n            ],\n            test_mock={\n                \"search_places\": lambda *args, **kwargs: [\n                    {\n                        \"name\": \"Test Restaurant\",\n                        \"address\": \"123 Test St, New York, NY 10001\",\n                        \"phone\": \"+1 (555) 123-4567\",\n                        \"rating\": 4.5,\n                        \"reviews\": 100,\n                        \"website\": \"https://testrestaurant.com\",\n                    }\n                ]\n            },\n            test_credentials=TEST_CREDENTIALS,\n        )\n"
+        },
+        {
+            "id": "chunk_2_GoogleMapsSearchBlock_8",
+            "code": "    def run(\n        self, input_data: Input, *, credentials: APIKeyCredentials, **kwargs\n    ) -> BlockOutput:\n"
+        },
+        {
+            "id": "chunk_2_GoogleMapsSearchBlock_9",
+            "code": "        places = self.search_places(\n            credentials.api_key,\n            input_data.query,\n            input_data.radius,\n            input_data.max_results,\n        )\n"
+        },
+        {
+            "id": "chunk_2_GoogleMapsSearchBlock_10",
+            "code": "        for place in places:\n            yield \"place\", place\n"
+        },
+        {
+            "id": "chunk_2_GoogleMapsSearchBlock_11",
+            "code": "    def search_places(self, api_key: SecretStr, query, radius, max_results):\n        client = googlemaps.Client(key=api_key.get_secret_value())\n        return self._search_places(client, query, radius, max_results)\n"
+        },
+        {
+            "id": "chunk_2_GoogleMapsSearchBlock_12",
+            "code": "    def _search_places(self, client, query, radius, max_results):\n        results = []\n"
+        },
+        {
+            "id": "chunk_2_GoogleMapsSearchBlock_13",
+            "code": "        next_page_token = None\n"
+        },
+        {
+            "id": "chunk_2_GoogleMapsSearchBlock_14",
+            "code": "        while len(results) < max_results:\n            response = client.places(\n                query=query,\n                radius=radius,\n                page_token=next_page_token,\n            )\n"
+        },
+        {
+            "id": "chunk_2_GoogleMapsSearchBlock_15",
+            "code": "            for place in response[\"results\"]:\n                if len(results) >= max_results:\n                    break\n"
+        },
+        {
+            "id": "chunk_2_GoogleMapsSearchBlock_16",
+            "code": "                place_details = client.place(place[\"place_id\"])[\"result\"]\n                results.append(\n                    Place(\n                        name=place_details.get(\"name\", \"\"),\n                        address=place_details.get(\"formatted_address\", \"\"),\n                        phone=place_details.get(\"formatted_phone_number\", \"\"),\n                        rating=place_details.get(\"rating\", 0),\n                        reviews=place_details.get(\"user_ratings_total\", 0),\n                        website=place_details.get(\"website\", \"\"),\n                    )\n                )\n"
+        },
+        {
+            "id": "chunk_2_GoogleMapsSearchBlock_17",
+            "code": "            next_page_token = response.get(\"next_page_token\")\n            if not next_page_token:\n                break\n"
+        },
+        {
+            "id": "chunk_2_GoogleMapsSearchBlock_18",
+            "code": "        return results\n"
+        },
+        {
+            "id": "chunk_3_GoogleMapsSearchBlock.Input_1",
+            "code": "    class Input(BlockSchema):\n        credentials: CredentialsMetaInput[\n            Literal[ProviderName.GOOGLE_MAPS], Literal[\"api_key\"]\n        ] = CredentialsField(description=\"Google Maps API Key\")\n"
+        },
+        {
+            "id": "chunk_3_GoogleMapsSearchBlock.Input_2",
+            "code": "        query: str = SchemaField(\n            description=\"Search query for local businesses\",\n            placeholder=\"e.g., 'restaurants in New York'\",\n        )\n"
+        },
+        {
+            "id": "chunk_3_GoogleMapsSearchBlock.Input_3",
+            "code": "        radius: int = SchemaField(\n            description=\"Search radius in meters (max 50000)\",\n            default=5000,\n            ge=1,\n            le=50000,\n        )\n"
+        },
+        {
+            "id": "chunk_3_GoogleMapsSearchBlock.Input_4",
+            "code": "        max_results: int = SchemaField(\n            description=\"Maximum number of results to return (max 60)\",\n            default=20,\n            ge=1,\n            le=60,\n        )\n"
+        },
+        {
+            "id": "chunk_4_GoogleMapsSearchBlock.Output_1",
+            "code": "    class Output(BlockSchema):\n        place: Place = SchemaField(description=\"Place found\")\n        error: str = SchemaField(description=\"Error message if the search failed\")\n"
+        },
+        {
+            "id": "chunk_5_GoogleMapsSearchBlock.__init___1",
+            "code": "    def __init__(self):\n        super().__init__(\n            id=\"f47ac10b-58cc-4372-a567-0e02b2c3d479\",\n            description=\"This block searches for local businesses using Google Maps API.\",\n            categories={BlockCategory.SEARCH},\n            input_schema=GoogleMapsSearchBlock.Input,\n            output_schema=GoogleMapsSearchBlock.Output,\n            test_input={\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n                \"query\": \"restaurants in new york\",\n                \"radius\": 5000,\n                \"max_results\": 5,\n            },\n            test_output=[\n                (\n                    \"place\",\n                    {\n                        \"name\": \"Test Restaurant\",\n                        \"address\": \"123 Test St, New York, NY 10001\",\n                        \"phone\": \"+1 (555) 123-4567\",\n                        \"rating\": 4.5,\n                        \"reviews\": 100,\n                        \"website\": \"https://testrestaurant.com\",\n                    },\n                ),\n            ],\n            test_mock={\n                \"search_places\": lambda *args, **kwargs: [\n                    {\n                        \"name\": \"Test Restaurant\",\n                        \"address\": \"123 Test St, New York, NY 10001\",\n                        \"phone\": \"+1 (555) 123-4567\",\n                        \"rating\": 4.5,\n                        \"reviews\": 100,\n                        \"website\": \"https://testrestaurant.com\",\n                    }\n                ]\n            },\n            test_credentials=TEST_CREDENTIALS,\n        )\n"
+        },
+        {
+            "id": "chunk_6_GoogleMapsSearchBlock.run_1",
+            "code": "    def run(\n        self, input_data: Input, *, credentials: APIKeyCredentials, **kwargs\n    ) -> BlockOutput:\n"
+        },
+        {
+            "id": "chunk_6_GoogleMapsSearchBlock.run_2",
+            "code": "        places = self.search_places(\n            credentials.api_key,\n            input_data.query,\n            input_data.radius,\n            input_data.max_results,\n        )\n"
+        },
+        {
+            "id": "chunk_6_GoogleMapsSearchBlock.run_3",
+            "code": "        for place in places:\n            yield \"place\", place\n"
+        },
+        {
+            "id": "chunk_7_GoogleMapsSearchBlock.search_places_1",
+            "code": "    def search_places(self, api_key: SecretStr, query, radius, max_results):\n        client = googlemaps.Client(key=api_key.get_secret_value())\n        return self._search_places(client, query, radius, max_results)\n"
+        },
+        {
+            "id": "chunk_8_GoogleMapsSearchBlock._search_places_1",
+            "code": "    def _search_places(self, client, query, radius, max_results):\n        results = []\n        next_page_token = None\n"
+        },
+        {
+            "id": "chunk_8_GoogleMapsSearchBlock._search_places_2",
+            "code": "        while len(results) < max_results:\n            response = client.places(\n                query=query,\n                radius=radius,\n                page_token=next_page_token,\n            )\n"
+        },
+        {
+            "id": "chunk_8_GoogleMapsSearchBlock._search_places_3",
+            "code": "            for place in response[\"results\"]:\n                if len(results) >= max_results:\n                    break\n"
+        },
+        {
+            "id": "chunk_8_GoogleMapsSearchBlock._search_places_4",
+            "code": "                place_details = client.place(place[\"place_id\"])[\"result\"]\n                results.append(\n                    Place(\n                        name=place_details.get(\"name\", \"\"),\n                        address=place_details.get(\"formatted_address\", \"\"),\n                        phone=place_details.get(\"formatted_phone_number\", \"\"),\n                        rating=place_details.get(\"rating\", 0),\n                        reviews=place_details.get(\"user_ratings_total\", 0),\n                        website=place_details.get(\"website\", \"\"),\n                    )\n                )\n"
+        },
+        {
+            "id": "chunk_8_GoogleMapsSearchBlock._search_places_5",
+            "code": "            next_page_token = response.get(\"next_page_token\")\n            if not next_page_token:\n                break\n"
+        },
+        {
+            "id": "chunk_8_GoogleMapsSearchBlock._search_places_6",
+            "code": "        return results\n"
+        }
+    ],
+    "edges": [
+        {
+            "from": "chunk_0_GlobalBlock_1",
+            "to": "chunk_0_GlobalBlock_2"
+        },
+        {
+            "from": "chunk_0_GlobalBlock_2",
+            "to": "chunk_0_GlobalBlock_3"
+        },
+        {
+            "from": "chunk_0_GlobalBlock_3",
+            "to": "chunk_0_GlobalBlock_4"
+        },
+        {
+            "from": "chunk_0_GlobalBlock_4",
+            "to": "chunk_0_GlobalBlock_5"
+        },
+        {
+            "from": "chunk_0_GlobalBlock_5",
+            "to": "chunk_0_GlobalBlock_6"
+        },
+        {
+            "from": "chunk_0_GlobalBlock_6",
+            "to": "chunk_0_GlobalBlock_7"
+        },
+        {
+            "from": "chunk_0_GlobalBlock_7",
+            "to": "chunk_0_GlobalBlock_8"
+        },
+        {
+            "from": "chunk_2_GoogleMapsSearchBlock_1",
+            "to": "chunk_2_GoogleMapsSearchBlock_2"
+        },
+        {
+            "from": "chunk_2_GoogleMapsSearchBlock_2",
+            "to": "chunk_2_GoogleMapsSearchBlock_3"
+        },
+        {
+            "from": "chunk_2_GoogleMapsSearchBlock_3",
+            "to": "chunk_2_GoogleMapsSearchBlock_4"
+        },
+        {
+            "from": "chunk_2_GoogleMapsSearchBlock_4",
+            "to": "chunk_2_GoogleMapsSearchBlock_5"
+        },
+        {
+            "from": "chunk_2_GoogleMapsSearchBlock_5",
+            "to": "chunk_2_GoogleMapsSearchBlock_6"
+        },
+        {
+            "from": "chunk_2_GoogleMapsSearchBlock_6",
+            "to": "chunk_2_GoogleMapsSearchBlock_7"
+        },
+        {
+            "from": "chunk_2_GoogleMapsSearchBlock_7",
+            "to": "chunk_2_GoogleMapsSearchBlock_8"
+        },
+        {
+            "from": "chunk_2_GoogleMapsSearchBlock_8",
+            "to": "chunk_2_GoogleMapsSearchBlock_9"
+        },
+        {
+            "from": "chunk_2_GoogleMapsSearchBlock_9",
+            "to": "chunk_2_GoogleMapsSearchBlock_10"
+        },
+        {
+            "from": "chunk_2_GoogleMapsSearchBlock_11",
+            "to": "chunk_2_GoogleMapsSearchBlock_12"
+        },
+        {
+            "from": "chunk_2_GoogleMapsSearchBlock_12",
+            "to": "chunk_2_GoogleMapsSearchBlock_13"
+        },
+        {
+            "from": "chunk_2_GoogleMapsSearchBlock_13",
+            "to": "chunk_2_GoogleMapsSearchBlock_14"
+        },
+        {
+            "from": "chunk_2_GoogleMapsSearchBlock_14",
+            "to": "chunk_2_GoogleMapsSearchBlock_15"
+        },
+        {
+            "from": "chunk_2_GoogleMapsSearchBlock_15",
+            "to": "chunk_2_GoogleMapsSearchBlock_16"
+        },
+        {
+            "from": "chunk_2_GoogleMapsSearchBlock_15",
+            "to": "chunk_2_GoogleMapsSearchBlock_17"
+        },
+        {
+            "from": "chunk_2_GoogleMapsSearchBlock_16",
+            "to": "chunk_2_GoogleMapsSearchBlock_17"
+        },
+        {
+            "from": "chunk_2_GoogleMapsSearchBlock_17",
+            "to": "chunk_2_GoogleMapsSearchBlock_14"
+        },
+        {
+            "from": "chunk_2_GoogleMapsSearchBlock_17",
+            "to": "chunk_2_GoogleMapsSearchBlock_18"
+        },
+        {
+            "from": "chunk_3_GoogleMapsSearchBlock.Input_1",
+            "to": "chunk_3_GoogleMapsSearchBlock.Input_2"
+        },
+        {
+            "from": "chunk_3_GoogleMapsSearchBlock.Input_2",
+            "to": "chunk_3_GoogleMapsSearchBlock.Input_3"
+        },
+        {
+            "from": "chunk_3_GoogleMapsSearchBlock.Input_3",
+            "to": "chunk_3_GoogleMapsSearchBlock.Input_4"
+        },
+        {
+            "from": "chunk_6_GoogleMapsSearchBlock.run_1",
+            "to": "chunk_6_GoogleMapsSearchBlock.run_2"
+        },
+        {
+            "from": "chunk_6_GoogleMapsSearchBlock.run_2",
+            "to": "chunk_6_GoogleMapsSearchBlock.run_3"
+        },
+        {
+            "from": "chunk_8_GoogleMapsSearchBlock._search_places_1",
+            "to": "chunk_8_GoogleMapsSearchBlock._search_places_2"
+        },
+        {
+            "from": "chunk_8_GoogleMapsSearchBlock._search_places_2",
+            "to": "chunk_8_GoogleMapsSearchBlock._search_places_3"
+        },
+        {
+            "from": "chunk_8_GoogleMapsSearchBlock._search_places_2",
+            "to": "chunk_8_GoogleMapsSearchBlock._search_places_6"
+        },
+        {
+            "from": "chunk_8_GoogleMapsSearchBlock._search_places_3",
+            "to": "chunk_8_GoogleMapsSearchBlock._search_places_4"
+        },
+        {
+            "from": "chunk_8_GoogleMapsSearchBlock._search_places_3",
+            "to": "chunk_8_GoogleMapsSearchBlock._search_places_5"
+        },
+        {
+            "from": "chunk_8_GoogleMapsSearchBlock._search_places_4",
+            "to": "chunk_8_GoogleMapsSearchBlock._search_places_3"
+        },
+        {
+            "from": "chunk_8_GoogleMapsSearchBlock._search_places_5",
+            "to": "chunk_8_GoogleMapsSearchBlock._search_places_2"
+        }
+    ]
+}

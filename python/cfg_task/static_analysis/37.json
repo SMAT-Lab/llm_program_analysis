@@ -1,0 +1,313 @@
+{
+  "nodes": [
+    {
+      "id": "n0",
+      "type": "block",
+      "statements": [
+        "from datetime import datetime, timedelta",
+        "from backend.blocks.hubspot._auth import HubSpotCredentials, HubSpotCredentialsField, HubSpotCredentialsInput",
+        "from backend.data.block import Block, BlockCategory, BlockOutput, BlockSchema",
+        "from backend.data.model import SchemaField",
+        "from backend.util.request import requests",
+        "class HubSpotEngagementBlock(Block):\n\n    class Input(BlockSchema):\n        credentials: HubSpotCredentialsInput = HubSpotCredentialsField()\n        operation: str = SchemaField(description='Operation to perform (send_email, track_engagement)', default='send_email')\n        email_data: dict = SchemaField(description='Email data including recipient, subject, content', default={})\n        contact_id: str = SchemaField(description='Contact ID for engagement tracking', default='')\n        timeframe_days: int = SchemaField(description='Number of days to look back for engagement', default=30, optional=True)\n\n    class Output(BlockSchema):\n        result: dict = SchemaField(description='Operation result')\n        status: str = SchemaField(description='Operation status')\n\n    def __init__(self):\n        super().__init__(id='c6524385-7d87-49d6-a470-248bd29ca765', description='Manages HubSpot engagements - sends emails and tracks engagement metrics', categories={BlockCategory.CRM, BlockCategory.COMMUNICATION}, input_schema=HubSpotEngagementBlock.Input, output_schema=HubSpotEngagementBlock.Output)\n\n    def run(self, input_data: Input, *, credentials: HubSpotCredentials, **kwargs) -> BlockOutput:\n        base_url = 'https://api.hubapi.com'\n        headers = {'Authorization': f'Bearer {credentials.api_key.get_secret_value()}', 'Content-Type': 'application/json'}\n        if input_data.operation == 'send_email':\n            email_url = f'{base_url}/crm/v3/objects/emails'\n            email_data = {'properties': {'hs_timestamp': datetime.now().isoformat(), 'hubspot_owner_id': '1', 'hs_email_direction': 'OUTBOUND', 'hs_email_status': 'SEND', 'hs_email_subject': input_data.email_data.get('subject'), 'hs_email_text': input_data.email_data.get('content'), 'hs_email_to_email': input_data.email_data.get('recipient')}}\n            response = requests.post(email_url, headers=headers, json=email_data)\n            result = response.json()\n            yield ('result', result)\n            yield ('status', 'email_sent')\n        elif input_data.operation == 'track_engagement':\n            from_date = datetime.now() - timedelta(days=input_data.timeframe_days)\n            engagement_url = f'{base_url}/crm/v3/objects/contacts/{input_data.contact_id}/engagement'\n            params = {'limit': 100, 'after': from_date.isoformat()}\n            response = requests.get(engagement_url, headers=headers, params=params)\n            engagements = response.json()\n            metrics = {'email_opens': 0, 'email_clicks': 0, 'email_replies': 0, 'last_engagement': None, 'engagement_score': 0}\n            for engagement in engagements.get('results', []):\n                eng_type = engagement.get('properties', {}).get('hs_engagement_type')\n                if eng_type == 'EMAIL':\n                    metrics['email_opens'] += 1\n                elif eng_type == 'EMAIL_CLICK':\n                    metrics['email_clicks'] += 1\n                elif eng_type == 'EMAIL_REPLY':\n                    metrics['email_replies'] += 1\n                eng_time = engagement.get('properties', {}).get('hs_timestamp')\n                if eng_time and (not metrics['last_engagement'] or eng_time > metrics['last_engagement']):\n                    metrics['last_engagement'] = eng_time\n            metrics['engagement_score'] = metrics['email_opens'] + metrics['email_clicks'] * 2 + metrics['email_replies'] * 3\n            yield ('result', metrics)\n            yield ('status', 'engagement_tracked')",
+        "class Input(BlockSchema):\n    credentials: HubSpotCredentialsInput = HubSpotCredentialsField()\n    operation: str = SchemaField(description='Operation to perform (send_email, track_engagement)', default='send_email')\n    email_data: dict = SchemaField(description='Email data including recipient, subject, content', default={})\n    contact_id: str = SchemaField(description='Contact ID for engagement tracking', default='')\n    timeframe_days: int = SchemaField(description='Number of days to look back for engagement', default=30, optional=True)",
+        "credentials: HubSpotCredentialsInput = HubSpotCredentialsField()",
+        "operation: str = SchemaField(description='Operation to perform (send_email, track_engagement)', default='send_email')",
+        "email_data: dict = SchemaField(description='Email data including recipient, subject, content', default={})",
+        "contact_id: str = SchemaField(description='Contact ID for engagement tracking', default='')",
+        "timeframe_days: int = SchemaField(description='Number of days to look back for engagement', default=30, optional=True)",
+        "class Output(BlockSchema):\n    result: dict = SchemaField(description='Operation result')\n    status: str = SchemaField(description='Operation status')",
+        "result: dict = SchemaField(description='Operation result')",
+        "status: str = SchemaField(description='Operation status')",
+        "def __init__(self):\n    super().__init__(id='c6524385-7d87-49d6-a470-248bd29ca765', description='Manages HubSpot engagements - sends emails and tracks engagement metrics', categories={BlockCategory.CRM, BlockCategory.COMMUNICATION}, input_schema=HubSpotEngagementBlock.Input, output_schema=HubSpotEngagementBlock.Output)",
+        "super().__init__()",
+        "def run(self, input_data: Input, *, credentials: HubSpotCredentials, **kwargs) -> BlockOutput:\n    base_url = 'https://api.hubapi.com'\n    headers = {'Authorization': f'Bearer {credentials.api_key.get_secret_value()}', 'Content-Type': 'application/json'}\n    if input_data.operation == 'send_email':\n        email_url = f'{base_url}/crm/v3/objects/emails'\n        email_data = {'properties': {'hs_timestamp': datetime.now().isoformat(), 'hubspot_owner_id': '1', 'hs_email_direction': 'OUTBOUND', 'hs_email_status': 'SEND', 'hs_email_subject': input_data.email_data.get('subject'), 'hs_email_text': input_data.email_data.get('content'), 'hs_email_to_email': input_data.email_data.get('recipient')}}\n        response = requests.post(email_url, headers=headers, json=email_data)\n        result = response.json()\n        yield ('result', result)\n        yield ('status', 'email_sent')\n    elif input_data.operation == 'track_engagement':\n        from_date = datetime.now() - timedelta(days=input_data.timeframe_days)\n        engagement_url = f'{base_url}/crm/v3/objects/contacts/{input_data.contact_id}/engagement'\n        params = {'limit': 100, 'after': from_date.isoformat()}\n        response = requests.get(engagement_url, headers=headers, params=params)\n        engagements = response.json()\n        metrics = {'email_opens': 0, 'email_clicks': 0, 'email_replies': 0, 'last_engagement': None, 'engagement_score': 0}\n        for engagement in engagements.get('results', []):\n            eng_type = engagement.get('properties', {}).get('hs_engagement_type')\n            if eng_type == 'EMAIL':\n                metrics['email_opens'] += 1\n            elif eng_type == 'EMAIL_CLICK':\n                metrics['email_clicks'] += 1\n            elif eng_type == 'EMAIL_REPLY':\n                metrics['email_replies'] += 1\n            eng_time = engagement.get('properties', {}).get('hs_timestamp')\n            if eng_time and (not metrics['last_engagement'] or eng_time > metrics['last_engagement']):\n                metrics['last_engagement'] = eng_time\n        metrics['engagement_score'] = metrics['email_opens'] + metrics['email_clicks'] * 2 + metrics['email_replies'] * 3\n        yield ('result', metrics)\n        yield ('status', 'engagement_tracked')",
+        "base_url = 'https://api.hubapi.com'",
+        "headers = {'Authorization': f'Bearer {credentials.api_key.get_secret_value()}', 'Content-Type': 'application/json'}",
+        "input_data.operation Eq 'send_email'"
+      ],
+      "code": "from datetime import datetime, timedelta\nfrom backend.blocks.hubspot._auth import HubSpotCredentials, HubSpotCredentialsField, HubSpotCredentialsInput\nfrom backend.data.block import Block, BlockCategory, BlockOutput, BlockSchema\nfrom backend.data.model import SchemaField\nfrom backend.util.request import requests\nclass HubSpotEngagementBlock(Block):\n\n    class Input(BlockSchema):\n        credentials: HubSpotCredentialsInput = HubSpotCredentialsField()\n        operation: str = SchemaField(description='Operation to perform (send_email, track_engagement)', default='send_email')\n        email_data: dict = SchemaField(description='Email data including recipient, subject, content', default={})\n        contact_id: str = SchemaField(description='Contact ID for engagement tracking', default='')\n        timeframe_days: int = SchemaField(description='Number of days to look back for engagement', default=30, optional=True)\n\n    class Output(BlockSchema):\n        result: dict = SchemaField(description='Operation result')\n        status: str = SchemaField(description='Operation status')\n\n    def __init__(self):\n        super().__init__(id='c6524385-7d87-49d6-a470-248bd29ca765', description='Manages HubSpot engagements - sends emails and tracks engagement metrics', categories={BlockCategory.CRM, BlockCategory.COMMUNICATION}, input_schema=HubSpotEngagementBlock.Input, output_schema=HubSpotEngagementBlock.Output)\n\n    def run(self, input_data: Input, *, credentials: HubSpotCredentials, **kwargs) -> BlockOutput:\n        base_url = 'https://api.hubapi.com'\n        headers = {'Authorization': f'Bearer {credentials.api_key.get_secret_value()}', 'Content-Type': 'application/json'}\n        if input_data.operation == 'send_email':\n            email_url = f'{base_url}/crm/v3/objects/emails'\n            email_data = {'properties': {'hs_timestamp': datetime.now().isoformat(), 'hubspot_owner_id': '1', 'hs_email_direction': 'OUTBOUND', 'hs_email_status': 'SEND', 'hs_email_subject': input_data.email_data.get('subject'), 'hs_email_text': input_data.email_data.get('content'), 'hs_email_to_email': input_data.email_data.get('recipient')}}\n            response = requests.post(email_url, headers=headers, json=email_data)\n            result = response.json()\n            yield ('result', result)\n            yield ('status', 'email_sent')\n        elif input_data.operation == 'track_engagement':\n            from_date = datetime.now() - timedelta(days=input_data.timeframe_days)\n            engagement_url = f'{base_url}/crm/v3/objects/contacts/{input_data.contact_id}/engagement'\n            params = {'limit': 100, 'after': from_date.isoformat()}\n            response = requests.get(engagement_url, headers=headers, params=params)\n            engagements = response.json()\n            metrics = {'email_opens': 0, 'email_clicks': 0, 'email_replies': 0, 'last_engagement': None, 'engagement_score': 0}\n            for engagement in engagements.get('results', []):\n                eng_type = engagement.get('properties', {}).get('hs_engagement_type')\n                if eng_type == 'EMAIL':\n                    metrics['email_opens'] += 1\n                elif eng_type == 'EMAIL_CLICK':\n                    metrics['email_clicks'] += 1\n                elif eng_type == 'EMAIL_REPLY':\n                    metrics['email_replies'] += 1\n                eng_time = engagement.get('properties', {}).get('hs_timestamp')\n                if eng_time and (not metrics['last_engagement'] or eng_time > metrics['last_engagement']):\n                    metrics['last_engagement'] = eng_time\n            metrics['engagement_score'] = metrics['email_opens'] + metrics['email_clicks'] * 2 + metrics['email_replies'] * 3\n            yield ('result', metrics)\n            yield ('status', 'engagement_tracked')\nclass Input(BlockSchema):\n    credentials: HubSpotCredentialsInput = HubSpotCredentialsField()\n    operation: str = SchemaField(description='Operation to perform (send_email, track_engagement)', default='send_email')\n    email_data: dict = SchemaField(description='Email data including recipient, subject, content', default={})\n    contact_id: str = SchemaField(description='Contact ID for engagement tracking', default='')\n    timeframe_days: int = SchemaField(description='Number of days to look back for engagement', default=30, optional=True)\ncredentials: HubSpotCredentialsInput = HubSpotCredentialsField()\noperation: str = SchemaField(description='Operation to perform (send_email, track_engagement)', default='send_email')\nemail_data: dict = SchemaField(description='Email data including recipient, subject, content', default={})\ncontact_id: str = SchemaField(description='Contact ID for engagement tracking', default='')\ntimeframe_days: int = SchemaField(description='Number of days to look back for engagement', default=30, optional=True)\nclass Output(BlockSchema):\n    result: dict = SchemaField(description='Operation result')\n    status: str = SchemaField(description='Operation status')\nresult: dict = SchemaField(description='Operation result')\nstatus: str = SchemaField(description='Operation status')\ndef __init__(self):\n    super().__init__(id='c6524385-7d87-49d6-a470-248bd29ca765', description='Manages HubSpot engagements - sends emails and tracks engagement metrics', categories={BlockCategory.CRM, BlockCategory.COMMUNICATION}, input_schema=HubSpotEngagementBlock.Input, output_schema=HubSpotEngagementBlock.Output)\nsuper().__init__()\ndef run(self, input_data: Input, *, credentials: HubSpotCredentials, **kwargs) -> BlockOutput:\n    base_url = 'https://api.hubapi.com'\n    headers = {'Authorization': f'Bearer {credentials.api_key.get_secret_value()}', 'Content-Type': 'application/json'}\n    if input_data.operation == 'send_email':\n        email_url = f'{base_url}/crm/v3/objects/emails'\n        email_data = {'properties': {'hs_timestamp': datetime.now().isoformat(), 'hubspot_owner_id': '1', 'hs_email_direction': 'OUTBOUND', 'hs_email_status': 'SEND', 'hs_email_subject': input_data.email_data.get('subject'), 'hs_email_text': input_data.email_data.get('content'), 'hs_email_to_email': input_data.email_data.get('recipient')}}\n        response = requests.post(email_url, headers=headers, json=email_data)\n        result = response.json()\n        yield ('result', result)\n        yield ('status', 'email_sent')\n    elif input_data.operation == 'track_engagement':\n        from_date = datetime.now() - timedelta(days=input_data.timeframe_days)\n        engagement_url = f'{base_url}/crm/v3/objects/contacts/{input_data.contact_id}/engagement'\n        params = {'limit': 100, 'after': from_date.isoformat()}\n        response = requests.get(engagement_url, headers=headers, params=params)\n        engagements = response.json()\n        metrics = {'email_opens': 0, 'email_clicks': 0, 'email_replies': 0, 'last_engagement': None, 'engagement_score': 0}\n        for engagement in engagements.get('results', []):\n            eng_type = engagement.get('properties', {}).get('hs_engagement_type')\n            if eng_type == 'EMAIL':\n                metrics['email_opens'] += 1\n            elif eng_type == 'EMAIL_CLICK':\n                metrics['email_clicks'] += 1\n            elif eng_type == 'EMAIL_REPLY':\n                metrics['email_replies'] += 1\n            eng_time = engagement.get('properties', {}).get('hs_timestamp')\n            if eng_time and (not metrics['last_engagement'] or eng_time > metrics['last_engagement']):\n                metrics['last_engagement'] = eng_time\n        metrics['engagement_score'] = metrics['email_opens'] + metrics['email_clicks'] * 2 + metrics['email_replies'] * 3\n        yield ('result', metrics)\n        yield ('status', 'engagement_tracked')\nbase_url = 'https://api.hubapi.com'\nheaders = {'Authorization': f'Bearer {credentials.api_key.get_secret_value()}', 'Content-Type': 'application/json'}\ninput_data.operation Eq 'send_email'"
+    },
+    {
+      "id": "n1",
+      "type": "block",
+      "statements": [
+        "email_url = f'{base_url}/crm/v3/objects/emails'",
+        "email_data = {'properties': {'hs_timestamp': datetime.now().isoformat(), 'hubspot_owner_id': '1', 'hs_email_direction': 'OUTBOUND', 'hs_email_status': 'SEND', 'hs_email_subject': input_data.email_data.get('subject'), 'hs_email_text': input_data.email_data.get('content'), 'hs_email_to_email': input_data.email_data.get('recipient')}}",
+        "response = requests.post(email_url, headers=headers, json=email_data)",
+        "result = response.json()",
+        "(yield ('result', result))",
+        "(yield ('status', 'email_sent'))"
+      ],
+      "code": "email_url = f'{base_url}/crm/v3/objects/emails'\nemail_data = {'properties': {'hs_timestamp': datetime.now().isoformat(), 'hubspot_owner_id': '1', 'hs_email_direction': 'OUTBOUND', 'hs_email_status': 'SEND', 'hs_email_subject': input_data.email_data.get('subject'), 'hs_email_text': input_data.email_data.get('content'), 'hs_email_to_email': input_data.email_data.get('recipient')}}\nresponse = requests.post(email_url, headers=headers, json=email_data)\nresult = response.json()\n(yield ('result', result))\n(yield ('status', 'email_sent'))"
+    },
+    {
+      "id": "n2",
+      "type": "block",
+      "statements": [
+        "input_data.operation Eq 'track_engagement'"
+      ],
+      "code": "input_data.operation Eq 'track_engagement'"
+    },
+    {
+      "id": "n3",
+      "type": "block",
+      "statements": [],
+      "code": ""
+    },
+    {
+      "id": "n4",
+      "type": "block",
+      "statements": [
+        "from_date = datetime.now() - timedelta(days=input_data.timeframe_days)",
+        "engagement_url = f'{base_url}/crm/v3/objects/contacts/{input_data.contact_id}/engagement'",
+        "params = {'limit': 100, 'after': from_date.isoformat()}",
+        "response = requests.get(engagement_url, headers=headers, params=params)",
+        "engagements = response.json()",
+        "metrics = {'email_opens': 0, 'email_clicks': 0, 'email_replies': 0, 'last_engagement': None, 'engagement_score': 0}"
+      ],
+      "code": "from_date = datetime.now() - timedelta(days=input_data.timeframe_days)\nengagement_url = f'{base_url}/crm/v3/objects/contacts/{input_data.contact_id}/engagement'\nparams = {'limit': 100, 'after': from_date.isoformat()}\nresponse = requests.get(engagement_url, headers=headers, params=params)\nengagements = response.json()\nmetrics = {'email_opens': 0, 'email_clicks': 0, 'email_replies': 0, 'last_engagement': None, 'engagement_score': 0}"
+    },
+    {
+      "id": "n5",
+      "type": "block",
+      "statements": [],
+      "code": ""
+    },
+    {
+      "id": "n6",
+      "type": "block",
+      "statements": [],
+      "code": ""
+    },
+    {
+      "id": "n7",
+      "type": "block",
+      "statements": [
+        "engagement",
+        "engagements.get('results', [])"
+      ],
+      "code": "engagement\nengagements.get('results', [])"
+    },
+    {
+      "id": "n8",
+      "type": "block",
+      "statements": [
+        "eng_type = engagement.get('properties', {}).get('hs_engagement_type')",
+        "eng_type Eq 'EMAIL'"
+      ],
+      "code": "eng_type = engagement.get('properties', {}).get('hs_engagement_type')\neng_type Eq 'EMAIL'"
+    },
+    {
+      "id": "n9",
+      "type": "block",
+      "statements": [
+        "metrics['engagement_score'] = metrics['email_opens'] + metrics['email_clicks'] * 2 + metrics['email_replies'] * 3",
+        "(yield ('result', metrics))",
+        "(yield ('status', 'engagement_tracked'))"
+      ],
+      "code": "metrics['engagement_score'] = metrics['email_opens'] + metrics['email_clicks'] * 2 + metrics['email_replies'] * 3\n(yield ('result', metrics))\n(yield ('status', 'engagement_tracked'))"
+    },
+    {
+      "id": "n10",
+      "type": "block",
+      "statements": [
+        "metrics['email_opens'] += 1"
+      ],
+      "code": "metrics['email_opens'] += 1"
+    },
+    {
+      "id": "n11",
+      "type": "block",
+      "statements": [
+        "eng_type Eq 'EMAIL_CLICK'"
+      ],
+      "code": "eng_type Eq 'EMAIL_CLICK'"
+    },
+    {
+      "id": "n12",
+      "type": "block",
+      "statements": [
+        "eng_time = engagement.get('properties', {}).get('hs_timestamp')",
+        "eng_time and (not metrics['last_engagement'] or eng_time > metrics['last_engagement'])"
+      ],
+      "code": "eng_time = engagement.get('properties', {}).get('hs_timestamp')\neng_time and (not metrics['last_engagement'] or eng_time > metrics['last_engagement'])"
+    },
+    {
+      "id": "n13",
+      "type": "block",
+      "statements": [
+        "metrics['email_clicks'] += 1"
+      ],
+      "code": "metrics['email_clicks'] += 1"
+    },
+    {
+      "id": "n14",
+      "type": "block",
+      "statements": [
+        "eng_type Eq 'EMAIL_REPLY'"
+      ],
+      "code": "eng_type Eq 'EMAIL_REPLY'"
+    },
+    {
+      "id": "n15",
+      "type": "block",
+      "statements": [],
+      "code": ""
+    },
+    {
+      "id": "n16",
+      "type": "block",
+      "statements": [
+        "metrics['email_replies'] += 1"
+      ],
+      "code": "metrics['email_replies'] += 1"
+    },
+    {
+      "id": "n17",
+      "type": "block",
+      "statements": [],
+      "code": ""
+    },
+    {
+      "id": "n18",
+      "type": "block",
+      "statements": [],
+      "code": ""
+    },
+    {
+      "id": "n19",
+      "type": "block",
+      "statements": [
+        "metrics['last_engagement'] = eng_time"
+      ],
+      "code": "metrics['last_engagement'] = eng_time"
+    },
+    {
+      "id": "n20",
+      "type": "block",
+      "statements": [],
+      "code": ""
+    },
+    {
+      "id": "n21",
+      "type": "block",
+      "statements": [],
+      "code": ""
+    }
+  ],
+  "edges": [
+    {
+      "source": "n0",
+      "target": "n1"
+    },
+    {
+      "source": "n17",
+      "target": "n18"
+    },
+    {
+      "source": "n14",
+      "target": "n17"
+    },
+    {
+      "source": "n11",
+      "target": "n14"
+    },
+    {
+      "source": "n19",
+      "target": "n21"
+    },
+    {
+      "source": "n6",
+      "target": "n3"
+    },
+    {
+      "source": "n2",
+      "target": "n4"
+    },
+    {
+      "source": "n13",
+      "target": "n15"
+    },
+    {
+      "source": "n16",
+      "target": "n18"
+    },
+    {
+      "source": "n21",
+      "target": "n7"
+    },
+    {
+      "source": "n7",
+      "target": "n8"
+    },
+    {
+      "source": "n15",
+      "target": "n12"
+    },
+    {
+      "source": "n18",
+      "target": "n15"
+    },
+    {
+      "source": "n4",
+      "target": "n7"
+    },
+    {
+      "source": "n14",
+      "target": "n16"
+    },
+    {
+      "source": "n20",
+      "target": "n21"
+    },
+    {
+      "source": "n10",
+      "target": "n12"
+    },
+    {
+      "source": "n8",
+      "target": "n11"
+    },
+    {
+      "source": "n7",
+      "target": "n9"
+    },
+    {
+      "source": "n5",
+      "target": "n6"
+    },
+    {
+      "source": "n12",
+      "target": "n19"
+    },
+    {
+      "source": "n1",
+      "target": "n3"
+    },
+    {
+      "source": "n8",
+      "target": "n10"
+    },
+    {
+      "source": "n2",
+      "target": "n5"
+    },
+    {
+      "source": "n12",
+      "target": "n20"
+    },
+    {
+      "source": "n9",
+      "target": "n6"
+    },
+    {
+      "source": "n11",
+      "target": "n13"
+    },
+    {
+      "source": "n0",
+      "target": "n2"
+    }
+  ]
+}

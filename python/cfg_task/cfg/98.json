@@ -1,0 +1,731 @@
+{
+    "nodes": [
+        {
+            "id": "1",
+            "type": "block",
+            "statements": [
+                "import unittest",
+                "from validate.format import error_message",
+                "from validate.format import get_categories_content",
+                "from validate.format import check_alphabetical_order",
+                "from validate.format import check_title",
+                "from validate.format import check_description, max_description_length",
+                "from validate.format import check_auth, auth_keys",
+                "from validate.format import check_https, https_keys",
+                "from validate.format import check_cors, cors_keys",
+                "from validate.format import check_entry",
+                "from validate.format import check_file_format, min_entries_per_category, num_segments",
+                "class TestValidadeFormat(unittest.TestCase):\n\n    def test_error_message_return_and_return_type(self):\n        line_num_unity = 1\n        line_num_ten = 10\n        line_num_hundred = 100\n        line_num_thousand = 1000\n        msg = 'This is a unit test'\n        err_msg_unity = error_message(line_num_unity, msg)\n        err_msg_ten = error_message(line_num_ten, msg)\n        err_msg_hundred = error_message(line_num_hundred, msg)\n        err_msg_thousand = error_message(line_num_thousand, msg)\n        self.assertIsInstance(err_msg_unity, str)\n        self.assertIsInstance(err_msg_ten, str)\n        self.assertIsInstance(err_msg_hundred, str)\n        self.assertIsInstance(err_msg_thousand, str)\n        self.assertEqual(err_msg_unity, '(L002) This is a unit test')\n        self.assertEqual(err_msg_ten, '(L011) This is a unit test')\n        self.assertEqual(err_msg_hundred, '(L101) This is a unit test')\n        self.assertEqual(err_msg_thousand, '(L1001) This is a unit test')\n\n    def test_if_get_categories_content_return_correct_data_of_categories(self):\n        fake_contents = ['### A', 'API | Description | Auth | HTTPS | CORS |', '|---|---|---|---|---|', '| [AA](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |', '| [AB](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |', '', '### B', 'API | Description | Auth | HTTPS | CORS |', '|---|---|---|---|---|', '| [BA](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |', '| [BB](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |']\n        result = get_categories_content(fake_contents)\n        self.assertIsInstance(result, tuple)\n        (categories, category_line_num) = result\n        self.assertIsInstance(categories, dict)\n        self.assertIsInstance(category_line_num, dict)\n        expected_result = ({'A': ['AA', 'AB'], 'B': ['BA', 'BB']}, {'A': 0, 'B': 6})\n        for (res, ex_res) in zip(result, expected_result):\n            with self.subTest():\n                self.assertEqual(res, ex_res)\n\n    def test_if_check_alphabetical_order_return_correct_msg_error(self):\n        correct_lines = ['### A', 'API | Description | Auth | HTTPS | CORS |', '|---|---|---|---|---|', '| [AA](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |', '| [AB](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |', '', '### B', 'API | Description | Auth | HTTPS | CORS |', '|---|---|---|---|---|', '| [BA](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |', '| [BB](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |']\n        incorrect_lines = ['### A', 'API | Description | Auth | HTTPS | CORS |', '|---|---|---|---|---|', '| [AB](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |', '| [AA](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |', '', '### B', 'API | Description | Auth | HTTPS | CORS |', '|---|---|---|---|---|', '| [BB](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |', '| [BA](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |']\n        err_msgs_1 = check_alphabetical_order(correct_lines)\n        err_msgs_2 = check_alphabetical_order(incorrect_lines)\n        self.assertIsInstance(err_msgs_1, list)\n        self.assertIsInstance(err_msgs_2, list)\n        self.assertEqual(len(err_msgs_1), 0)\n        self.assertEqual(len(err_msgs_2), 2)\n        expected_err_msgs = ['(L001) A category is not alphabetical order', '(L007) B category is not alphabetical order']\n        for (err_msg, ex_err_msg) in zip(err_msgs_2, expected_err_msgs):\n            with self.subTest():\n                self.assertEqual(err_msg, ex_err_msg)\n\n    def test_check_title_with_correct_title(self):\n        raw_title = '[A](https://www.ex.com)'\n        err_msgs = check_title(0, raw_title)\n        self.assertIsInstance(err_msgs, list)\n        self.assertEqual(len(err_msgs), 0)\n        self.assertEqual(err_msgs, [])\n\n    def test_check_title_with_markdown_syntax_incorrect(self):\n        raw_title = '[A(https://www.ex.com)'\n        err_msgs = check_title(0, raw_title)\n        self.assertIsInstance(err_msgs, list)\n        self.assertEqual(len(err_msgs), 1)\n        err_msg = err_msgs[0]\n        expected_err_msg = '(L001) Title syntax should be \"[TITLE](LINK)\"'\n        self.assertEqual(err_msg, expected_err_msg)\n\n    def test_check_title_with_api_at_the_end_of_the_title(self):\n        raw_title = '[A API](https://www.ex.com)'\n        err_msgs = check_title(0, raw_title)\n        self.assertIsInstance(err_msgs, list)\n        self.assertEqual(len(err_msgs), 1)\n        err_msg = err_msgs[0]\n        expected_err_msg = '(L001) Title should not end with \"... API\". Every entry is an API here!'\n        self.assertEqual(err_msg, expected_err_msg)\n\n    def test_check_description_with_correct_description(self):\n        desc = 'This is a fake description'\n        err_msgs = check_description(0, desc)\n        self.assertIsInstance(err_msgs, list)\n        self.assertEqual(len(err_msgs), 0)\n        self.assertEqual(err_msgs, [])\n\n    def test_check_description_with_first_char_is_not_capitalized(self):\n        desc = 'this is a fake description'\n        err_msgs = check_description(0, desc)\n        self.assertIsInstance(err_msgs, list)\n        self.assertEqual(len(err_msgs), 1)\n        err_msg = err_msgs[0]\n        expected_err_msg = '(L001) first character of description is not capitalized'\n        self.assertIsInstance(err_msg, str)\n        self.assertEqual(err_msg, expected_err_msg)\n\n    def test_check_description_with_punctuation_in_the_end(self):\n        base_desc = 'This is a fake description'\n        punctuation = '!\"#$%&\\'*+,-./:;<=>?@[\\\\]^_`{|}~'\n        desc_with_punc = [base_desc + punc for punc in punctuation]\n        for desc in desc_with_punc:\n            with self.subTest():\n                err_msgs = check_description(0, desc)\n                self.assertIsInstance(err_msgs, list)\n                self.assertEqual(len(err_msgs), 1)\n                err_msg = err_msgs[0]\n                expected_err_msg = f'(L001) description should not end with {desc[-1]}'\n                self.assertIsInstance(err_msg, str)\n                self.assertEqual(err_msg, expected_err_msg)\n\n    def test_check_description_that_exceeds_the_character_limit(self):\n        long_desc = 'Desc' * max_description_length\n        long_desc_length = len(long_desc)\n        err_msgs = check_description(0, long_desc)\n        self.assertIsInstance(err_msgs, list)\n        self.assertEqual(len(err_msgs), 1)\n        err_msg = err_msgs[0]\n        expected_err_msg = f'(L001) description should not exceed {max_description_length} characters (currently {long_desc_length})'\n        self.assertIsInstance(err_msg, str)\n        self.assertEqual(err_msg, expected_err_msg)\n\n    def test_check_auth_with_valid_auth(self):\n        auth_valid = [f'`{auth}`' for auth in auth_keys if auth != 'No']\n        auth_valid.append('No')\n        for auth in auth_valid:\n            with self.subTest():\n                err_msgs = check_auth(0, auth)\n                self.assertIsInstance(err_msgs, list)\n                self.assertEqual(len(err_msgs), 0)\n                self.assertEqual(err_msgs, [])\n\n    def test_check_auth_without_backtick(self):\n        auth_without_backtick = [auth for auth in auth_keys if auth != 'No']\n        for auth in auth_without_backtick:\n            with self.subTest():\n                err_msgs = check_auth(0, auth)\n                self.assertIsInstance(err_msgs, list)\n                self.assertEqual(len(err_msgs), 1)\n                err_msg = err_msgs[0]\n                expected_err_msg = '(L001) auth value is not enclosed with `backticks`'\n                self.assertIsInstance(err_msg, str)\n                self.assertEqual(err_msg, expected_err_msg)\n\n    def test_check_auth_with_invalid_auth(self):\n        auth_invalid_without_backtick = ['Yes', 'yes', 'no', 'random', 'Unknown']\n        auth_invalid_with_backtick = ['`Yes`', '`yes`', '`no`', '`random`', '`Unknown`']\n        for auth in auth_invalid_without_backtick:\n            with self.subTest():\n                err_msgs = check_auth(0, auth)\n                self.assertIsInstance(err_msgs, list)\n                self.assertEqual(len(err_msgs), 2)\n                err_msg_1 = err_msgs[0]\n                err_msg_2 = err_msgs[1]\n                expected_err_msg_1 = f'(L001) auth value is not enclosed with `backticks`'\n                expected_err_msg_2 = f'(L001) {auth} is not a valid Auth option'\n                self.assertIsInstance(err_msg_1, str)\n                self.assertIsInstance(err_msg_2, str)\n                self.assertEqual(err_msg_1, expected_err_msg_1)\n                self.assertEqual(err_msg_2, expected_err_msg_2)\n        for auth in auth_invalid_with_backtick:\n            with self.subTest():\n                err_msgs = check_auth(0, auth)\n                self.assertIsInstance(err_msgs, list)\n                self.assertEqual(len(err_msgs), 1)\n                err_msg = err_msgs[0]\n                expected_err_msg = f'(L001) {auth} is not a valid Auth option'\n                self.assertIsInstance(err_msg, str)\n                self.assertEqual(err_msg, expected_err_msg)\n\n    def test_check_https_with_valid_https(self):\n        for https in https_keys:\n            with self.subTest():\n                err_msgs = check_https(0, https)\n                self.assertIsInstance(err_msgs, list)\n                self.assertEqual(len(err_msgs), 0)\n                self.assertEqual(err_msgs, [])\n\n    def test_check_https_with_invalid_https(self):\n        invalid_https_keys = ['yes', 'no', 'Unknown', 'https', 'http']\n        for https in invalid_https_keys:\n            with self.subTest():\n                err_msgs = check_https(0, https)\n                self.assertIsInstance(err_msgs, list)\n                self.assertEqual(len(err_msgs), 1)\n                err_msg = err_msgs[0]\n                expected_err_msg = f'(L001) {https} is not a valid HTTPS option'\n                self.assertIsInstance(err_msg, str)\n                self.assertEqual(err_msg, expected_err_msg)\n\n    def test_check_cors_with_valid_cors(self):\n        for cors in cors_keys:\n            with self.subTest():\n                err_msgs = check_cors(0, cors)\n                self.assertIsInstance(err_msgs, list)\n                self.assertEqual(len(err_msgs), 0)\n                self.assertEqual(err_msgs, [])\n\n    def test_check_cors_with_invalid_cors(self):\n        invalid_cors_keys = ['yes', 'no', 'unknown', 'cors']\n        for cors in invalid_cors_keys:\n            with self.subTest():\n                err_msgs = check_cors(0, cors)\n                self.assertIsInstance(err_msgs, list)\n                self.assertEqual(len(err_msgs), 1)\n                err_msg = err_msgs[0]\n                expected_err_msg = f'(L001) {cors} is not a valid CORS option'\n                self.assertIsInstance(err_msg, str)\n                self.assertEqual(err_msg, expected_err_msg)\n\n    def test_check_entry_with_correct_segments(self):\n        correct_segments = ['[A](https://www.ex.com)', 'Desc', '`apiKey`', 'Yes', 'Yes']\n        err_msgs = check_entry(0, correct_segments)\n        self.assertIsInstance(err_msgs, list)\n        self.assertEqual(len(err_msgs), 0)\n        self.assertEqual(err_msgs, [])\n\n    def test_check_entry_with_incorrect_segments(self):\n        incorrect_segments = ['[A API](https://www.ex.com)', 'desc.', 'yes', 'yes', 'yes']\n        err_msgs = check_entry(0, incorrect_segments)\n        expected_err_msgs = ['(L001) Title should not end with \"... API\". Every entry is an API here!', '(L001) first character of description is not capitalized', '(L001) description should not end with .', '(L001) auth value is not enclosed with `backticks`', '(L001) yes is not a valid Auth option', '(L001) yes is not a valid HTTPS option', '(L001) yes is not a valid CORS option']\n        self.assertIsInstance(err_msgs, list)\n        self.assertEqual(len(err_msgs), 7)\n        for err_msg in err_msgs:\n            with self.subTest():\n                self.assertIsInstance(err_msg, str)\n        self.assertEqual(err_msgs, expected_err_msgs)\n\n    def test_check_file_format_with_correct_format(self):\n        correct_format = ['## Index', '* [A](#a)', '* [B](#b)', '', '### A', 'API | Description | Auth | HTTPS | CORS |', '|---|---|---|---|---|', '| [AA](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |', '| [AB](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |', '| [AC](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |', '', '### B', 'API | Description | Auth | HTTPS | CORS |', '|---|---|---|---|---|', '| [BA](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |', '| [BB](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |', '| [BC](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |']\n        err_msgs = check_file_format(lines=correct_format)\n        self.assertIsInstance(err_msgs, list)\n        self.assertEqual(len(err_msgs), 0)\n        self.assertEqual(err_msgs, [])\n\n    def test_check_file_format_with_category_header_not_added_to_index(self):\n        incorrect_format = ['## Index', '', '### A', 'API | Description | Auth | HTTPS | CORS |', '|---|---|---|---|---|', '| [AA](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |', '| [AB](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |', '| [AC](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |']\n        err_msgs = check_file_format(lines=incorrect_format)\n        expected_err_msg = '(L003) category header (A) not added to Index section'\n        self.assertIsInstance(err_msgs, list)\n        self.assertEqual(len(err_msgs), 1)\n        err_msg = err_msgs[0]\n        self.assertEqual(err_msg, expected_err_msg)\n\n    def test_check_file_format_with_category_without_min_entries(self):\n        incorrect_format = ['## Index', '* [A](#a)', '* [B](#b)', '', '### A', 'API | Description | Auth | HTTPS | CORS |', '|---|---|---|---|---|', '| [AA](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |', '', '### B', 'API | Description | Auth | HTTPS | CORS |', '|---|---|---|---|---|', '| [BA](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |', '| [BB](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |', '| [BC](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |']\n        category_with_err = 'A'\n        num_in_category = 1\n        err_msgs = check_file_format(lines=incorrect_format)\n        expected_err_msg = f'(L005) {category_with_err} category does not have the minimum {min_entries_per_category} entries (only has {num_in_category})'\n        self.assertIsInstance(err_msgs, list)\n        self.assertEqual(len(err_msgs), 1)\n        err_msg = err_msgs[0]\n        self.assertEqual(err_msg, expected_err_msg)\n\n    def test_check_file_format_entry_without_all_necessary_columns(self):\n        incorrect_format = ['## Index', '* [A](#a)', '', '### A', 'API | Description | Auth | HTTPS | CORS |', '|---|---|---|---|---|', '| [AA](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |', '| [AB](https://www.ex.com) | Desc | `apiKey` |', '| [AC](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |']\n        current_segments_num = 3\n        err_msgs = check_file_format(lines=incorrect_format)\n        expected_err_msg = f'(L008) entry does not have all the required columns (have {current_segments_num}, need {num_segments})'\n        self.assertIsInstance(err_msgs, list)\n        self.assertEqual(len(err_msgs), 1)\n        err_msg = err_msgs[0]\n        self.assertEqual(err_msg, expected_err_msg)\n\n    def test_check_file_format_without_1_space_between_the_segments(self):\n        incorrect_format = ['## Index', '* [A](#a)', '', '### A', 'API | Description | Auth | HTTPS | CORS |', '|---|---|---|---|---|', '| [AA](https://www.ex.com) | Desc |`apiKey`| Yes | Yes |', '| [AB](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |', '| [AC](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |']\n        err_msgs = check_file_format(lines=incorrect_format)\n        expected_err_msg = f'(L007) each segment must start and end with exactly 1 space'\n        self.assertIsInstance(err_msgs, list)\n        self.assertEqual(len(err_msgs), 1)\n        err_msg = err_msgs[0]\n        self.assertEqual(err_msg, expected_err_msg)",
+                "def test_error_message_return_and_return_type(self):\n    line_num_unity = 1\n    line_num_ten = 10\n    line_num_hundred = 100\n    line_num_thousand = 1000\n    msg = 'This is a unit test'\n    err_msg_unity = error_message(line_num_unity, msg)\n    err_msg_ten = error_message(line_num_ten, msg)\n    err_msg_hundred = error_message(line_num_hundred, msg)\n    err_msg_thousand = error_message(line_num_thousand, msg)\n    self.assertIsInstance(err_msg_unity, str)\n    self.assertIsInstance(err_msg_ten, str)\n    self.assertIsInstance(err_msg_hundred, str)\n    self.assertIsInstance(err_msg_thousand, str)\n    self.assertEqual(err_msg_unity, '(L002) This is a unit test')\n    self.assertEqual(err_msg_ten, '(L011) This is a unit test')\n    self.assertEqual(err_msg_hundred, '(L101) This is a unit test')\n    self.assertEqual(err_msg_thousand, '(L1001) This is a unit test')",
+                "line_num_unity = 1",
+                "line_num_ten = 10",
+                "line_num_hundred = 100",
+                "line_num_thousand = 1000",
+                "msg = 'This is a unit test'",
+                "err_msg_unity = error_message(line_num_unity, msg)",
+                "err_msg_ten = error_message(line_num_ten, msg)",
+                "err_msg_hundred = error_message(line_num_hundred, msg)",
+                "err_msg_thousand = error_message(line_num_thousand, msg)",
+                "self.assertIsInstance(err_msg_unity, str)",
+                "self.assertIsInstance(err_msg_ten, str)",
+                "self.assertIsInstance(err_msg_hundred, str)",
+                "self.assertIsInstance(err_msg_thousand, str)",
+                "self.assertEqual(err_msg_unity, '(L002) This is a unit test')",
+                "self.assertEqual(err_msg_ten, '(L011) This is a unit test')",
+                "self.assertEqual(err_msg_hundred, '(L101) This is a unit test')",
+                "self.assertEqual(err_msg_thousand, '(L1001) This is a unit test')",
+                "def test_if_get_categories_content_return_correct_data_of_categories(self):\n    fake_contents = ['### A', 'API | Description | Auth | HTTPS | CORS |', '|---|---|---|---|---|', '| [AA](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |', '| [AB](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |', '', '### B', 'API | Description | Auth | HTTPS | CORS |', '|---|---|---|---|---|', '| [BA](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |', '| [BB](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |']\n    result = get_categories_content(fake_contents)\n    self.assertIsInstance(result, tuple)\n    (categories, category_line_num) = result\n    self.assertIsInstance(categories, dict)\n    self.assertIsInstance(category_line_num, dict)\n    expected_result = ({'A': ['AA', 'AB'], 'B': ['BA', 'BB']}, {'A': 0, 'B': 6})\n    for (res, ex_res) in zip(result, expected_result):\n        with self.subTest():\n            self.assertEqual(res, ex_res)",
+                "fake_contents = ['### A', 'API | Description | Auth | HTTPS | CORS |', '|---|---|---|---|---|', '| [AA](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |', '| [AB](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |', '', '### B', 'API | Description | Auth | HTTPS | CORS |', '|---|---|---|---|---|', '| [BA](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |', '| [BB](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |']",
+                "result = get_categories_content(fake_contents)",
+                "self.assertIsInstance(result, tuple)",
+                "(categories, category_line_num) = result",
+                "self.assertIsInstance(categories, dict)",
+                "self.assertIsInstance(category_line_num, dict)",
+                "expected_result = ({'A': ['AA', 'AB'], 'B': ['BA', 'BB']}, {'A': 0, 'B': 6})"
+            ]
+        },
+        {
+            "id": "2",
+            "type": "block",
+            "statements": [
+                "(res, ex_res)",
+                "zip(result, expected_result)"
+            ]
+        },
+        {
+            "id": "3",
+            "type": "block",
+            "statements": [
+                "with self.subTest():\n    self.assertEqual(res, ex_res)",
+                "self.assertEqual(res, ex_res)"
+            ]
+        },
+        {
+            "id": "4",
+            "type": "block",
+            "statements": [
+                "def test_if_check_alphabetical_order_return_correct_msg_error(self):\n    correct_lines = ['### A', 'API | Description | Auth | HTTPS | CORS |', '|---|---|---|---|---|', '| [AA](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |', '| [AB](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |', '', '### B', 'API | Description | Auth | HTTPS | CORS |', '|---|---|---|---|---|', '| [BA](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |', '| [BB](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |']\n    incorrect_lines = ['### A', 'API | Description | Auth | HTTPS | CORS |', '|---|---|---|---|---|', '| [AB](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |', '| [AA](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |', '', '### B', 'API | Description | Auth | HTTPS | CORS |', '|---|---|---|---|---|', '| [BB](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |', '| [BA](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |']\n    err_msgs_1 = check_alphabetical_order(correct_lines)\n    err_msgs_2 = check_alphabetical_order(incorrect_lines)\n    self.assertIsInstance(err_msgs_1, list)\n    self.assertIsInstance(err_msgs_2, list)\n    self.assertEqual(len(err_msgs_1), 0)\n    self.assertEqual(len(err_msgs_2), 2)\n    expected_err_msgs = ['(L001) A category is not alphabetical order', '(L007) B category is not alphabetical order']\n    for (err_msg, ex_err_msg) in zip(err_msgs_2, expected_err_msgs):\n        with self.subTest():\n            self.assertEqual(err_msg, ex_err_msg)",
+                "correct_lines = ['### A', 'API | Description | Auth | HTTPS | CORS |', '|---|---|---|---|---|', '| [AA](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |', '| [AB](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |', '', '### B', 'API | Description | Auth | HTTPS | CORS |', '|---|---|---|---|---|', '| [BA](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |', '| [BB](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |']",
+                "incorrect_lines = ['### A', 'API | Description | Auth | HTTPS | CORS |', '|---|---|---|---|---|', '| [AB](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |', '| [AA](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |', '', '### B', 'API | Description | Auth | HTTPS | CORS |', '|---|---|---|---|---|', '| [BB](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |', '| [BA](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |']",
+                "err_msgs_1 = check_alphabetical_order(correct_lines)",
+                "err_msgs_2 = check_alphabetical_order(incorrect_lines)",
+                "self.assertIsInstance(err_msgs_1, list)",
+                "self.assertIsInstance(err_msgs_2, list)",
+                "self.assertEqual(len(err_msgs_1), 0)",
+                "self.assertEqual(len(err_msgs_2), 2)",
+                "expected_err_msgs = ['(L001) A category is not alphabetical order', '(L007) B category is not alphabetical order']"
+            ]
+        },
+        {
+            "id": "5",
+            "type": "block",
+            "statements": [
+                "(err_msg, ex_err_msg)",
+                "zip(err_msgs_2, expected_err_msgs)"
+            ]
+        },
+        {
+            "id": "6",
+            "type": "block",
+            "statements": [
+                "with self.subTest():\n    self.assertEqual(err_msg, ex_err_msg)",
+                "self.assertEqual(err_msg, ex_err_msg)"
+            ]
+        },
+        {
+            "id": "7",
+            "type": "block",
+            "statements": [
+                "def test_check_title_with_correct_title(self):\n    raw_title = '[A](https://www.ex.com)'\n    err_msgs = check_title(0, raw_title)\n    self.assertIsInstance(err_msgs, list)\n    self.assertEqual(len(err_msgs), 0)\n    self.assertEqual(err_msgs, [])",
+                "raw_title = '[A](https://www.ex.com)'",
+                "err_msgs = check_title(0, raw_title)",
+                "self.assertIsInstance(err_msgs, list)",
+                "self.assertEqual(len(err_msgs), 0)",
+                "self.assertEqual(err_msgs, [])",
+                "def test_check_title_with_markdown_syntax_incorrect(self):\n    raw_title = '[A(https://www.ex.com)'\n    err_msgs = check_title(0, raw_title)\n    self.assertIsInstance(err_msgs, list)\n    self.assertEqual(len(err_msgs), 1)\n    err_msg = err_msgs[0]\n    expected_err_msg = '(L001) Title syntax should be \"[TITLE](LINK)\"'\n    self.assertEqual(err_msg, expected_err_msg)",
+                "raw_title = '[A(https://www.ex.com)'",
+                "err_msgs = check_title(0, raw_title)",
+                "self.assertIsInstance(err_msgs, list)",
+                "self.assertEqual(len(err_msgs), 1)",
+                "err_msg = err_msgs[0]",
+                "expected_err_msg = '(L001) Title syntax should be \"[TITLE](LINK)\"'",
+                "self.assertEqual(err_msg, expected_err_msg)",
+                "def test_check_title_with_api_at_the_end_of_the_title(self):\n    raw_title = '[A API](https://www.ex.com)'\n    err_msgs = check_title(0, raw_title)\n    self.assertIsInstance(err_msgs, list)\n    self.assertEqual(len(err_msgs), 1)\n    err_msg = err_msgs[0]\n    expected_err_msg = '(L001) Title should not end with \"... API\". Every entry is an API here!'\n    self.assertEqual(err_msg, expected_err_msg)",
+                "raw_title = '[A API](https://www.ex.com)'",
+                "err_msgs = check_title(0, raw_title)",
+                "self.assertIsInstance(err_msgs, list)",
+                "self.assertEqual(len(err_msgs), 1)",
+                "err_msg = err_msgs[0]",
+                "expected_err_msg = '(L001) Title should not end with \"... API\". Every entry is an API here!'",
+                "self.assertEqual(err_msg, expected_err_msg)",
+                "def test_check_description_with_correct_description(self):\n    desc = 'This is a fake description'\n    err_msgs = check_description(0, desc)\n    self.assertIsInstance(err_msgs, list)\n    self.assertEqual(len(err_msgs), 0)\n    self.assertEqual(err_msgs, [])",
+                "desc = 'This is a fake description'",
+                "err_msgs = check_description(0, desc)",
+                "self.assertIsInstance(err_msgs, list)",
+                "self.assertEqual(len(err_msgs), 0)",
+                "self.assertEqual(err_msgs, [])",
+                "def test_check_description_with_first_char_is_not_capitalized(self):\n    desc = 'this is a fake description'\n    err_msgs = check_description(0, desc)\n    self.assertIsInstance(err_msgs, list)\n    self.assertEqual(len(err_msgs), 1)\n    err_msg = err_msgs[0]\n    expected_err_msg = '(L001) first character of description is not capitalized'\n    self.assertIsInstance(err_msg, str)\n    self.assertEqual(err_msg, expected_err_msg)",
+                "desc = 'this is a fake description'",
+                "err_msgs = check_description(0, desc)",
+                "self.assertIsInstance(err_msgs, list)",
+                "self.assertEqual(len(err_msgs), 1)",
+                "err_msg = err_msgs[0]",
+                "expected_err_msg = '(L001) first character of description is not capitalized'",
+                "self.assertIsInstance(err_msg, str)",
+                "self.assertEqual(err_msg, expected_err_msg)",
+                "def test_check_description_with_punctuation_in_the_end(self):\n    base_desc = 'This is a fake description'\n    punctuation = '!\"#$%&\\'*+,-./:;<=>?@[\\\\]^_`{|}~'\n    desc_with_punc = [base_desc + punc for punc in punctuation]\n    for desc in desc_with_punc:\n        with self.subTest():\n            err_msgs = check_description(0, desc)\n            self.assertIsInstance(err_msgs, list)\n            self.assertEqual(len(err_msgs), 1)\n            err_msg = err_msgs[0]\n            expected_err_msg = f'(L001) description should not end with {desc[-1]}'\n            self.assertIsInstance(err_msg, str)\n            self.assertEqual(err_msg, expected_err_msg)",
+                "base_desc = 'This is a fake description'",
+                "punctuation = '!\"#$%&\\'*+,-./:;<=>?@[\\\\]^_`{|}~'",
+                "desc_with_punc = [base_desc + punc for punc in punctuation]"
+            ]
+        },
+        {
+            "id": "8",
+            "type": "block",
+            "statements": [
+                "desc",
+                "desc_with_punc"
+            ]
+        },
+        {
+            "id": "9",
+            "type": "block",
+            "statements": [
+                "with self.subTest():\n    err_msgs = check_description(0, desc)\n    self.assertIsInstance(err_msgs, list)\n    self.assertEqual(len(err_msgs), 1)\n    err_msg = err_msgs[0]\n    expected_err_msg = f'(L001) description should not end with {desc[-1]}'\n    self.assertIsInstance(err_msg, str)\n    self.assertEqual(err_msg, expected_err_msg)",
+                "err_msgs = check_description(0, desc)",
+                "self.assertIsInstance(err_msgs, list)",
+                "self.assertEqual(len(err_msgs), 1)",
+                "err_msg = err_msgs[0]",
+                "expected_err_msg = f'(L001) description should not end with {desc[-1]}'",
+                "self.assertIsInstance(err_msg, str)",
+                "self.assertEqual(err_msg, expected_err_msg)"
+            ]
+        },
+        {
+            "id": "10",
+            "type": "block",
+            "statements": [
+                "def test_check_description_that_exceeds_the_character_limit(self):\n    long_desc = 'Desc' * max_description_length\n    long_desc_length = len(long_desc)\n    err_msgs = check_description(0, long_desc)\n    self.assertIsInstance(err_msgs, list)\n    self.assertEqual(len(err_msgs), 1)\n    err_msg = err_msgs[0]\n    expected_err_msg = f'(L001) description should not exceed {max_description_length} characters (currently {long_desc_length})'\n    self.assertIsInstance(err_msg, str)\n    self.assertEqual(err_msg, expected_err_msg)",
+                "long_desc = 'Desc' * max_description_length",
+                "long_desc_length = len(long_desc)",
+                "err_msgs = check_description(0, long_desc)",
+                "self.assertIsInstance(err_msgs, list)",
+                "self.assertEqual(len(err_msgs), 1)",
+                "err_msg = err_msgs[0]",
+                "expected_err_msg = f'(L001) description should not exceed {max_description_length} characters (currently {long_desc_length})'",
+                "self.assertIsInstance(err_msg, str)",
+                "self.assertEqual(err_msg, expected_err_msg)",
+                "def test_check_auth_with_valid_auth(self):\n    auth_valid = [f'`{auth}`' for auth in auth_keys if auth != 'No']\n    auth_valid.append('No')\n    for auth in auth_valid:\n        with self.subTest():\n            err_msgs = check_auth(0, auth)\n            self.assertIsInstance(err_msgs, list)\n            self.assertEqual(len(err_msgs), 0)\n            self.assertEqual(err_msgs, [])",
+                "auth_valid = [f'`{auth}`' for auth in auth_keys if auth != 'No']",
+                "auth_valid.append('No')"
+            ]
+        },
+        {
+            "id": "11",
+            "type": "block",
+            "statements": [
+                "auth",
+                "auth_valid"
+            ]
+        },
+        {
+            "id": "12",
+            "type": "block",
+            "statements": [
+                "with self.subTest():\n    err_msgs = check_auth(0, auth)\n    self.assertIsInstance(err_msgs, list)\n    self.assertEqual(len(err_msgs), 0)\n    self.assertEqual(err_msgs, [])",
+                "err_msgs = check_auth(0, auth)",
+                "self.assertIsInstance(err_msgs, list)",
+                "self.assertEqual(len(err_msgs), 0)",
+                "self.assertEqual(err_msgs, [])"
+            ]
+        },
+        {
+            "id": "13",
+            "type": "block",
+            "statements": [
+                "def test_check_auth_without_backtick(self):\n    auth_without_backtick = [auth for auth in auth_keys if auth != 'No']\n    for auth in auth_without_backtick:\n        with self.subTest():\n            err_msgs = check_auth(0, auth)\n            self.assertIsInstance(err_msgs, list)\n            self.assertEqual(len(err_msgs), 1)\n            err_msg = err_msgs[0]\n            expected_err_msg = '(L001) auth value is not enclosed with `backticks`'\n            self.assertIsInstance(err_msg, str)\n            self.assertEqual(err_msg, expected_err_msg)",
+                "auth_without_backtick = [auth for auth in auth_keys if auth != 'No']"
+            ]
+        },
+        {
+            "id": "14",
+            "type": "block",
+            "statements": [
+                "auth",
+                "auth_without_backtick"
+            ]
+        },
+        {
+            "id": "15",
+            "type": "block",
+            "statements": [
+                "with self.subTest():\n    err_msgs = check_auth(0, auth)\n    self.assertIsInstance(err_msgs, list)\n    self.assertEqual(len(err_msgs), 1)\n    err_msg = err_msgs[0]\n    expected_err_msg = '(L001) auth value is not enclosed with `backticks`'\n    self.assertIsInstance(err_msg, str)\n    self.assertEqual(err_msg, expected_err_msg)",
+                "err_msgs = check_auth(0, auth)",
+                "self.assertIsInstance(err_msgs, list)",
+                "self.assertEqual(len(err_msgs), 1)",
+                "err_msg = err_msgs[0]",
+                "expected_err_msg = '(L001) auth value is not enclosed with `backticks`'",
+                "self.assertIsInstance(err_msg, str)",
+                "self.assertEqual(err_msg, expected_err_msg)"
+            ]
+        },
+        {
+            "id": "16",
+            "type": "block",
+            "statements": [
+                "def test_check_auth_with_invalid_auth(self):\n    auth_invalid_without_backtick = ['Yes', 'yes', 'no', 'random', 'Unknown']\n    auth_invalid_with_backtick = ['`Yes`', '`yes`', '`no`', '`random`', '`Unknown`']\n    for auth in auth_invalid_without_backtick:\n        with self.subTest():\n            err_msgs = check_auth(0, auth)\n            self.assertIsInstance(err_msgs, list)\n            self.assertEqual(len(err_msgs), 2)\n            err_msg_1 = err_msgs[0]\n            err_msg_2 = err_msgs[1]\n            expected_err_msg_1 = f'(L001) auth value is not enclosed with `backticks`'\n            expected_err_msg_2 = f'(L001) {auth} is not a valid Auth option'\n            self.assertIsInstance(err_msg_1, str)\n            self.assertIsInstance(err_msg_2, str)\n            self.assertEqual(err_msg_1, expected_err_msg_1)\n            self.assertEqual(err_msg_2, expected_err_msg_2)\n    for auth in auth_invalid_with_backtick:\n        with self.subTest():\n            err_msgs = check_auth(0, auth)\n            self.assertIsInstance(err_msgs, list)\n            self.assertEqual(len(err_msgs), 1)\n            err_msg = err_msgs[0]\n            expected_err_msg = f'(L001) {auth} is not a valid Auth option'\n            self.assertIsInstance(err_msg, str)\n            self.assertEqual(err_msg, expected_err_msg)",
+                "auth_invalid_without_backtick = ['Yes', 'yes', 'no', 'random', 'Unknown']",
+                "auth_invalid_with_backtick = ['`Yes`', '`yes`', '`no`', '`random`', '`Unknown`']"
+            ]
+        },
+        {
+            "id": "17",
+            "type": "block",
+            "statements": [
+                "auth",
+                "auth_invalid_without_backtick"
+            ]
+        },
+        {
+            "id": "18",
+            "type": "block",
+            "statements": [
+                "with self.subTest():\n    err_msgs = check_auth(0, auth)\n    self.assertIsInstance(err_msgs, list)\n    self.assertEqual(len(err_msgs), 2)\n    err_msg_1 = err_msgs[0]\n    err_msg_2 = err_msgs[1]\n    expected_err_msg_1 = f'(L001) auth value is not enclosed with `backticks`'\n    expected_err_msg_2 = f'(L001) {auth} is not a valid Auth option'\n    self.assertIsInstance(err_msg_1, str)\n    self.assertIsInstance(err_msg_2, str)\n    self.assertEqual(err_msg_1, expected_err_msg_1)\n    self.assertEqual(err_msg_2, expected_err_msg_2)",
+                "err_msgs = check_auth(0, auth)",
+                "self.assertIsInstance(err_msgs, list)",
+                "self.assertEqual(len(err_msgs), 2)",
+                "err_msg_1 = err_msgs[0]",
+                "err_msg_2 = err_msgs[1]",
+                "expected_err_msg_1 = f'(L001) auth value is not enclosed with `backticks`'",
+                "expected_err_msg_2 = f'(L001) {auth} is not a valid Auth option'",
+                "self.assertIsInstance(err_msg_1, str)",
+                "self.assertIsInstance(err_msg_2, str)",
+                "self.assertEqual(err_msg_1, expected_err_msg_1)",
+                "self.assertEqual(err_msg_2, expected_err_msg_2)"
+            ]
+        },
+        {
+            "id": "19",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "20",
+            "type": "block",
+            "statements": [
+                "auth",
+                "auth_invalid_with_backtick"
+            ]
+        },
+        {
+            "id": "21",
+            "type": "block",
+            "statements": [
+                "with self.subTest():\n    err_msgs = check_auth(0, auth)\n    self.assertIsInstance(err_msgs, list)\n    self.assertEqual(len(err_msgs), 1)\n    err_msg = err_msgs[0]\n    expected_err_msg = f'(L001) {auth} is not a valid Auth option'\n    self.assertIsInstance(err_msg, str)\n    self.assertEqual(err_msg, expected_err_msg)",
+                "err_msgs = check_auth(0, auth)",
+                "self.assertIsInstance(err_msgs, list)",
+                "self.assertEqual(len(err_msgs), 1)",
+                "err_msg = err_msgs[0]",
+                "expected_err_msg = f'(L001) {auth} is not a valid Auth option'",
+                "self.assertIsInstance(err_msg, str)",
+                "self.assertEqual(err_msg, expected_err_msg)"
+            ]
+        },
+        {
+            "id": "22",
+            "type": "block",
+            "statements": [
+                "def test_check_https_with_valid_https(self):\n    for https in https_keys:\n        with self.subTest():\n            err_msgs = check_https(0, https)\n            self.assertIsInstance(err_msgs, list)\n            self.assertEqual(len(err_msgs), 0)\n            self.assertEqual(err_msgs, [])"
+            ]
+        },
+        {
+            "id": "23",
+            "type": "block",
+            "statements": [
+                "https",
+                "https_keys"
+            ]
+        },
+        {
+            "id": "24",
+            "type": "block",
+            "statements": [
+                "with self.subTest():\n    err_msgs = check_https(0, https)\n    self.assertIsInstance(err_msgs, list)\n    self.assertEqual(len(err_msgs), 0)\n    self.assertEqual(err_msgs, [])",
+                "err_msgs = check_https(0, https)",
+                "self.assertIsInstance(err_msgs, list)",
+                "self.assertEqual(len(err_msgs), 0)",
+                "self.assertEqual(err_msgs, [])"
+            ]
+        },
+        {
+            "id": "25",
+            "type": "block",
+            "statements": [
+                "def test_check_https_with_invalid_https(self):\n    invalid_https_keys = ['yes', 'no', 'Unknown', 'https', 'http']\n    for https in invalid_https_keys:\n        with self.subTest():\n            err_msgs = check_https(0, https)\n            self.assertIsInstance(err_msgs, list)\n            self.assertEqual(len(err_msgs), 1)\n            err_msg = err_msgs[0]\n            expected_err_msg = f'(L001) {https} is not a valid HTTPS option'\n            self.assertIsInstance(err_msg, str)\n            self.assertEqual(err_msg, expected_err_msg)",
+                "invalid_https_keys = ['yes', 'no', 'Unknown', 'https', 'http']"
+            ]
+        },
+        {
+            "id": "26",
+            "type": "block",
+            "statements": [
+                "https",
+                "invalid_https_keys"
+            ]
+        },
+        {
+            "id": "27",
+            "type": "block",
+            "statements": [
+                "with self.subTest():\n    err_msgs = check_https(0, https)\n    self.assertIsInstance(err_msgs, list)\n    self.assertEqual(len(err_msgs), 1)\n    err_msg = err_msgs[0]\n    expected_err_msg = f'(L001) {https} is not a valid HTTPS option'\n    self.assertIsInstance(err_msg, str)\n    self.assertEqual(err_msg, expected_err_msg)",
+                "err_msgs = check_https(0, https)",
+                "self.assertIsInstance(err_msgs, list)",
+                "self.assertEqual(len(err_msgs), 1)",
+                "err_msg = err_msgs[0]",
+                "expected_err_msg = f'(L001) {https} is not a valid HTTPS option'",
+                "self.assertIsInstance(err_msg, str)",
+                "self.assertEqual(err_msg, expected_err_msg)"
+            ]
+        },
+        {
+            "id": "28",
+            "type": "block",
+            "statements": [
+                "def test_check_cors_with_valid_cors(self):\n    for cors in cors_keys:\n        with self.subTest():\n            err_msgs = check_cors(0, cors)\n            self.assertIsInstance(err_msgs, list)\n            self.assertEqual(len(err_msgs), 0)\n            self.assertEqual(err_msgs, [])"
+            ]
+        },
+        {
+            "id": "29",
+            "type": "block",
+            "statements": [
+                "cors",
+                "cors_keys"
+            ]
+        },
+        {
+            "id": "30",
+            "type": "block",
+            "statements": [
+                "with self.subTest():\n    err_msgs = check_cors(0, cors)\n    self.assertIsInstance(err_msgs, list)\n    self.assertEqual(len(err_msgs), 0)\n    self.assertEqual(err_msgs, [])",
+                "err_msgs = check_cors(0, cors)",
+                "self.assertIsInstance(err_msgs, list)",
+                "self.assertEqual(len(err_msgs), 0)",
+                "self.assertEqual(err_msgs, [])"
+            ]
+        },
+        {
+            "id": "31",
+            "type": "block",
+            "statements": [
+                "def test_check_cors_with_invalid_cors(self):\n    invalid_cors_keys = ['yes', 'no', 'unknown', 'cors']\n    for cors in invalid_cors_keys:\n        with self.subTest():\n            err_msgs = check_cors(0, cors)\n            self.assertIsInstance(err_msgs, list)\n            self.assertEqual(len(err_msgs), 1)\n            err_msg = err_msgs[0]\n            expected_err_msg = f'(L001) {cors} is not a valid CORS option'\n            self.assertIsInstance(err_msg, str)\n            self.assertEqual(err_msg, expected_err_msg)",
+                "invalid_cors_keys = ['yes', 'no', 'unknown', 'cors']"
+            ]
+        },
+        {
+            "id": "32",
+            "type": "block",
+            "statements": [
+                "cors",
+                "invalid_cors_keys"
+            ]
+        },
+        {
+            "id": "33",
+            "type": "block",
+            "statements": [
+                "with self.subTest():\n    err_msgs = check_cors(0, cors)\n    self.assertIsInstance(err_msgs, list)\n    self.assertEqual(len(err_msgs), 1)\n    err_msg = err_msgs[0]\n    expected_err_msg = f'(L001) {cors} is not a valid CORS option'\n    self.assertIsInstance(err_msg, str)\n    self.assertEqual(err_msg, expected_err_msg)",
+                "err_msgs = check_cors(0, cors)",
+                "self.assertIsInstance(err_msgs, list)",
+                "self.assertEqual(len(err_msgs), 1)",
+                "err_msg = err_msgs[0]",
+                "expected_err_msg = f'(L001) {cors} is not a valid CORS option'",
+                "self.assertIsInstance(err_msg, str)",
+                "self.assertEqual(err_msg, expected_err_msg)"
+            ]
+        },
+        {
+            "id": "34",
+            "type": "block",
+            "statements": [
+                "def test_check_entry_with_correct_segments(self):\n    correct_segments = ['[A](https://www.ex.com)', 'Desc', '`apiKey`', 'Yes', 'Yes']\n    err_msgs = check_entry(0, correct_segments)\n    self.assertIsInstance(err_msgs, list)\n    self.assertEqual(len(err_msgs), 0)\n    self.assertEqual(err_msgs, [])",
+                "correct_segments = ['[A](https://www.ex.com)', 'Desc', '`apiKey`', 'Yes', 'Yes']",
+                "err_msgs = check_entry(0, correct_segments)",
+                "self.assertIsInstance(err_msgs, list)",
+                "self.assertEqual(len(err_msgs), 0)",
+                "self.assertEqual(err_msgs, [])",
+                "def test_check_entry_with_incorrect_segments(self):\n    incorrect_segments = ['[A API](https://www.ex.com)', 'desc.', 'yes', 'yes', 'yes']\n    err_msgs = check_entry(0, incorrect_segments)\n    expected_err_msgs = ['(L001) Title should not end with \"... API\". Every entry is an API here!', '(L001) first character of description is not capitalized', '(L001) description should not end with .', '(L001) auth value is not enclosed with `backticks`', '(L001) yes is not a valid Auth option', '(L001) yes is not a valid HTTPS option', '(L001) yes is not a valid CORS option']\n    self.assertIsInstance(err_msgs, list)\n    self.assertEqual(len(err_msgs), 7)\n    for err_msg in err_msgs:\n        with self.subTest():\n            self.assertIsInstance(err_msg, str)\n    self.assertEqual(err_msgs, expected_err_msgs)",
+                "incorrect_segments = ['[A API](https://www.ex.com)', 'desc.', 'yes', 'yes', 'yes']",
+                "err_msgs = check_entry(0, incorrect_segments)",
+                "expected_err_msgs = ['(L001) Title should not end with \"... API\". Every entry is an API here!', '(L001) first character of description is not capitalized', '(L001) description should not end with .', '(L001) auth value is not enclosed with `backticks`', '(L001) yes is not a valid Auth option', '(L001) yes is not a valid HTTPS option', '(L001) yes is not a valid CORS option']",
+                "self.assertIsInstance(err_msgs, list)",
+                "self.assertEqual(len(err_msgs), 7)"
+            ]
+        },
+        {
+            "id": "35",
+            "type": "block",
+            "statements": [
+                "err_msg",
+                "err_msgs"
+            ]
+        },
+        {
+            "id": "36",
+            "type": "block",
+            "statements": [
+                "with self.subTest():\n    self.assertIsInstance(err_msg, str)",
+                "self.assertIsInstance(err_msg, str)"
+            ]
+        },
+        {
+            "id": "37",
+            "type": "block",
+            "statements": [
+                "self.assertEqual(err_msgs, expected_err_msgs)",
+                "def test_check_file_format_with_correct_format(self):\n    correct_format = ['## Index', '* [A](#a)', '* [B](#b)', '', '### A', 'API | Description | Auth | HTTPS | CORS |', '|---|---|---|---|---|', '| [AA](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |', '| [AB](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |', '| [AC](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |', '', '### B', 'API | Description | Auth | HTTPS | CORS |', '|---|---|---|---|---|', '| [BA](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |', '| [BB](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |', '| [BC](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |']\n    err_msgs = check_file_format(lines=correct_format)\n    self.assertIsInstance(err_msgs, list)\n    self.assertEqual(len(err_msgs), 0)\n    self.assertEqual(err_msgs, [])",
+                "correct_format = ['## Index', '* [A](#a)', '* [B](#b)', '', '### A', 'API | Description | Auth | HTTPS | CORS |', '|---|---|---|---|---|', '| [AA](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |', '| [AB](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |', '| [AC](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |', '', '### B', 'API | Description | Auth | HTTPS | CORS |', '|---|---|---|---|---|', '| [BA](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |', '| [BB](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |', '| [BC](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |']",
+                "err_msgs = check_file_format(lines=correct_format)",
+                "self.assertIsInstance(err_msgs, list)",
+                "self.assertEqual(len(err_msgs), 0)",
+                "self.assertEqual(err_msgs, [])",
+                "def test_check_file_format_with_category_header_not_added_to_index(self):\n    incorrect_format = ['## Index', '', '### A', 'API | Description | Auth | HTTPS | CORS |', '|---|---|---|---|---|', '| [AA](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |', '| [AB](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |', '| [AC](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |']\n    err_msgs = check_file_format(lines=incorrect_format)\n    expected_err_msg = '(L003) category header (A) not added to Index section'\n    self.assertIsInstance(err_msgs, list)\n    self.assertEqual(len(err_msgs), 1)\n    err_msg = err_msgs[0]\n    self.assertEqual(err_msg, expected_err_msg)",
+                "incorrect_format = ['## Index', '', '### A', 'API | Description | Auth | HTTPS | CORS |', '|---|---|---|---|---|', '| [AA](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |', '| [AB](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |', '| [AC](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |']",
+                "err_msgs = check_file_format(lines=incorrect_format)",
+                "expected_err_msg = '(L003) category header (A) not added to Index section'",
+                "self.assertIsInstance(err_msgs, list)",
+                "self.assertEqual(len(err_msgs), 1)",
+                "err_msg = err_msgs[0]",
+                "self.assertEqual(err_msg, expected_err_msg)",
+                "def test_check_file_format_with_category_without_min_entries(self):\n    incorrect_format = ['## Index', '* [A](#a)', '* [B](#b)', '', '### A', 'API | Description | Auth | HTTPS | CORS |', '|---|---|---|---|---|', '| [AA](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |', '', '### B', 'API | Description | Auth | HTTPS | CORS |', '|---|---|---|---|---|', '| [BA](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |', '| [BB](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |', '| [BC](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |']\n    category_with_err = 'A'\n    num_in_category = 1\n    err_msgs = check_file_format(lines=incorrect_format)\n    expected_err_msg = f'(L005) {category_with_err} category does not have the minimum {min_entries_per_category} entries (only has {num_in_category})'\n    self.assertIsInstance(err_msgs, list)\n    self.assertEqual(len(err_msgs), 1)\n    err_msg = err_msgs[0]\n    self.assertEqual(err_msg, expected_err_msg)",
+                "incorrect_format = ['## Index', '* [A](#a)', '* [B](#b)', '', '### A', 'API | Description | Auth | HTTPS | CORS |', '|---|---|---|---|---|', '| [AA](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |', '', '### B', 'API | Description | Auth | HTTPS | CORS |', '|---|---|---|---|---|', '| [BA](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |', '| [BB](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |', '| [BC](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |']",
+                "category_with_err = 'A'",
+                "num_in_category = 1",
+                "err_msgs = check_file_format(lines=incorrect_format)",
+                "expected_err_msg = f'(L005) {category_with_err} category does not have the minimum {min_entries_per_category} entries (only has {num_in_category})'",
+                "self.assertIsInstance(err_msgs, list)",
+                "self.assertEqual(len(err_msgs), 1)",
+                "err_msg = err_msgs[0]",
+                "self.assertEqual(err_msg, expected_err_msg)",
+                "def test_check_file_format_entry_without_all_necessary_columns(self):\n    incorrect_format = ['## Index', '* [A](#a)', '', '### A', 'API | Description | Auth | HTTPS | CORS |', '|---|---|---|---|---|', '| [AA](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |', '| [AB](https://www.ex.com) | Desc | `apiKey` |', '| [AC](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |']\n    current_segments_num = 3\n    err_msgs = check_file_format(lines=incorrect_format)\n    expected_err_msg = f'(L008) entry does not have all the required columns (have {current_segments_num}, need {num_segments})'\n    self.assertIsInstance(err_msgs, list)\n    self.assertEqual(len(err_msgs), 1)\n    err_msg = err_msgs[0]\n    self.assertEqual(err_msg, expected_err_msg)",
+                "incorrect_format = ['## Index', '* [A](#a)', '', '### A', 'API | Description | Auth | HTTPS | CORS |', '|---|---|---|---|---|', '| [AA](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |', '| [AB](https://www.ex.com) | Desc | `apiKey` |', '| [AC](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |']",
+                "current_segments_num = 3",
+                "err_msgs = check_file_format(lines=incorrect_format)",
+                "expected_err_msg = f'(L008) entry does not have all the required columns (have {current_segments_num}, need {num_segments})'",
+                "self.assertIsInstance(err_msgs, list)",
+                "self.assertEqual(len(err_msgs), 1)",
+                "err_msg = err_msgs[0]",
+                "self.assertEqual(err_msg, expected_err_msg)",
+                "def test_check_file_format_without_1_space_between_the_segments(self):\n    incorrect_format = ['## Index', '* [A](#a)', '', '### A', 'API | Description | Auth | HTTPS | CORS |', '|---|---|---|---|---|', '| [AA](https://www.ex.com) | Desc |`apiKey`| Yes | Yes |', '| [AB](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |', '| [AC](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |']\n    err_msgs = check_file_format(lines=incorrect_format)\n    expected_err_msg = f'(L007) each segment must start and end with exactly 1 space'\n    self.assertIsInstance(err_msgs, list)\n    self.assertEqual(len(err_msgs), 1)\n    err_msg = err_msgs[0]\n    self.assertEqual(err_msg, expected_err_msg)",
+                "incorrect_format = ['## Index', '* [A](#a)', '', '### A', 'API | Description | Auth | HTTPS | CORS |', '|---|---|---|---|---|', '| [AA](https://www.ex.com) | Desc |`apiKey`| Yes | Yes |', '| [AB](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |', '| [AC](https://www.ex.com) | Desc | `apiKey` | Yes | Yes |']",
+                "err_msgs = check_file_format(lines=incorrect_format)",
+                "expected_err_msg = f'(L007) each segment must start and end with exactly 1 space'",
+                "self.assertIsInstance(err_msgs, list)",
+                "self.assertEqual(len(err_msgs), 1)",
+                "err_msg = err_msgs[0]",
+                "self.assertEqual(err_msg, expected_err_msg)"
+            ]
+        }
+    ],
+    "edges": [
+        {
+            "source": "1",
+            "target": "2",
+            "type": "next"
+        },
+        {
+            "source": "2",
+            "target": "3",
+            "type": "true"
+        },
+        {
+            "source": "2",
+            "target": "4",
+            "type": "false"
+        },
+        {
+            "source": "3",
+            "target": "2",
+            "type": "next"
+        },
+        {
+            "source": "4",
+            "target": "5",
+            "type": "next"
+        },
+        {
+            "source": "5",
+            "target": "6",
+            "type": "true"
+        },
+        {
+            "source": "5",
+            "target": "7",
+            "type": "false"
+        },
+        {
+            "source": "6",
+            "target": "5",
+            "type": "next"
+        },
+        {
+            "source": "7",
+            "target": "8",
+            "type": "next"
+        },
+        {
+            "source": "8",
+            "target": "9",
+            "type": "true"
+        },
+        {
+            "source": "8",
+            "target": "10",
+            "type": "false"
+        },
+        {
+            "source": "9",
+            "target": "8",
+            "type": "next"
+        },
+        {
+            "source": "10",
+            "target": "11",
+            "type": "next"
+        },
+        {
+            "source": "11",
+            "target": "12",
+            "type": "true"
+        },
+        {
+            "source": "11",
+            "target": "13",
+            "type": "false"
+        },
+        {
+            "source": "12",
+            "target": "11",
+            "type": "next"
+        },
+        {
+            "source": "13",
+            "target": "14",
+            "type": "next"
+        },
+        {
+            "source": "14",
+            "target": "15",
+            "type": "true"
+        },
+        {
+            "source": "14",
+            "target": "16",
+            "type": "false"
+        },
+        {
+            "source": "15",
+            "target": "14",
+            "type": "next"
+        },
+        {
+            "source": "16",
+            "target": "17",
+            "type": "next"
+        },
+        {
+            "source": "17",
+            "target": "18",
+            "type": "true"
+        },
+        {
+            "source": "17",
+            "target": "19",
+            "type": "false"
+        },
+        {
+            "source": "18",
+            "target": "17",
+            "type": "next"
+        },
+        {
+            "source": "19",
+            "target": "20",
+            "type": "next"
+        },
+        {
+            "source": "20",
+            "target": "21",
+            "type": "true"
+        },
+        {
+            "source": "20",
+            "target": "22",
+            "type": "false"
+        },
+        {
+            "source": "21",
+            "target": "20",
+            "type": "next"
+        },
+        {
+            "source": "22",
+            "target": "23",
+            "type": "next"
+        },
+        {
+            "source": "23",
+            "target": "24",
+            "type": "true"
+        },
+        {
+            "source": "23",
+            "target": "25",
+            "type": "false"
+        },
+        {
+            "source": "24",
+            "target": "23",
+            "type": "next"
+        },
+        {
+            "source": "25",
+            "target": "26",
+            "type": "next"
+        },
+        {
+            "source": "26",
+            "target": "27",
+            "type": "true"
+        },
+        {
+            "source": "26",
+            "target": "28",
+            "type": "false"
+        },
+        {
+            "source": "27",
+            "target": "26",
+            "type": "next"
+        },
+        {
+            "source": "28",
+            "target": "29",
+            "type": "next"
+        },
+        {
+            "source": "29",
+            "target": "30",
+            "type": "true"
+        },
+        {
+            "source": "29",
+            "target": "31",
+            "type": "false"
+        },
+        {
+            "source": "30",
+            "target": "29",
+            "type": "next"
+        },
+        {
+            "source": "31",
+            "target": "32",
+            "type": "next"
+        },
+        {
+            "source": "32",
+            "target": "33",
+            "type": "true"
+        },
+        {
+            "source": "32",
+            "target": "34",
+            "type": "false"
+        },
+        {
+            "source": "33",
+            "target": "32",
+            "type": "next"
+        },
+        {
+            "source": "34",
+            "target": "35",
+            "type": "next"
+        },
+        {
+            "source": "35",
+            "target": "36",
+            "type": "true"
+        },
+        {
+            "source": "35",
+            "target": "37",
+            "type": "false"
+        },
+        {
+            "source": "36",
+            "target": "35",
+            "type": "next"
+        }
+    ]
+}

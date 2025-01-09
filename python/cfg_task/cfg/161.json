@@ -1,0 +1,1593 @@
+{
+    "nodes": [
+        {
+            "id": "1",
+            "type": "block",
+            "statements": [
+                "import random",
+                "from collections import defaultdict",
+                "from enum import Enum",
+                "from typing import Any, Dict, List, Optional, Union",
+                "from backend.data.block import Block, BlockCategory, BlockOutput, BlockSchema",
+                "from backend.data.model import SchemaField",
+                "class SamplingMethod(str, Enum):\n    RANDOM = 'random'\n    SYSTEMATIC = 'systematic'\n    TOP = 'top'\n    BOTTOM = 'bottom'\n    STRATIFIED = 'stratified'\n    WEIGHTED = 'weighted'\n    RESERVOIR = 'reservoir'\n    CLUSTER = 'cluster'",
+                "RANDOM = 'random'",
+                "SYSTEMATIC = 'systematic'",
+                "TOP = 'top'",
+                "BOTTOM = 'bottom'",
+                "STRATIFIED = 'stratified'",
+                "WEIGHTED = 'weighted'",
+                "RESERVOIR = 'reservoir'",
+                "CLUSTER = 'cluster'",
+                "class DataSamplingBlock(Block):\n\n    class Input(BlockSchema):\n        data: Union[Dict[str, Any], List[Union[dict, List[Any]]]] = SchemaField(description='The dataset to sample from. Can be a single dictionary, a list of dictionaries, or a list of lists.', placeholder=\"{'id': 1, 'value': 'a'} or [{'id': 1, 'value': 'a'}, {'id': 2, 'value': 'b'}, ...]\")\n        sample_size: int = SchemaField(description='The number of samples to take from the dataset.', placeholder='10', default=10)\n        sampling_method: SamplingMethod = SchemaField(description='The method to use for sampling.', default=SamplingMethod.RANDOM)\n        accumulate: bool = SchemaField(description='Whether to accumulate data before sampling.', default=False)\n        random_seed: Optional[int] = SchemaField(description='Seed for random number generator (optional).', default=None)\n        stratify_key: Optional[str] = SchemaField(description='Key to use for stratified sampling (required for stratified sampling).', default=None)\n        weight_key: Optional[str] = SchemaField(description='Key to use for weighted sampling (required for weighted sampling).', default=None)\n        cluster_key: Optional[str] = SchemaField(description='Key to use for cluster sampling (required for cluster sampling).', default=None)\n\n    class Output(BlockSchema):\n        sampled_data: List[Union[dict, List[Any]]] = SchemaField(description='The sampled subset of the input data.')\n        sample_indices: List[int] = SchemaField(description='The indices of the sampled data in the original dataset.')\n\n    def __init__(self):\n        super().__init__(id='4a448883-71fa-49cf-91cf-70d793bd7d87', description='This block samples data from a given dataset using various sampling methods.', categories={BlockCategory.LOGIC}, input_schema=DataSamplingBlock.Input, output_schema=DataSamplingBlock.Output, test_input={'data': [{'id': i, 'value': chr(97 + i), 'group': i % 3} for i in range(10)], 'sample_size': 3, 'sampling_method': SamplingMethod.STRATIFIED, 'accumulate': False, 'random_seed': 42, 'stratify_key': 'group'}, test_output=[('sampled_data', [{'id': 0, 'value': 'a', 'group': 0}, {'id': 1, 'value': 'b', 'group': 1}, {'id': 8, 'value': 'i', 'group': 2}]), ('sample_indices', [0, 1, 8])])\n        self.accumulated_data = []\n\n    def run(self, input_data: Input, **kwargs) -> BlockOutput:\n        if input_data.accumulate:\n            if isinstance(input_data.data, dict):\n                self.accumulated_data.append(input_data.data)\n            elif isinstance(input_data.data, list):\n                self.accumulated_data.extend(input_data.data)\n            else:\n                raise ValueError(f'Unsupported data type: {type(input_data.data)}')\n            if len(self.accumulated_data) < input_data.sample_size:\n                return\n            data_to_sample = self.accumulated_data\n        else:\n            data_to_sample = input_data.data if isinstance(input_data.data, list) else [input_data.data]\n        if input_data.random_seed is not None:\n            random.seed(input_data.random_seed)\n        data_size = len(data_to_sample)\n        if input_data.sample_size > data_size:\n            raise ValueError(f'Sample size ({input_data.sample_size}) cannot be larger than the dataset size ({data_size}).')\n        indices = []\n        if input_data.sampling_method == SamplingMethod.RANDOM:\n            indices = random.sample(range(data_size), input_data.sample_size)\n        elif input_data.sampling_method == SamplingMethod.SYSTEMATIC:\n            step = data_size // input_data.sample_size\n            start = random.randint(0, step - 1)\n            indices = list(range(start, data_size, step))[:input_data.sample_size]\n        elif input_data.sampling_method == SamplingMethod.TOP:\n            indices = list(range(input_data.sample_size))\n        elif input_data.sampling_method == SamplingMethod.BOTTOM:\n            indices = list(range(data_size - input_data.sample_size, data_size))\n        elif input_data.sampling_method == SamplingMethod.STRATIFIED:\n            if not input_data.stratify_key:\n                raise ValueError('Stratify key must be provided for stratified sampling.')\n            strata = defaultdict(list)\n            for (i, item) in enumerate(data_to_sample):\n                if isinstance(item, dict):\n                    strata_value = item.get(input_data.stratify_key)\n                elif hasattr(item, input_data.stratify_key):\n                    strata_value = getattr(item, input_data.stratify_key)\n                else:\n                    raise ValueError(f\"Stratify key '{input_data.stratify_key}' not found in item {item}\")\n                if strata_value is None:\n                    raise ValueError(f\"Stratify value for key '{input_data.stratify_key}' is None\")\n                strata[str(strata_value)].append(i)\n            stratum_sizes = {k: max(1, int(len(v) / data_size * input_data.sample_size)) for (k, v) in strata.items()}\n            while sum(stratum_sizes.values()) != input_data.sample_size:\n                if sum(stratum_sizes.values()) < input_data.sample_size:\n                    stratum_sizes[max(stratum_sizes, key=lambda k: stratum_sizes[k])] += 1\n                else:\n                    stratum_sizes[max(stratum_sizes, key=lambda k: stratum_sizes[k])] -= 1\n            for (stratum, size) in stratum_sizes.items():\n                indices.extend(random.sample(strata[stratum], size))\n        elif input_data.sampling_method == SamplingMethod.WEIGHTED:\n            if not input_data.weight_key:\n                raise ValueError('Weight key must be provided for weighted sampling.')\n            weights = []\n            for item in data_to_sample:\n                if isinstance(item, dict):\n                    weight = item.get(input_data.weight_key)\n                elif hasattr(item, input_data.weight_key):\n                    weight = getattr(item, input_data.weight_key)\n                else:\n                    raise ValueError(f\"Weight key '{input_data.weight_key}' not found in item {item}\")\n                if weight is None:\n                    raise ValueError(f\"Weight value for key '{input_data.weight_key}' is None\")\n                try:\n                    weights.append(float(weight))\n                except ValueError:\n                    raise ValueError(f\"Weight value '{weight}' cannot be converted to a number\")\n            if not weights:\n                raise ValueError(f\"No valid weights found using key '{input_data.weight_key}'\")\n            indices = random.choices(range(data_size), weights=weights, k=input_data.sample_size)\n        elif input_data.sampling_method == SamplingMethod.RESERVOIR:\n            indices = list(range(input_data.sample_size))\n            for i in range(input_data.sample_size, data_size):\n                j = random.randint(0, i)\n                if j < input_data.sample_size:\n                    indices[j] = i\n        elif input_data.sampling_method == SamplingMethod.CLUSTER:\n            if not input_data.cluster_key:\n                raise ValueError('Cluster key must be provided for cluster sampling.')\n            clusters = defaultdict(list)\n            for (i, item) in enumerate(data_to_sample):\n                if isinstance(item, dict):\n                    cluster_value = item.get(input_data.cluster_key)\n                elif hasattr(item, input_data.cluster_key):\n                    cluster_value = getattr(item, input_data.cluster_key)\n                else:\n                    raise TypeError(f\"Item {item} does not have the cluster key '{input_data.cluster_key}'\")\n                clusters[str(cluster_value)].append(i)\n            selected_clusters = []\n            while sum((len(clusters[c]) for c in selected_clusters)) < input_data.sample_size:\n                available_clusters = [c for c in clusters if c not in selected_clusters]\n                if not available_clusters:\n                    break\n                selected_clusters.append(random.choice(available_clusters))\n            for cluster in selected_clusters:\n                indices.extend(clusters[cluster])\n            if len(indices) > input_data.sample_size:\n                indices = random.sample(indices, input_data.sample_size)\n        else:\n            raise ValueError(f'Unknown sampling method: {input_data.sampling_method}')\n        sampled_data = [data_to_sample[i] for i in indices]\n        if input_data.accumulate:\n            self.accumulated_data = []\n        yield ('sampled_data', sampled_data)\n        yield ('sample_indices', indices)",
+                "class Input(BlockSchema):\n    data: Union[Dict[str, Any], List[Union[dict, List[Any]]]] = SchemaField(description='The dataset to sample from. Can be a single dictionary, a list of dictionaries, or a list of lists.', placeholder=\"{'id': 1, 'value': 'a'} or [{'id': 1, 'value': 'a'}, {'id': 2, 'value': 'b'}, ...]\")\n    sample_size: int = SchemaField(description='The number of samples to take from the dataset.', placeholder='10', default=10)\n    sampling_method: SamplingMethod = SchemaField(description='The method to use for sampling.', default=SamplingMethod.RANDOM)\n    accumulate: bool = SchemaField(description='Whether to accumulate data before sampling.', default=False)\n    random_seed: Optional[int] = SchemaField(description='Seed for random number generator (optional).', default=None)\n    stratify_key: Optional[str] = SchemaField(description='Key to use for stratified sampling (required for stratified sampling).', default=None)\n    weight_key: Optional[str] = SchemaField(description='Key to use for weighted sampling (required for weighted sampling).', default=None)\n    cluster_key: Optional[str] = SchemaField(description='Key to use for cluster sampling (required for cluster sampling).', default=None)",
+                "data: Union[Dict[str, Any], List[Union[dict, List[Any]]]] = SchemaField(description='The dataset to sample from. Can be a single dictionary, a list of dictionaries, or a list of lists.', placeholder=\"{'id': 1, 'value': 'a'} or [{'id': 1, 'value': 'a'}, {'id': 2, 'value': 'b'}, ...]\")",
+                "sample_size: int = SchemaField(description='The number of samples to take from the dataset.', placeholder='10', default=10)",
+                "sampling_method: SamplingMethod = SchemaField(description='The method to use for sampling.', default=SamplingMethod.RANDOM)",
+                "accumulate: bool = SchemaField(description='Whether to accumulate data before sampling.', default=False)",
+                "random_seed: Optional[int] = SchemaField(description='Seed for random number generator (optional).', default=None)",
+                "stratify_key: Optional[str] = SchemaField(description='Key to use for stratified sampling (required for stratified sampling).', default=None)",
+                "weight_key: Optional[str] = SchemaField(description='Key to use for weighted sampling (required for weighted sampling).', default=None)",
+                "cluster_key: Optional[str] = SchemaField(description='Key to use for cluster sampling (required for cluster sampling).', default=None)",
+                "class Output(BlockSchema):\n    sampled_data: List[Union[dict, List[Any]]] = SchemaField(description='The sampled subset of the input data.')\n    sample_indices: List[int] = SchemaField(description='The indices of the sampled data in the original dataset.')",
+                "sampled_data: List[Union[dict, List[Any]]] = SchemaField(description='The sampled subset of the input data.')",
+                "sample_indices: List[int] = SchemaField(description='The indices of the sampled data in the original dataset.')",
+                "def __init__(self):\n    super().__init__(id='4a448883-71fa-49cf-91cf-70d793bd7d87', description='This block samples data from a given dataset using various sampling methods.', categories={BlockCategory.LOGIC}, input_schema=DataSamplingBlock.Input, output_schema=DataSamplingBlock.Output, test_input={'data': [{'id': i, 'value': chr(97 + i), 'group': i % 3} for i in range(10)], 'sample_size': 3, 'sampling_method': SamplingMethod.STRATIFIED, 'accumulate': False, 'random_seed': 42, 'stratify_key': 'group'}, test_output=[('sampled_data', [{'id': 0, 'value': 'a', 'group': 0}, {'id': 1, 'value': 'b', 'group': 1}, {'id': 8, 'value': 'i', 'group': 2}]), ('sample_indices', [0, 1, 8])])\n    self.accumulated_data = []",
+                "super().__init__()",
+                "self.accumulated_data = []",
+                "def run(self, input_data: Input, **kwargs) -> BlockOutput:\n    if input_data.accumulate:\n        if isinstance(input_data.data, dict):\n            self.accumulated_data.append(input_data.data)\n        elif isinstance(input_data.data, list):\n            self.accumulated_data.extend(input_data.data)\n        else:\n            raise ValueError(f'Unsupported data type: {type(input_data.data)}')\n        if len(self.accumulated_data) < input_data.sample_size:\n            return\n        data_to_sample = self.accumulated_data\n    else:\n        data_to_sample = input_data.data if isinstance(input_data.data, list) else [input_data.data]\n    if input_data.random_seed is not None:\n        random.seed(input_data.random_seed)\n    data_size = len(data_to_sample)\n    if input_data.sample_size > data_size:\n        raise ValueError(f'Sample size ({input_data.sample_size}) cannot be larger than the dataset size ({data_size}).')\n    indices = []\n    if input_data.sampling_method == SamplingMethod.RANDOM:\n        indices = random.sample(range(data_size), input_data.sample_size)\n    elif input_data.sampling_method == SamplingMethod.SYSTEMATIC:\n        step = data_size // input_data.sample_size\n        start = random.randint(0, step - 1)\n        indices = list(range(start, data_size, step))[:input_data.sample_size]\n    elif input_data.sampling_method == SamplingMethod.TOP:\n        indices = list(range(input_data.sample_size))\n    elif input_data.sampling_method == SamplingMethod.BOTTOM:\n        indices = list(range(data_size - input_data.sample_size, data_size))\n    elif input_data.sampling_method == SamplingMethod.STRATIFIED:\n        if not input_data.stratify_key:\n            raise ValueError('Stratify key must be provided for stratified sampling.')\n        strata = defaultdict(list)\n        for (i, item) in enumerate(data_to_sample):\n            if isinstance(item, dict):\n                strata_value = item.get(input_data.stratify_key)\n            elif hasattr(item, input_data.stratify_key):\n                strata_value = getattr(item, input_data.stratify_key)\n            else:\n                raise ValueError(f\"Stratify key '{input_data.stratify_key}' not found in item {item}\")\n            if strata_value is None:\n                raise ValueError(f\"Stratify value for key '{input_data.stratify_key}' is None\")\n            strata[str(strata_value)].append(i)\n        stratum_sizes = {k: max(1, int(len(v) / data_size * input_data.sample_size)) for (k, v) in strata.items()}\n        while sum(stratum_sizes.values()) != input_data.sample_size:\n            if sum(stratum_sizes.values()) < input_data.sample_size:\n                stratum_sizes[max(stratum_sizes, key=lambda k: stratum_sizes[k])] += 1\n            else:\n                stratum_sizes[max(stratum_sizes, key=lambda k: stratum_sizes[k])] -= 1\n        for (stratum, size) in stratum_sizes.items():\n            indices.extend(random.sample(strata[stratum], size))\n    elif input_data.sampling_method == SamplingMethod.WEIGHTED:\n        if not input_data.weight_key:\n            raise ValueError('Weight key must be provided for weighted sampling.')\n        weights = []\n        for item in data_to_sample:\n            if isinstance(item, dict):\n                weight = item.get(input_data.weight_key)\n            elif hasattr(item, input_data.weight_key):\n                weight = getattr(item, input_data.weight_key)\n            else:\n                raise ValueError(f\"Weight key '{input_data.weight_key}' not found in item {item}\")\n            if weight is None:\n                raise ValueError(f\"Weight value for key '{input_data.weight_key}' is None\")\n            try:\n                weights.append(float(weight))\n            except ValueError:\n                raise ValueError(f\"Weight value '{weight}' cannot be converted to a number\")\n        if not weights:\n            raise ValueError(f\"No valid weights found using key '{input_data.weight_key}'\")\n        indices = random.choices(range(data_size), weights=weights, k=input_data.sample_size)\n    elif input_data.sampling_method == SamplingMethod.RESERVOIR:\n        indices = list(range(input_data.sample_size))\n        for i in range(input_data.sample_size, data_size):\n            j = random.randint(0, i)\n            if j < input_data.sample_size:\n                indices[j] = i\n    elif input_data.sampling_method == SamplingMethod.CLUSTER:\n        if not input_data.cluster_key:\n            raise ValueError('Cluster key must be provided for cluster sampling.')\n        clusters = defaultdict(list)\n        for (i, item) in enumerate(data_to_sample):\n            if isinstance(item, dict):\n                cluster_value = item.get(input_data.cluster_key)\n            elif hasattr(item, input_data.cluster_key):\n                cluster_value = getattr(item, input_data.cluster_key)\n            else:\n                raise TypeError(f\"Item {item} does not have the cluster key '{input_data.cluster_key}'\")\n            clusters[str(cluster_value)].append(i)\n        selected_clusters = []\n        while sum((len(clusters[c]) for c in selected_clusters)) < input_data.sample_size:\n            available_clusters = [c for c in clusters if c not in selected_clusters]\n            if not available_clusters:\n                break\n            selected_clusters.append(random.choice(available_clusters))\n        for cluster in selected_clusters:\n            indices.extend(clusters[cluster])\n        if len(indices) > input_data.sample_size:\n            indices = random.sample(indices, input_data.sample_size)\n    else:\n        raise ValueError(f'Unknown sampling method: {input_data.sampling_method}')\n    sampled_data = [data_to_sample[i] for i in indices]\n    if input_data.accumulate:\n        self.accumulated_data = []\n    yield ('sampled_data', sampled_data)\n    yield ('sample_indices', indices)",
+                "input_data.accumulate"
+            ]
+        },
+        {
+            "id": "2",
+            "type": "block",
+            "statements": [
+                "isinstance(input_data.data, dict)"
+            ]
+        },
+        {
+            "id": "3",
+            "type": "block",
+            "statements": [
+                "data_to_sample = input_data.data if isinstance(input_data.data, list) else [input_data.data]"
+            ]
+        },
+        {
+            "id": "4",
+            "type": "block",
+            "statements": [
+                "input_data.random_seed IsNot None"
+            ]
+        },
+        {
+            "id": "5",
+            "type": "block",
+            "statements": [
+                "self.accumulated_data.append(input_data.data)"
+            ]
+        },
+        {
+            "id": "6",
+            "type": "block",
+            "statements": [
+                "isinstance(input_data.data, list)"
+            ]
+        },
+        {
+            "id": "7",
+            "type": "block",
+            "statements": [
+                "len(self.accumulated_data) Lt input_data.sample_size"
+            ]
+        },
+        {
+            "id": "8",
+            "type": "block",
+            "statements": [
+                "self.accumulated_data.extend(input_data.data)"
+            ]
+        },
+        {
+            "id": "9",
+            "type": "block",
+            "statements": [
+                "raise ValueError(f'Unsupported data type: {type(input_data.data)}')"
+            ]
+        },
+        {
+            "id": "10",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "11",
+            "type": "block",
+            "statements": [
+                "return"
+            ]
+        },
+        {
+            "id": "12",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "13",
+            "type": "block",
+            "statements": [
+                "data_to_sample = self.accumulated_data"
+            ]
+        },
+        {
+            "id": "14",
+            "type": "block",
+            "statements": [
+                "random.seed(input_data.random_seed)"
+            ]
+        },
+        {
+            "id": "15",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "16",
+            "type": "block",
+            "statements": [
+                "data_size = len(data_to_sample)",
+                "input_data.sample_size Gt data_size"
+            ]
+        },
+        {
+            "id": "17",
+            "type": "block",
+            "statements": [
+                "raise ValueError(f'Sample size ({input_data.sample_size}) cannot be larger than the dataset size ({data_size}).')"
+            ]
+        },
+        {
+            "id": "18",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "19",
+            "type": "block",
+            "statements": [
+                "indices = []",
+                "input_data.sampling_method Eq SamplingMethod.RANDOM"
+            ]
+        },
+        {
+            "id": "20",
+            "type": "block",
+            "statements": [
+                "indices = random.sample(range(data_size), input_data.sample_size)"
+            ]
+        },
+        {
+            "id": "21",
+            "type": "block",
+            "statements": [
+                "input_data.sampling_method Eq SamplingMethod.SYSTEMATIC"
+            ]
+        },
+        {
+            "id": "22",
+            "type": "block",
+            "statements": [
+                "sampled_data = [data_to_sample[i] for i in indices]",
+                "input_data.accumulate"
+            ]
+        },
+        {
+            "id": "23",
+            "type": "block",
+            "statements": [
+                "step = data_size // input_data.sample_size",
+                "start = random.randint(0, step - 1)",
+                "indices = list(range(start, data_size, step))[:input_data.sample_size]"
+            ]
+        },
+        {
+            "id": "24",
+            "type": "block",
+            "statements": [
+                "input_data.sampling_method Eq SamplingMethod.TOP"
+            ]
+        },
+        {
+            "id": "25",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "26",
+            "type": "block",
+            "statements": [
+                "indices = list(range(input_data.sample_size))"
+            ]
+        },
+        {
+            "id": "27",
+            "type": "block",
+            "statements": [
+                "input_data.sampling_method Eq SamplingMethod.BOTTOM"
+            ]
+        },
+        {
+            "id": "28",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "29",
+            "type": "block",
+            "statements": [
+                "indices = list(range(data_size - input_data.sample_size, data_size))"
+            ]
+        },
+        {
+            "id": "30",
+            "type": "block",
+            "statements": [
+                "input_data.sampling_method Eq SamplingMethod.STRATIFIED"
+            ]
+        },
+        {
+            "id": "31",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "32",
+            "type": "block",
+            "statements": [
+                "not input_data.stratify_key"
+            ]
+        },
+        {
+            "id": "33",
+            "type": "block",
+            "statements": [
+                "input_data.sampling_method Eq SamplingMethod.WEIGHTED"
+            ]
+        },
+        {
+            "id": "34",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "35",
+            "type": "block",
+            "statements": [
+                "raise ValueError('Stratify key must be provided for stratified sampling.')"
+            ]
+        },
+        {
+            "id": "36",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "37",
+            "type": "block",
+            "statements": [
+                "strata = defaultdict(list)"
+            ]
+        },
+        {
+            "id": "38",
+            "type": "block",
+            "statements": [
+                "(i, item)",
+                "enumerate(data_to_sample)"
+            ]
+        },
+        {
+            "id": "39",
+            "type": "block",
+            "statements": [
+                "isinstance(item, dict)"
+            ]
+        },
+        {
+            "id": "40",
+            "type": "block",
+            "statements": [
+                "stratum_sizes = {k: max(1, int(len(v) / data_size * input_data.sample_size)) for (k, v) in strata.items()}"
+            ]
+        },
+        {
+            "id": "41",
+            "type": "block",
+            "statements": [
+                "strata_value = item.get(input_data.stratify_key)"
+            ]
+        },
+        {
+            "id": "42",
+            "type": "block",
+            "statements": [
+                "hasattr(item, input_data.stratify_key)"
+            ]
+        },
+        {
+            "id": "43",
+            "type": "block",
+            "statements": [
+                "strata_value Is None"
+            ]
+        },
+        {
+            "id": "44",
+            "type": "block",
+            "statements": [
+                "strata_value = getattr(item, input_data.stratify_key)"
+            ]
+        },
+        {
+            "id": "45",
+            "type": "block",
+            "statements": [
+                "raise ValueError(f\"Stratify key '{input_data.stratify_key}' not found in item {item}\")"
+            ]
+        },
+        {
+            "id": "46",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "47",
+            "type": "block",
+            "statements": [
+                "raise ValueError(f\"Stratify value for key '{input_data.stratify_key}' is None\")"
+            ]
+        },
+        {
+            "id": "48",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "49",
+            "type": "block",
+            "statements": [
+                "strata[str(strata_value)].append(i)"
+            ]
+        },
+        {
+            "id": "50",
+            "type": "block",
+            "statements": [
+                "sum(stratum_sizes.values()) NotEq input_data.sample_size"
+            ]
+        },
+        {
+            "id": "51",
+            "type": "block",
+            "statements": [
+                "sum(stratum_sizes.values()) Lt input_data.sample_size"
+            ]
+        },
+        {
+            "id": "52",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "53",
+            "type": "block",
+            "statements": [
+                "stratum_sizes[max(stratum_sizes, key=lambda k: stratum_sizes[k])] += 1"
+            ]
+        },
+        {
+            "id": "54",
+            "type": "block",
+            "statements": [
+                "stratum_sizes[max(stratum_sizes, key=lambda k: stratum_sizes[k])] -= 1"
+            ]
+        },
+        {
+            "id": "55",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "56",
+            "type": "block",
+            "statements": [
+                "(stratum, size)",
+                "stratum_sizes.items()"
+            ]
+        },
+        {
+            "id": "57",
+            "type": "block",
+            "statements": [
+                "indices.extend(random.sample(strata[stratum], size))"
+            ]
+        },
+        {
+            "id": "58",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "59",
+            "type": "block",
+            "statements": [
+                "not input_data.weight_key"
+            ]
+        },
+        {
+            "id": "60",
+            "type": "block",
+            "statements": [
+                "input_data.sampling_method Eq SamplingMethod.RESERVOIR"
+            ]
+        },
+        {
+            "id": "61",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "62",
+            "type": "block",
+            "statements": [
+                "raise ValueError('Weight key must be provided for weighted sampling.')"
+            ]
+        },
+        {
+            "id": "63",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "64",
+            "type": "block",
+            "statements": [
+                "weights = []"
+            ]
+        },
+        {
+            "id": "65",
+            "type": "block",
+            "statements": [
+                "item",
+                "data_to_sample"
+            ]
+        },
+        {
+            "id": "66",
+            "type": "block",
+            "statements": [
+                "isinstance(item, dict)"
+            ]
+        },
+        {
+            "id": "67",
+            "type": "block",
+            "statements": [
+                "not weights"
+            ]
+        },
+        {
+            "id": "68",
+            "type": "block",
+            "statements": [
+                "weight = item.get(input_data.weight_key)"
+            ]
+        },
+        {
+            "id": "69",
+            "type": "block",
+            "statements": [
+                "hasattr(item, input_data.weight_key)"
+            ]
+        },
+        {
+            "id": "70",
+            "type": "block",
+            "statements": [
+                "weight Is None"
+            ]
+        },
+        {
+            "id": "71",
+            "type": "block",
+            "statements": [
+                "weight = getattr(item, input_data.weight_key)"
+            ]
+        },
+        {
+            "id": "72",
+            "type": "block",
+            "statements": [
+                "raise ValueError(f\"Weight key '{input_data.weight_key}' not found in item {item}\")"
+            ]
+        },
+        {
+            "id": "73",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "74",
+            "type": "block",
+            "statements": [
+                "raise ValueError(f\"Weight value for key '{input_data.weight_key}' is None\")"
+            ]
+        },
+        {
+            "id": "75",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "76",
+            "type": "block",
+            "statements": [
+                "try:\n    weights.append(float(weight))\nexcept ValueError:\n    raise ValueError(f\"Weight value '{weight}' cannot be converted to a number\")",
+                "weights.append(float(weight))",
+                "raise ValueError(f\"Weight value '{weight}' cannot be converted to a number\")"
+            ]
+        },
+        {
+            "id": "77",
+            "type": "block",
+            "statements": [
+                "raise ValueError(f\"No valid weights found using key '{input_data.weight_key}'\")"
+            ]
+        },
+        {
+            "id": "78",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "79",
+            "type": "block",
+            "statements": [
+                "indices = random.choices(range(data_size), weights=weights, k=input_data.sample_size)"
+            ]
+        },
+        {
+            "id": "80",
+            "type": "block",
+            "statements": [
+                "indices = list(range(input_data.sample_size))"
+            ]
+        },
+        {
+            "id": "81",
+            "type": "block",
+            "statements": [
+                "input_data.sampling_method Eq SamplingMethod.CLUSTER"
+            ]
+        },
+        {
+            "id": "82",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "83",
+            "type": "block",
+            "statements": [
+                "i",
+                "range(input_data.sample_size, data_size)"
+            ]
+        },
+        {
+            "id": "84",
+            "type": "block",
+            "statements": [
+                "j = random.randint(0, i)",
+                "j Lt input_data.sample_size"
+            ]
+        },
+        {
+            "id": "85",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "86",
+            "type": "block",
+            "statements": [
+                "indices[j] = i"
+            ]
+        },
+        {
+            "id": "87",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "88",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "89",
+            "type": "block",
+            "statements": [
+                "not input_data.cluster_key"
+            ]
+        },
+        {
+            "id": "90",
+            "type": "block",
+            "statements": [
+                "raise ValueError(f'Unknown sampling method: {input_data.sampling_method}')"
+            ]
+        },
+        {
+            "id": "91",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "92",
+            "type": "block",
+            "statements": [
+                "raise ValueError('Cluster key must be provided for cluster sampling.')"
+            ]
+        },
+        {
+            "id": "93",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "94",
+            "type": "block",
+            "statements": [
+                "clusters = defaultdict(list)"
+            ]
+        },
+        {
+            "id": "95",
+            "type": "block",
+            "statements": [
+                "(i, item)",
+                "enumerate(data_to_sample)"
+            ]
+        },
+        {
+            "id": "96",
+            "type": "block",
+            "statements": [
+                "isinstance(item, dict)"
+            ]
+        },
+        {
+            "id": "97",
+            "type": "block",
+            "statements": [
+                "selected_clusters = []"
+            ]
+        },
+        {
+            "id": "98",
+            "type": "block",
+            "statements": [
+                "cluster_value = item.get(input_data.cluster_key)"
+            ]
+        },
+        {
+            "id": "99",
+            "type": "block",
+            "statements": [
+                "hasattr(item, input_data.cluster_key)"
+            ]
+        },
+        {
+            "id": "100",
+            "type": "block",
+            "statements": [
+                "clusters[str(cluster_value)].append(i)"
+            ]
+        },
+        {
+            "id": "101",
+            "type": "block",
+            "statements": [
+                "cluster_value = getattr(item, input_data.cluster_key)"
+            ]
+        },
+        {
+            "id": "102",
+            "type": "block",
+            "statements": [
+                "raise TypeError(f\"Item {item} does not have the cluster key '{input_data.cluster_key}'\")"
+            ]
+        },
+        {
+            "id": "103",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "104",
+            "type": "block",
+            "statements": [
+                "sum((len(clusters[c]) for c in selected_clusters)) Lt input_data.sample_size"
+            ]
+        },
+        {
+            "id": "105",
+            "type": "block",
+            "statements": [
+                "available_clusters = [c for c in clusters if c not in selected_clusters]",
+                "not available_clusters"
+            ]
+        },
+        {
+            "id": "106",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "107",
+            "type": "block",
+            "statements": [
+                "break"
+            ]
+        },
+        {
+            "id": "108",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "109",
+            "type": "block",
+            "statements": [
+                "selected_clusters.append(random.choice(available_clusters))"
+            ]
+        },
+        {
+            "id": "110",
+            "type": "block",
+            "statements": [
+                "cluster",
+                "selected_clusters"
+            ]
+        },
+        {
+            "id": "111",
+            "type": "block",
+            "statements": [
+                "indices.extend(clusters[cluster])"
+            ]
+        },
+        {
+            "id": "112",
+            "type": "block",
+            "statements": [
+                "len(indices) Gt input_data.sample_size"
+            ]
+        },
+        {
+            "id": "113",
+            "type": "block",
+            "statements": [
+                "indices = random.sample(indices, input_data.sample_size)"
+            ]
+        },
+        {
+            "id": "114",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "115",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "116",
+            "type": "block",
+            "statements": [
+                "self.accumulated_data = []"
+            ]
+        },
+        {
+            "id": "117",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "118",
+            "type": "block",
+            "statements": [
+                "(yield ('sampled_data', sampled_data))",
+                "(yield ('sample_indices', indices))"
+            ]
+        }
+    ],
+    "edges": [
+        {
+            "source": "1",
+            "target": "2",
+            "type": "true"
+        },
+        {
+            "source": "1",
+            "target": "3",
+            "type": "false"
+        },
+        {
+            "source": "2",
+            "target": "5",
+            "type": "true"
+        },
+        {
+            "source": "2",
+            "target": "6",
+            "type": "false"
+        },
+        {
+            "source": "3",
+            "target": "4",
+            "type": "next"
+        },
+        {
+            "source": "4",
+            "target": "14",
+            "type": "true"
+        },
+        {
+            "source": "4",
+            "target": "15",
+            "type": "false"
+        },
+        {
+            "source": "5",
+            "target": "7",
+            "type": "next"
+        },
+        {
+            "source": "6",
+            "target": "8",
+            "type": "true"
+        },
+        {
+            "source": "6",
+            "target": "9",
+            "type": "false"
+        },
+        {
+            "source": "7",
+            "target": "11",
+            "type": "true"
+        },
+        {
+            "source": "7",
+            "target": "12",
+            "type": "false"
+        },
+        {
+            "source": "8",
+            "target": "10",
+            "type": "next"
+        },
+        {
+            "source": "9",
+            "target": "10",
+            "type": "next"
+        },
+        {
+            "source": "10",
+            "target": "7",
+            "type": "next"
+        },
+        {
+            "source": "12",
+            "target": "13",
+            "type": "next"
+        },
+        {
+            "source": "13",
+            "target": "4",
+            "type": "next"
+        },
+        {
+            "source": "14",
+            "target": "16",
+            "type": "next"
+        },
+        {
+            "source": "15",
+            "target": "16",
+            "type": "next"
+        },
+        {
+            "source": "16",
+            "target": "17",
+            "type": "true"
+        },
+        {
+            "source": "16",
+            "target": "18",
+            "type": "false"
+        },
+        {
+            "source": "17",
+            "target": "19",
+            "type": "next"
+        },
+        {
+            "source": "18",
+            "target": "19",
+            "type": "next"
+        },
+        {
+            "source": "19",
+            "target": "20",
+            "type": "true"
+        },
+        {
+            "source": "19",
+            "target": "21",
+            "type": "false"
+        },
+        {
+            "source": "20",
+            "target": "22",
+            "type": "next"
+        },
+        {
+            "source": "21",
+            "target": "23",
+            "type": "true"
+        },
+        {
+            "source": "21",
+            "target": "24",
+            "type": "false"
+        },
+        {
+            "source": "22",
+            "target": "116",
+            "type": "true"
+        },
+        {
+            "source": "22",
+            "target": "117",
+            "type": "false"
+        },
+        {
+            "source": "23",
+            "target": "25",
+            "type": "next"
+        },
+        {
+            "source": "24",
+            "target": "26",
+            "type": "true"
+        },
+        {
+            "source": "24",
+            "target": "27",
+            "type": "false"
+        },
+        {
+            "source": "25",
+            "target": "22",
+            "type": "next"
+        },
+        {
+            "source": "26",
+            "target": "28",
+            "type": "next"
+        },
+        {
+            "source": "27",
+            "target": "29",
+            "type": "true"
+        },
+        {
+            "source": "27",
+            "target": "30",
+            "type": "false"
+        },
+        {
+            "source": "28",
+            "target": "25",
+            "type": "next"
+        },
+        {
+            "source": "29",
+            "target": "31",
+            "type": "next"
+        },
+        {
+            "source": "30",
+            "target": "32",
+            "type": "true"
+        },
+        {
+            "source": "30",
+            "target": "33",
+            "type": "false"
+        },
+        {
+            "source": "31",
+            "target": "28",
+            "type": "next"
+        },
+        {
+            "source": "32",
+            "target": "35",
+            "type": "true"
+        },
+        {
+            "source": "32",
+            "target": "36",
+            "type": "false"
+        },
+        {
+            "source": "33",
+            "target": "59",
+            "type": "true"
+        },
+        {
+            "source": "33",
+            "target": "60",
+            "type": "false"
+        },
+        {
+            "source": "34",
+            "target": "31",
+            "type": "next"
+        },
+        {
+            "source": "35",
+            "target": "37",
+            "type": "next"
+        },
+        {
+            "source": "36",
+            "target": "37",
+            "type": "next"
+        },
+        {
+            "source": "37",
+            "target": "38",
+            "type": "next"
+        },
+        {
+            "source": "38",
+            "target": "39",
+            "type": "true"
+        },
+        {
+            "source": "38",
+            "target": "40",
+            "type": "false"
+        },
+        {
+            "source": "39",
+            "target": "41",
+            "type": "true"
+        },
+        {
+            "source": "39",
+            "target": "42",
+            "type": "false"
+        },
+        {
+            "source": "40",
+            "target": "50",
+            "type": "next"
+        },
+        {
+            "source": "41",
+            "target": "43",
+            "type": "next"
+        },
+        {
+            "source": "42",
+            "target": "44",
+            "type": "true"
+        },
+        {
+            "source": "42",
+            "target": "45",
+            "type": "false"
+        },
+        {
+            "source": "43",
+            "target": "47",
+            "type": "true"
+        },
+        {
+            "source": "43",
+            "target": "48",
+            "type": "false"
+        },
+        {
+            "source": "44",
+            "target": "46",
+            "type": "next"
+        },
+        {
+            "source": "45",
+            "target": "46",
+            "type": "next"
+        },
+        {
+            "source": "46",
+            "target": "43",
+            "type": "next"
+        },
+        {
+            "source": "47",
+            "target": "49",
+            "type": "next"
+        },
+        {
+            "source": "48",
+            "target": "49",
+            "type": "next"
+        },
+        {
+            "source": "49",
+            "target": "38",
+            "type": "next"
+        },
+        {
+            "source": "50",
+            "target": "51",
+            "type": "true"
+        },
+        {
+            "source": "50",
+            "target": "52",
+            "type": "false"
+        },
+        {
+            "source": "51",
+            "target": "53",
+            "type": "true"
+        },
+        {
+            "source": "51",
+            "target": "54",
+            "type": "false"
+        },
+        {
+            "source": "52",
+            "target": "56",
+            "type": "next"
+        },
+        {
+            "source": "53",
+            "target": "55",
+            "type": "next"
+        },
+        {
+            "source": "54",
+            "target": "55",
+            "type": "next"
+        },
+        {
+            "source": "55",
+            "target": "50",
+            "type": "next"
+        },
+        {
+            "source": "56",
+            "target": "57",
+            "type": "true"
+        },
+        {
+            "source": "56",
+            "target": "58",
+            "type": "false"
+        },
+        {
+            "source": "57",
+            "target": "56",
+            "type": "next"
+        },
+        {
+            "source": "58",
+            "target": "34",
+            "type": "next"
+        },
+        {
+            "source": "59",
+            "target": "62",
+            "type": "true"
+        },
+        {
+            "source": "59",
+            "target": "63",
+            "type": "false"
+        },
+        {
+            "source": "60",
+            "target": "80",
+            "type": "true"
+        },
+        {
+            "source": "60",
+            "target": "81",
+            "type": "false"
+        },
+        {
+            "source": "61",
+            "target": "34",
+            "type": "next"
+        },
+        {
+            "source": "62",
+            "target": "64",
+            "type": "next"
+        },
+        {
+            "source": "63",
+            "target": "64",
+            "type": "next"
+        },
+        {
+            "source": "64",
+            "target": "65",
+            "type": "next"
+        },
+        {
+            "source": "65",
+            "target": "66",
+            "type": "true"
+        },
+        {
+            "source": "65",
+            "target": "67",
+            "type": "false"
+        },
+        {
+            "source": "66",
+            "target": "68",
+            "type": "true"
+        },
+        {
+            "source": "66",
+            "target": "69",
+            "type": "false"
+        },
+        {
+            "source": "67",
+            "target": "77",
+            "type": "true"
+        },
+        {
+            "source": "67",
+            "target": "78",
+            "type": "false"
+        },
+        {
+            "source": "68",
+            "target": "70",
+            "type": "next"
+        },
+        {
+            "source": "69",
+            "target": "71",
+            "type": "true"
+        },
+        {
+            "source": "69",
+            "target": "72",
+            "type": "false"
+        },
+        {
+            "source": "70",
+            "target": "74",
+            "type": "true"
+        },
+        {
+            "source": "70",
+            "target": "75",
+            "type": "false"
+        },
+        {
+            "source": "71",
+            "target": "73",
+            "type": "next"
+        },
+        {
+            "source": "72",
+            "target": "73",
+            "type": "next"
+        },
+        {
+            "source": "73",
+            "target": "70",
+            "type": "next"
+        },
+        {
+            "source": "74",
+            "target": "76",
+            "type": "next"
+        },
+        {
+            "source": "75",
+            "target": "76",
+            "type": "next"
+        },
+        {
+            "source": "76",
+            "target": "65",
+            "type": "next"
+        },
+        {
+            "source": "77",
+            "target": "79",
+            "type": "next"
+        },
+        {
+            "source": "78",
+            "target": "79",
+            "type": "next"
+        },
+        {
+            "source": "79",
+            "target": "61",
+            "type": "next"
+        },
+        {
+            "source": "80",
+            "target": "83",
+            "type": "next"
+        },
+        {
+            "source": "81",
+            "target": "89",
+            "type": "true"
+        },
+        {
+            "source": "81",
+            "target": "90",
+            "type": "false"
+        },
+        {
+            "source": "82",
+            "target": "61",
+            "type": "next"
+        },
+        {
+            "source": "83",
+            "target": "84",
+            "type": "true"
+        },
+        {
+            "source": "83",
+            "target": "85",
+            "type": "false"
+        },
+        {
+            "source": "84",
+            "target": "86",
+            "type": "true"
+        },
+        {
+            "source": "84",
+            "target": "87",
+            "type": "false"
+        },
+        {
+            "source": "85",
+            "target": "82",
+            "type": "next"
+        },
+        {
+            "source": "86",
+            "target": "88",
+            "type": "next"
+        },
+        {
+            "source": "87",
+            "target": "88",
+            "type": "next"
+        },
+        {
+            "source": "88",
+            "target": "83",
+            "type": "next"
+        },
+        {
+            "source": "89",
+            "target": "92",
+            "type": "true"
+        },
+        {
+            "source": "89",
+            "target": "93",
+            "type": "false"
+        },
+        {
+            "source": "90",
+            "target": "91",
+            "type": "next"
+        },
+        {
+            "source": "91",
+            "target": "82",
+            "type": "next"
+        },
+        {
+            "source": "92",
+            "target": "94",
+            "type": "next"
+        },
+        {
+            "source": "93",
+            "target": "94",
+            "type": "next"
+        },
+        {
+            "source": "94",
+            "target": "95",
+            "type": "next"
+        },
+        {
+            "source": "95",
+            "target": "96",
+            "type": "true"
+        },
+        {
+            "source": "95",
+            "target": "97",
+            "type": "false"
+        },
+        {
+            "source": "96",
+            "target": "98",
+            "type": "true"
+        },
+        {
+            "source": "96",
+            "target": "99",
+            "type": "false"
+        },
+        {
+            "source": "97",
+            "target": "104",
+            "type": "next"
+        },
+        {
+            "source": "98",
+            "target": "100",
+            "type": "next"
+        },
+        {
+            "source": "99",
+            "target": "101",
+            "type": "true"
+        },
+        {
+            "source": "99",
+            "target": "102",
+            "type": "false"
+        },
+        {
+            "source": "100",
+            "target": "95",
+            "type": "next"
+        },
+        {
+            "source": "101",
+            "target": "103",
+            "type": "next"
+        },
+        {
+            "source": "102",
+            "target": "103",
+            "type": "next"
+        },
+        {
+            "source": "103",
+            "target": "100",
+            "type": "next"
+        },
+        {
+            "source": "104",
+            "target": "105",
+            "type": "true"
+        },
+        {
+            "source": "104",
+            "target": "106",
+            "type": "false"
+        },
+        {
+            "source": "105",
+            "target": "107",
+            "type": "true"
+        },
+        {
+            "source": "105",
+            "target": "108",
+            "type": "false"
+        },
+        {
+            "source": "106",
+            "target": "110",
+            "type": "next"
+        },
+        {
+            "source": "107",
+            "target": "109",
+            "type": "next"
+        },
+        {
+            "source": "108",
+            "target": "109",
+            "type": "next"
+        },
+        {
+            "source": "109",
+            "target": "104",
+            "type": "next"
+        },
+        {
+            "source": "110",
+            "target": "111",
+            "type": "true"
+        },
+        {
+            "source": "110",
+            "target": "112",
+            "type": "false"
+        },
+        {
+            "source": "111",
+            "target": "110",
+            "type": "next"
+        },
+        {
+            "source": "112",
+            "target": "113",
+            "type": "true"
+        },
+        {
+            "source": "112",
+            "target": "114",
+            "type": "false"
+        },
+        {
+            "source": "113",
+            "target": "115",
+            "type": "next"
+        },
+        {
+            "source": "114",
+            "target": "115",
+            "type": "next"
+        },
+        {
+            "source": "115",
+            "target": "91",
+            "type": "next"
+        },
+        {
+            "source": "116",
+            "target": "118",
+            "type": "next"
+        },
+        {
+            "source": "117",
+            "target": "118",
+            "type": "next"
+        }
+    ]
+}

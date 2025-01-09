@@ -1,0 +1,194 @@
+{
+    "nodes": [
+        {
+            "id": "chunk_0_GlobalBlock_1",
+            "code": "from prisma.models import User\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_2",
+            "code": "from backend.blocks.llm import AIStructuredResponseGeneratorBlock\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_3",
+            "code": "from backend.blocks.reddit import GetRedditPostsBlock, PostRedditCommentBlock\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_4",
+            "code": "from backend.blocks.text import FillTextTemplateBlock, MatchTextPatternBlock\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_5",
+            "code": "from backend.data.graph import Graph, Link, Node, create_graph\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_6",
+            "code": "from backend.data.user import get_or_create_user\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_7",
+            "code": "from backend.util.test import SpinTestServer, wait_execution\n"
+        },
+        {
+            "id": "chunk_1_create_test_graph_1",
+            "code": "def create_test_graph() -> Graph:\n    \"\"\"\n                    subreddit\n                       ||\n                        v\n        GetRedditPostsBlock (post_id, post_title, post_body)\n                  //     ||     \\\\\n              post_id  post_title  post_body\n                 ||       ||        ||\n                 v        v         v\n              FillTextTemplateBlock (format)\n                      ||\n                      v\n            AIStructuredResponseBlock / TextRelevancy\n                 ||       ||       ||\n            post_id  is_relevant  marketing_text\n               ||       ||        ||\n               v        v         v\n                 MatchTextPatternBlock\n                 ||       ||\n              positive  negative\n                ||\n                v\n        PostRedditCommentBlock\n    \"\"\"\n"
+        },
+        {
+            "id": "chunk_1_create_test_graph_2",
+            "code": "    # Hardcoded inputs\n    reddit_get_post_input = {\n        \"post_limit\": 3,\n    }\n    text_formatter_input = {\n        \"format\": \"\"\"\nBased on the following post, write your marketing comment:\n* Post ID: {id}\n* Post Subreddit: {subreddit}\n* Post Title: {title}\n* Post Body: {body}\"\"\".strip(),\n    }\n"
+        },
+        {
+            "id": "chunk_1_create_test_graph_3",
+            "code": "    llm_call_input = {\n        \"sys_prompt\": \"\"\"\nYou are an expert at marketing.\nYou have been tasked with picking Reddit posts that are relevant to your product.\nThe product you are marketing is: Auto-GPT an autonomous AI agent utilizing GPT model.\nYou reply the post that you find it relevant to be replied with marketing text.\nMake sure to only comment on a relevant post.\n\"\"\",\n        \"expected_format\": {\n            \"post_id\": \"str, the reddit post id\",\n            \"is_relevant\": \"bool, whether the post is relevant for marketing\",\n            \"marketing_text\": \"str, marketing text, this is empty on irrelevant posts\",\n        },\n    }\n"
+        },
+        {
+            "id": "chunk_1_create_test_graph_4",
+            "code": "    text_matcher_input = {\"match\": \"true\", \"case_sensitive\": False}\n    reddit_comment_input = {}\n"
+        },
+        {
+            "id": "chunk_1_create_test_graph_5",
+            "code": "    # Nodes\n    reddit_get_post_node = Node(\n        block_id=GetRedditPostsBlock().id,\n        input_default=reddit_get_post_input,\n    )\n    text_formatter_node = Node(\n        block_id=FillTextTemplateBlock().id,\n        input_default=text_formatter_input,\n    )\n    llm_call_node = Node(\n        block_id=AIStructuredResponseGeneratorBlock().id, input_default=llm_call_input\n    )\n    text_matcher_node = Node(\n        block_id=MatchTextPatternBlock().id,\n        input_default=text_matcher_input,\n    )\n    reddit_comment_node = Node(\n        block_id=PostRedditCommentBlock().id,\n        input_default=reddit_comment_input,\n    )\n"
+        },
+        {
+            "id": "chunk_1_create_test_graph_6",
+            "code": "    nodes = [\n        reddit_get_post_node,\n        text_formatter_node,\n        llm_call_node,\n        text_matcher_node,\n        reddit_comment_node,\n    ]\n"
+        },
+        {
+            "id": "chunk_1_create_test_graph_7",
+            "code": "    # Links\n    links = [\n        Link(\n            source_id=reddit_get_post_node.id,\n            sink_id=text_formatter_node.id,\n            source_name=\"post\",\n            sink_name=\"values\",\n        ),\n        Link(\n            source_id=text_formatter_node.id,\n            sink_id=llm_call_node.id,\n            source_name=\"output\",\n            sink_name=\"prompt\",\n        ),\n        Link(\n            source_id=llm_call_node.id,\n            sink_id=text_matcher_node.id,\n            source_name=\"response\",\n            sink_name=\"data\",\n        ),\n        Link(\n            source_id=llm_call_node.id,\n            sink_id=text_matcher_node.id,\n            source_name=\"response_#_is_relevant\",\n            sink_name=\"text\",\n        ),\n        Link(\n            source_id=text_matcher_node.id,\n            sink_id=reddit_comment_node.id,\n            source_name=\"positive_#_post_id\",\n            sink_name=\"data_#_post_id\",\n        ),\n        Link(\n            source_id=text_matcher_node.id,\n            sink_id=reddit_comment_node.id,\n            source_name=\"positive_#_marketing_text\",\n            sink_name=\"data_#_comment\",\n        ),\n    ]\n"
+        },
+        {
+            "id": "chunk_1_create_test_graph_8",
+            "code": "    # Create graph\n    test_graph = Graph(\n        name=\"RedditMarketingAgent\",\n        description=\"Reddit marketing agent\",\n        nodes=nodes,\n        links=links,\n    )\n    return test_graph\n"
+        },
+        {
+            "id": "chunk_2_create_test_user_1",
+            "code": "async def create_test_user() -> User:\n"
+        },
+        {
+            "id": "chunk_2_create_test_user_2",
+            "code": "    test_user_data = {\n        \"sub\": \"ef3b97d7-1161-4eb4-92b2-10c24fb154c1\",\n        \"email\": \"testuser@example.com\",\n        \"name\": \"Test User\",\n    }\n"
+        },
+        {
+            "id": "chunk_2_create_test_user_3",
+            "code": "    user = await get_or_create_user(test_user_data)\n"
+        },
+        {
+            "id": "chunk_2_create_test_user_4",
+            "code": "    return user\n"
+        },
+        {
+            "id": "chunk_3_reddit_marketing_agent_1",
+            "code": "async def reddit_marketing_agent():\n    async with SpinTestServer() as server:\n"
+        },
+        {
+            "id": "chunk_3_reddit_marketing_agent_2",
+            "code": "        test_user = await create_test_user()\n        test_graph = await create_graph(create_test_graph(), user_id=test_user.id)\n        input_data = {\"subreddit\": \"AutoGPT\"}\n"
+        },
+        {
+            "id": "chunk_3_reddit_marketing_agent_3",
+            "code": "        response = await server.agent_server.test_execute_graph(\n            test_graph.id, input_data, test_user.id\n        )\n"
+        },
+        {
+            "id": "chunk_3_reddit_marketing_agent_4",
+            "code": "        print(response)\n"
+        },
+        {
+            "id": "chunk_3_reddit_marketing_agent_5",
+            "code": "        result = await wait_execution(test_user.id, test_graph.id, response[\"id\"], 120)\n        print(result)\n"
+        },
+        {
+            "id": "chunk_4_main_1",
+            "code": "if __name__ == \"__main__\":\n"
+        },
+        {
+            "id": "chunk_4_main_2",
+            "code": "    import asyncio\n\n    asyncio.run(reddit_marketing_agent())\n"
+        }
+    ],
+    "edges": [
+        {
+            "from": "chunk_0_GlobalBlock_1",
+            "to": "chunk_0_GlobalBlock_2"
+        },
+        {
+            "from": "chunk_0_GlobalBlock_2",
+            "to": "chunk_0_GlobalBlock_3"
+        },
+        {
+            "from": "chunk_0_GlobalBlock_3",
+            "to": "chunk_0_GlobalBlock_4"
+        },
+        {
+            "from": "chunk_0_GlobalBlock_4",
+            "to": "chunk_0_GlobalBlock_5"
+        },
+        {
+            "from": "chunk_0_GlobalBlock_5",
+            "to": "chunk_0_GlobalBlock_6"
+        },
+        {
+            "from": "chunk_0_GlobalBlock_6",
+            "to": "chunk_0_GlobalBlock_7"
+        },
+        {
+            "from": "chunk_1_create_test_graph_1",
+            "to": "chunk_1_create_test_graph_2"
+        },
+        {
+            "from": "chunk_1_create_test_graph_2",
+            "to": "chunk_1_create_test_graph_3"
+        },
+        {
+            "from": "chunk_1_create_test_graph_3",
+            "to": "chunk_1_create_test_graph_4"
+        },
+        {
+            "from": "chunk_1_create_test_graph_4",
+            "to": "chunk_1_create_test_graph_5"
+        },
+        {
+            "from": "chunk_1_create_test_graph_5",
+            "to": "chunk_1_create_test_graph_6"
+        },
+        {
+            "from": "chunk_1_create_test_graph_6",
+            "to": "chunk_1_create_test_graph_7"
+        },
+        {
+            "from": "chunk_1_create_test_graph_7",
+            "to": "chunk_1_create_test_graph_8"
+        },
+        {
+            "from": "chunk_2_create_test_user_1",
+            "to": "chunk_2_create_test_user_2"
+        },
+        {
+            "from": "chunk_2_create_test_user_2",
+            "to": "chunk_2_create_test_user_3"
+        },
+        {
+            "from": "chunk_2_create_test_user_3",
+            "to": "chunk_2_create_test_user_4"
+        },
+        {
+            "from": "chunk_3_reddit_marketing_agent_1",
+            "to": "chunk_3_reddit_marketing_agent_2"
+        },
+        {
+            "from": "chunk_3_reddit_marketing_agent_2",
+            "to": "chunk_3_reddit_marketing_agent_3"
+        },
+        {
+            "from": "chunk_3_reddit_marketing_agent_3",
+            "to": "chunk_3_reddit_marketing_agent_4"
+        },
+        {
+            "from": "chunk_3_reddit_marketing_agent_4",
+            "to": "chunk_3_reddit_marketing_agent_5"
+        },
+        {
+            "from": "chunk_4_main_1",
+            "to": "chunk_4_main_2"
+        }
+    ]
+}

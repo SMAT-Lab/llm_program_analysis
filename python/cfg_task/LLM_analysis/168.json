@@ -1,0 +1,21 @@
+{
+  "nodes": [
+    {
+      "id": "n0",
+      "code": "import time\nfrom typing import Tuple\n\nfrom redis import Redis\n\nfrom .config import RATE_LIMIT_SETTINGS\n"
+    },
+    {
+      "id": "n1",
+      "code": "class RateLimiter:\n\n    def __init__(\n        self,\n        redis_host: str = RATE_LIMIT_SETTINGS.redis_host,\n        redis_port: str = RATE_LIMIT_SETTINGS.redis_port,\n        redis_password: str = RATE_LIMIT_SETTINGS.redis_password,\n        requests_per_minute: int = RATE_LIMIT_SETTINGS.requests_per_minute,\n    ):\n\n        self.redis = Redis(\n            host=redis_host,\n            port=int(redis_port),\n            password=redis_password,\n            decode_responses=True,\n        )\n\n        self.window = 60\n        self.max_requests = requests_per_minute\n\n    async def check_rate_limit(self, api_key_id: str) -> Tuple[bool, int, int]:\n        \"\"\"\n        Check if request is within rate limits.\n\n        Args:\n            api_key_id: The API key identifier to check\n\n        Returns:\n            Tuple of (is_allowed, remaining_requests, reset_time)\n        \"\"\"\n\n        now = time.time()\n        window_start = now - self.window\n        key = f\"ratelimit:{api_key_id}:1min\"\n\n        pipe = self.redis.pipeline()\n        pipe.zremrangebyscore(key, 0, window_start)\n        pipe.zadd(key, {str(now): now})\n        pipe.zcount(key, window_start, now)\n        pipe.expire(key, self.window)\n\n        _, _, request_count, _ = pipe.execute()\n\n        remaining = max(0, self.max_requests - request_count)\n        reset_time = int(now + self.window)\n\n        return request_count <= self.max_requests, remaining, reset_time\n"
+    },
+    {
+      "id": "n2",
+      "code": "    def __init__(\n        self,\n        redis_host: str = RATE_LIMIT_SETTINGS.redis_host,\n        redis_port: str = RATE_LIMIT_SETTINGS.redis_port,\n        redis_password: str = RATE_LIMIT_SETTINGS.redis_password,\n        requests_per_minute: int = RATE_LIMIT_SETTINGS.requests_per_minute,\n    ):\n\n        self.redis = Redis(\n            host=redis_host,\n            port=int(redis_port),\n            password=redis_password,\n            decode_responses=True,\n        )\n\n        self.window = 60\n        self.max_requests = requests_per_minute\n"
+    },
+    {
+      "id": "n3",
+      "code": "    async def check_rate_limit(self, api_key_id: str) -> Tuple[bool, int, int]:\n        \"\"\"\n        Check if request is within rate limits.\n\n        Args:\n            api_key_id: The API key identifier to check\n\n        Returns:\n            Tuple of (is_allowed, remaining_requests, reset_time)\n        \"\"\"\n\n        now = time.time()\n        window_start = now - self.window\n        key = f\"ratelimit:{api_key_id}:1min\"\n\n\n        pipe = self.redis.pipeline()\n        pipe.zremrangebyscore(key, 0, window_start)\n        pipe.zadd(key, {str(now): now})\n        pipe.zcount(key, window_start, now)\n        pipe.expire(key, self.window)\n\n\n        _, _, request_count, _ = pipe.execute()\n\n\n        remaining = max(0, self.max_requests - request_count)\n        reset_time = int(now + self.window)\n\n        return request_count <= self.max_requests, remaining, reset_time\n"
+    }
+  ],
+  "edges": []
+}

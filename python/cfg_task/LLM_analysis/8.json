@@ -1,0 +1,78 @@
+{
+  "nodes": [
+    {
+      "id": "n0",
+      "code": "import logging\n\nfrom autogpt_libs.utils.cache import thread_cached\n\nfrom backend.data.block import (\n    Block,\n    BlockCategory,\n    BlockInput,\n    BlockOutput,\n    BlockSchema,\n    BlockType,\n    get_block,\n)\n\nfrom backend.data.execution import ExecutionStatus\n\nfrom backend.data.model import SchemaField\n\nlogger = logging.getLogger(__name__)\n"
+    },
+    {
+      "id": "n1",
+      "code": "@thread_cached\ndef get_executor_manager_client():\n\n    from backend.executor import ExecutionManager\n    from backend.util.service import get_service_client\n\n    return get_service_client(ExecutionManager)\n"
+    },
+    {
+      "id": "n2",
+      "code": "@thread_cached\n\ndef get_event_bus():\n    from backend.data.execution import RedisExecutionEventBus\n\n    return RedisExecutionEventBus()\n"
+    },
+    {
+      "id": "n3",
+      "code": "class AgentExecutorBlock(Block):\n\n    class Input(BlockSchema):\n        user_id: str = SchemaField(description=\"User ID\")\n        graph_id: str = SchemaField(description=\"Graph ID\")\n        graph_version: int = SchemaField(description=\"Graph Version\")\n\n        data: BlockInput = SchemaField(description=\"Input data for the graph\")\n        input_schema: dict = SchemaField(description=\"Input schema for the graph\")\n        output_schema: dict = SchemaField(description=\"Output schema for the graph\")\n\n    class Output(BlockSchema):\n        pass\n\n    def __init__(self):\n        super().__init__(\n            id=\"e189baac-8c20-45a1-94a7-55177ea42565\",\n            description=\"Executes an existing agent inside your agent\",\n            input_schema=AgentExecutorBlock.Input,\n            output_schema=AgentExecutorBlock.Output,\n            block_type=BlockType.AGENT,\n            categories={BlockCategory.AGENT},\n        )\n\n    def run(self, input_data: Input, **kwargs) -> BlockOutput:\n        executor_manager = get_executor_manager_client()\n        event_bus = get_event_bus()\n\n        graph_exec = executor_manager.add_execution(\n            graph_id=input_data.graph_id,\n            graph_version=input_data.graph_version,\n            user_id=input_data.user_id,\n            data=input_data.data,\n        )\n\n        log_id = f\"Graph #{input_data.graph_id}-V{input_data.graph_version}, exec-id: {graph_exec.graph_exec_id}\"\n        logger.info(f\"Starting execution of {log_id}\")\n"
+    },
+    {
+      "id": "n4",
+      "code": "        for event in event_bus.listen(\n            graph_id=graph_exec.graph_id, graph_exec_id=graph_exec.graph_exec_id\n        ):\n\n            logger.info(\n                f\"Execution {log_id} produced input {event.input_data} output {event.output_data}\"\n            )\n\n            if not event.node_id:\n                if event.status in [ExecutionStatus.COMPLETED, ExecutionStatus.FAILED]:\n                    logger.info(f\"Execution {log_id} ended with status {event.status}\")\n                    break\n                else:\n                    continue\n"
+    },
+    {
+      "id": "n5",
+      "code": "            if not event.block_id:\n                logger.warning(f\"{log_id} received event without block_id {event}\")\n                continue\n"
+    },
+    {
+      "id": "n6",
+      "code": "            block = get_block(event.block_id)\n            if not block or block.block_type != BlockType.OUTPUT:\n                continue\n"
+    },
+    {
+      "id": "n7",
+      "code": "            output_name = event.input_data.get(\"name\")\n            if not output_name:\n                logger.warning(f\"{log_id} produced an output with no name {event}\")\n                continue\n"
+    },
+    {
+      "id": "n8",
+      "code": "            for output_data in event.output_data.get(\"output\", []):\n                logger.info(f\"Execution {log_id} produced {output_name}: {output_data}\")\n                yield output_name, output_data\n"
+    }
+  ],
+  "edges": [
+    {
+      "source": "n5",
+      "target": "n6"
+    },
+    {
+      "source": "n5",
+      "target": "n4"
+    },
+    {
+      "source": "n6",
+      "target": "n7"
+    },
+    {
+      "source": "n8",
+      "target": "n4"
+    },
+    {
+      "source": "n3",
+      "target": "n4"
+    },
+    {
+      "source": "n6",
+      "target": "n4"
+    },
+    {
+      "source": "n4",
+      "target": "n5"
+    },
+    {
+      "source": "n7",
+      "target": "n8"
+    },
+    {
+      "source": "n7",
+      "target": "n4"
+    }
+  ]
+}

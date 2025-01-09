@@ -1,0 +1,262 @@
+{
+  "nodes": [
+    {
+      "id": "n0",
+      "code": "import inspect\nfrom abc import ABC, abstractmethod\nfrom enum import Enum\nfrom typing import (\n    Any,\n    ClassVar,\n    Generator,\n    Generic,\n    Optional,\n    Type,\n    TypeVar,\n    cast,\n    get_origin,\n)\n\n\nimport jsonref\nimport jsonschema\nfrom prisma.models import AgentBlock\nfrom pydantic import BaseModel\n\n\nfrom backend.util import json\nfrom backend.util.settings import Config\n\n\nfrom .model import (\n    CREDENTIALS_FIELD_NAME,\n    ContributorDetails,\n    Credentials,\n    CredentialsMetaInput,\n)\n\n\napp_config = Config()\n\n\nBlockData = tuple[str, Any]  # Input & Output data should be a tuple of (name, data).\nBlockInput = dict[str, Any]  # Input: 1 input pin consumes 1 data.\nBlockOutput = Generator[BlockData, None, None]  # Output: 1 output pin produces n data.\nCompletedBlockOutput = dict[str, list[Any]]  # Completed stream, collected as a dict.\n\n\n\n\n"
+    },
+    {
+      "id": "n1",
+      "code": "class BlockType(Enum):\n    STANDARD = \"Standard\"\n    INPUT = \"Input\"\n    OUTPUT = \"Output\"\n    NOTE = \"Note\"\n    WEBHOOK = \"Webhook\"\n    WEBHOOK_MANUAL = \"Webhook (manual)\"\n    AGENT = \"Agent\"\n"
+    },
+    {
+      "id": "n2",
+      "code": "class BlockCategory(Enum):\n    AI = \"Block that leverages AI to perform a task.\"\n    SOCIAL = \"Block that interacts with social media platforms.\"\n    TEXT = \"Block that processes text data.\"\n    SEARCH = \"Block that searches or extracts information from the internet.\"\n    BASIC = \"Block that performs basic operations.\"\n    INPUT = \"Block that interacts with input of the graph.\"\n    OUTPUT = \"Block that interacts with output of the graph.\"\n    LOGIC = \"Programming logic to control the flow of your agent\"\n    COMMUNICATION = \"Block that interacts with communication platforms.\"\n    DEVELOPER_TOOLS = \"Developer tools such as GitHub blocks.\"\n    DATA = \"Block that interacts with structured data.\"\n    HARDWARE = \"Block that interacts with hardware.\"\n    AGENT = \"Block that interacts with other agents.\"\n    CRM = \"Block that interacts with CRM services.\"\n\n    def dict(self) -> dict[str, str]:\n        return {\"category\": self.name, \"description\": self.value}\n"
+    },
+    {
+      "id": "n3",
+      "code": "class BlockSchema(BaseModel):\n    cached_jsonschema: ClassVar[dict[str, Any]]\n"
+    },
+    {
+      "id": "n4",
+      "code": "    @classmethod\n    def jsonschema(cls) -> dict[str, Any]:\n        if cls.cached_jsonschema:\n            return cls.cached_jsonschema\n"
+    },
+    {
+      "id": "n5",
+      "code": "        model = jsonref.replace_refs(cls.model_json_schema(), merge_props=True)\n\n\n        def ref_to_dict(obj):\n            if isinstance(obj, dict):\n                # OpenAPI <3.1 does not support sibling fields that has a $ref key\n                # So sometimes, the schema has an \"allOf\"/\"anyOf\"/\"oneOf\" with 1 item.\n                keys = {\"allOf\", \"anyOf\", \"oneOf\"}\n                one_key = next((k for k in keys if k in obj and len(obj[k]) == 1), None)\n                if one_key:\n                    obj.update(obj[one_key][0])\n\n                return {\n                    key: ref_to_dict(value)\n                    for key, value in obj.items()\n                    if not key.startswith(\"$\") and key != one_key\n                }\n            elif isinstance(obj, list):\n                return [ref_to_dict(item) for item in obj]\n\n            return obj\n\n        cls.cached_jsonschema = cast(dict[str, Any], ref_to_dict(model))\n\n"
+    },
+    {
+      "id": "n6",
+      "code": "        for field in cls.cached_jsonschema.get(\"properties\", {}).values():\n            if isinstance(field, dict) and \"advanced\" not in field:\n                field[\"advanced\"] = True\n\n        return cls.cached_jsonschema\n"
+    },
+    {
+      "id": "n7",
+      "code": "    @classmethod\n    def validate_data(cls, data: BlockInput) -> str | None:\n        return json.validate_with_jsonschema(schema=cls.jsonschema(), data=data)\n"
+    },
+    {
+      "id": "n8",
+      "code": "    @classmethod\n    def validate_field(cls, field_name: str, data: BlockInput) -> str | None:\n        \"\"\"\n        Validate the data against a specific property (one of the input/output name).\n        Returns the validation error message if the data does not match the schema.\n        \"\"\"\n        model_schema = cls.jsonschema().get(\"properties\", {})\n        if not model_schema:\n            return f\"Invalid model schema {cls}\"\n\n        property_schema = model_schema.get(field_name)\n        if not property_schema:\n            return f\"Invalid property name {field_name}\"\n\n        try:\n            jsonschema.validate(json.to_dict(data), property_schema)\n            return None\n        except jsonschema.ValidationError as e:\n            return str(e)\n"
+    },
+    {
+      "id": "n9",
+      "code": "    @classmethod\n    def get_fields(cls) -> set[str]:\n        return set(cls.model_fields.keys())\n"
+    },
+    {
+      "id": "n10",
+      "code": "    @classmethod\n    def get_required_fields(cls) -> set[str]:\n        return {\n            field\n            for field, field_info in cls.model_fields.items()\n            if field_info.is_required()\n        }\n"
+    },
+    {
+      "id": "n11",
+      "code": "    @classmethod\n    def __pydantic_init_subclass__(cls, **kwargs):\n        \"\"\"Validates the schema definition. Rules:\n        - Only one `CredentialsMetaInput` field may be present.\n          - This field MUST be called `credentials`.\n        - A field that is called `credentials` MUST be a `CredentialsMetaInput`.\n        \"\"\"\n        super().__pydantic_init_subclass__(**kwargs)\n\n        # Reset cached JSON schema to prevent inheriting it from parent class\n        cls.cached_jsonschema = {}\n\n        credentials_fields = [\n            field_name\n            for field_name, info in cls.model_fields.items()\n            if (\n                inspect.isclass(info.annotation)\n                and issubclass(\n                    get_origin(info.annotation) or info.annotation,\n                    CredentialsMetaInput,\n                )\n            )\n        ]\n"
+    },
+    {
+      "id": "n12",
+      "code": "        if len(credentials_fields) > 1:\n            raise ValueError(\n                f\"{cls.__qualname__} can only have one CredentialsMetaInput field\"\n            )\n"
+    },
+    {
+      "id": "n13",
+      "code": "        elif (\n            len(credentials_fields) == 1\n            and credentials_fields[0] != CREDENTIALS_FIELD_NAME\n        ):\n            raise ValueError(\n                f\"CredentialsMetaInput field on {cls.__qualname__} \"\n                \"must be named 'credentials'\"\n            )\n"
+    },
+    {
+      "id": "n14",
+      "code": "        elif (\n            len(credentials_fields) == 0\n            and CREDENTIALS_FIELD_NAME in cls.model_fields.keys()\n        ):\n            raise TypeError(\n                f\"Field 'credentials' on {cls.__qualname__} \"\n                f\"must be of type {CredentialsMetaInput.__name__}\"\n            )\n"
+    },
+    {
+      "id": "n15",
+      "code": "        if credentials_field := cls.model_fields.get(CREDENTIALS_FIELD_NAME):\n            credentials_input_type = cast(\n                CredentialsMetaInput, credentials_field.annotation\n            )\n            credentials_input_type.validate_credentials_field_schema(cls)\n\n"
+    },
+    {
+      "id": "n16",
+      "code": "class EmptySchema(BlockSchema):\n    pass\n"
+    },
+    {
+      "id": "n17",
+      "code": "class BlockManualWebhookConfig(BaseModel):\n\n    \"\"\"\n    Configuration model for webhook-triggered blocks on which\n    the user has to manually set up the webhook at the provider.\n    \"\"\"\n\n\n\n    provider: str\n    \"\"\"The service provider that the webhook connects to\"\"\"\n\n\n\n    webhook_type: str\n    \"\"\"\n    Identifier for the webhook type. E.g. GitHub has repo and organization level hooks.\n\n    Only for use in the corresponding `WebhooksManager`.\n    \"\"\"\n\n\n\n    event_filter_input: str = \"\"\n    \"\"\"\n    Name of the block's event filter input.\n    Leave empty if the corresponding webhook doesn't have distinct event/payload types.\n    \"\"\"\n\n\n\n    event_format: str = \"{event}\"\n    \"\"\"\n    Template string for the event(s) that a block instance subscribes to.\n    Applied individually to each event selected in the event filter input.\n\n    Example: `\"pull_request.{event}\"` -> `\"pull_request.opened\"`\n    \"\"\"\n\n\n"
+    },
+    {
+      "id": "n18",
+      "code": "class BlockWebhookConfig(BlockManualWebhookConfig):\n\n    \"\"\"\n    Configuration model for webhook-triggered blocks for which\n    the webhook can be automatically set up through the provider's API.\n    \"\"\"\n\n\n\n    resource_format: str\n\n    \"\"\"\n    Template string for the resource that a block instance subscribes to.\n    Fields will be filled from the block's inputs (except `payload`).\n\n    Example: `f\"{repo}/pull_requests\"` (note: not how it's actually implemented)\n\n    Only for use in the corresponding `WebhooksManager`.\n    \"\"\"\n\n    # --8<-- [end:BlockWebhookConfig]\n\n\n"
+    },
+    {
+      "id": "n19",
+      "code": "class Block(ABC, Generic[BlockSchemaInputType, BlockSchemaOutputType]):\n    def __init__(\n        self,\n        id: str = \"\",\n        description: str = \"\",\n        contributors: list[ContributorDetails] = [],\n        categories: set[BlockCategory] | None = None,\n        input_schema: Type[BlockSchemaInputType] = EmptySchema,\n        output_schema: Type[BlockSchemaOutputType] = EmptySchema,\n        test_input: BlockInput | list[BlockInput] | None = None,\n        test_output: BlockData | list[BlockData] | None = None,\n        test_mock: dict[str, Any] | None = None,\n        test_credentials: Optional[Credentials] = None,\n        disabled: bool = False,\n        static_output: bool = False,\n        block_type: BlockType = BlockType.STANDARD,\n        webhook_config: Optional[BlockWebhookConfig | BlockManualWebhookConfig] = None,\n    ):\n\n        \"\"\"\n        Initialize the block with the given schema.\n\n        Args:\n            id: The unique identifier for the block, this value will be persisted in the\n                DB. So it should be a unique and constant across the application run.\n                Use the UUID format for the ID.\n            description: The description of the block, explaining what the block does.\n            contributors: The list of contributors who contributed to the block.\n            input_schema: The schema, defined as a Pydantic model, for the input data.\n            output_schema: The schema, defined as a Pydantic model, for the output data.\n            test_input: The list or single sample input data for the block, for testing.\n            test_output: The list or single expected output if the test_input is run.\n            test_mock: function names on the block implementation to mock on test run.\n            disabled: If the block is disabled, it will not be available for execution.\n            static_output: Whether the output links of the block are static by default.\n        \"\"\"\n\n        self.id = id\n        self.input_schema = input_schema\n        self.output_schema = output_schema\n        self.test_input = test_input\n        self.test_output = test_output\n        self.test_mock = test_mock\n        self.test_credentials = test_credentials\n        self.description = description\n        self.categories = categories or set()\n        self.contributors = contributors or set()\n        self.disabled = disabled\n        self.static_output = static_output\n        self.block_type = block_type\n        self.webhook_config = webhook_config\n        self.execution_stats = {}\n\n\n        if self.webhook_config:\n"
+    },
+    {
+      "id": "n20",
+      "code": "            if isinstance(self.webhook_config, BlockWebhookConfig):\n                # Enforce presence of credentials field on auto-setup webhook blocks\n                if CREDENTIALS_FIELD_NAME not in self.input_schema.model_fields:\n                    raise TypeError(\n                        \"credentials field is required on auto-setup webhook blocks\"\n                    )\n\n                self.block_type = BlockType.WEBHOOK\n"
+    },
+    {
+      "id": "n21",
+      "code": "            else:\n                self.block_type = BlockType.WEBHOOK_MANUAL\n"
+    },
+    {
+      "id": "n22",
+      "code": "\n            # Enforce shape of webhook event filter, if present\n"
+    },
+    {
+      "id": "n23",
+      "code": "            if self.webhook_config.event_filter_input:\n                event_filter_field = self.input_schema.model_fields[\n                    self.webhook_config.event_filter_input\n                ]\n                if not (\n                    isinstance(event_filter_field.annotation, type)\n                    and issubclass(event_filter_field.annotation, BaseModel)\n                    and all(\n                        field.annotation is bool\n                        for field in event_filter_field.annotation.model_fields.values()\n                    )\n                ):\n                    raise NotImplementedError(\n                        f\"{self.name} has an invalid webhook event selector: \"\n                        \"field must be a BaseModel and all its fields must be boolean\"\n                    )\n"
+    },
+    {
+      "id": "n24",
+      "code": "\n            # Enforce presence of 'payload' input\n"
+    },
+    {
+      "id": "n25",
+      "code": "            if \"payload\" not in self.input_schema.model_fields:\n                raise TypeError(\n                    f\"{self.name} is webhook-triggered but has no 'payload' input\"\n                )\n"
+    },
+    {
+      "id": "n26",
+      "code": "\n            # Disable webhook-triggered block if webhook functionality not available\n\n            if not app_config.platform_base_url:\n                self.disabled = True\n\n\n    @classmethod\n\n    def create(cls: Type[\"Block\"]) -> \"Block\":\n        return cls()\n\n\n    @abstractmethod\n\n    def run(self, input_data: BlockSchemaInputType, **kwargs) -> BlockOutput:\n        \"\"\"\n        Run the block with the given input data.\n        Args:\n            input_data: The input data with the structure of input_schema.\n        Returns:\n            A Generator that yields (output_name, output_data).\n            output_name: One of the output name defined in Block's output_schema.\n            output_data: The data for the output_name, matching the defined schema.\n        \"\"\"\n        pass\n\n\n    def run_once(self, input_data: BlockSchemaInputType, output: str, **kwargs) -> Any:\n\n        for name, data in self.run(input_data, **kwargs):\n            if name == output:\n                return data\n        raise ValueError(f\"{self.name} did not produce any output for {output}\")\n\n\n    def merge_stats(self, stats: dict[str, Any]) -> dict[str, Any]:\n\n        for key, value in stats.items():\n            if isinstance(value, dict):\n                self.execution_stats.setdefault(key, {}).update(value)\n            elif isinstance(value, (int, float)):\n                self.execution_stats.setdefault(key, 0)\n                self.execution_stats[key] += value\n            elif isinstance(value, list):\n                self.execution_stats.setdefault(key, [])\n                self.execution_stats[key].extend(value)\n            else:\n                self.execution_stats[key] = value\n        return self.execution_stats\n\n\n    @property\n\n    def name(self):\n        return self.__class__.__name__\n\n\n    def to_dict(self):\n\n        return {\n            \"id\": self.id,\n            \"name\": self.name,\n            \"inputSchema\": self.input_schema.jsonschema(),\n            \"outputSchema\": self.output_schema.jsonschema(),\n            \"description\": self.description,\n            \"categories\": [category.dict() for category in self.categories],\n            \"contributors\": [\n                contributor.model_dump() for contributor in self.contributors\n            ],\n            \"staticOutput\": self.static_output,\n            \"uiType\": self.block_type.value,\n        }\n\n\n"
+    },
+    {
+      "id": "n27",
+      "code": "def get_blocks() -> dict[str, Type[Block]]:\n    from backend.blocks import AVAILABLE_BLOCKS  # noqa: E402\n\n    return AVAILABLE_BLOCKS\n"
+    },
+    {
+      "id": "n28",
+      "code": "async def initialize_blocks() -> None:\n    for cls in get_blocks().values():\n"
+    },
+    {
+      "id": "n29",
+      "code": "        block = cls()\n        existing_block = await AgentBlock.prisma().find_first(\n            where={\"OR\": [{\"id\": block.id}, {\"name\": block.name}]}\n        )\n\n        if not existing_block:\n"
+    },
+    {
+      "id": "n30",
+      "code": "            await AgentBlock.prisma().create(\n                data={\n                    \"id\": block.id,\n                    \"name\": block.name,\n                    \"inputSchema\": json.dumps(block.input_schema.jsonschema()),\n                    \"outputSchema\": json.dumps(block.output_schema.jsonschema()),\n                }\n            )\n\n            continue\n"
+    },
+    {
+      "id": "n31",
+      "code": "        input_schema = json.dumps(block.input_schema.jsonschema())\n        output_schema = json.dumps(block.output_schema.jsonschema())\n\n        if (\n            block.id != existing_block.id\n            or block.name != existing_block.name\n            or input_schema != existing_block.inputSchema\n            or output_schema != existing_block.outputSchema\n        ):\n"
+    },
+    {
+      "id": "n32",
+      "code": "            await AgentBlock.prisma().update(\n                where={\"id\": existing_block.id},\n                data={\n                    \"id\": block.id,\n                    \"name\": block.name,\n                    \"inputSchema\": input_schema,\n                    \"outputSchema\": output_schema,\n                },\n            )\n"
+    },
+    {
+      "id": "n33",
+      "code": "def get_block(block_id: str) -> Block | None:\n    cls = get_blocks().get(block_id)\n    return cls() if cls else None\n"
+    }
+  ],
+  "edges": [
+    {
+      "source": "n32",
+      "target": "n29"
+    },
+    {
+      "source": "n11",
+      "target": "n15"
+    },
+    {
+      "source": "n3",
+      "target": "n9"
+    },
+    {
+      "source": "n21",
+      "target": "n22"
+    },
+    {
+      "source": "n22",
+      "target": "n23"
+    },
+    {
+      "source": "n19",
+      "target": "n21"
+    },
+    {
+      "source": "n30",
+      "target": "n29"
+    },
+    {
+      "source": "n23",
+      "target": "n24"
+    },
+    {
+      "source": "n3",
+      "target": "n4"
+    },
+    {
+      "source": "n19",
+      "target": "n20"
+    },
+    {
+      "source": "n4",
+      "target": "n5"
+    },
+    {
+      "source": "n4",
+      "target": "n6"
+    },
+    {
+      "source": "n24",
+      "target": "n25"
+    },
+    {
+      "source": "n3",
+      "target": "n11"
+    },
+    {
+      "source": "n29",
+      "target": "n30"
+    },
+    {
+      "source": "n3",
+      "target": "n10"
+    },
+    {
+      "source": "n31",
+      "target": "n32"
+    },
+    {
+      "source": "n11",
+      "target": "n12"
+    },
+    {
+      "source": "n28",
+      "target": "n29"
+    },
+    {
+      "source": "n29",
+      "target": "n31"
+    },
+    {
+      "source": "n5",
+      "target": "n6"
+    },
+    {
+      "source": "n25",
+      "target": "n26"
+    },
+    {
+      "source": "n24",
+      "target": "n26"
+    },
+    {
+      "source": "n3",
+      "target": "n8"
+    },
+    {
+      "source": "n20",
+      "target": "n22"
+    },
+    {
+      "source": "n22",
+      "target": "n24"
+    },
+    {
+      "source": "n31",
+      "target": "n29"
+    },
+    {
+      "source": "n11",
+      "target": "n13"
+    },
+    {
+      "source": "n11",
+      "target": "n14"
+    },
+    {
+      "source": "n3",
+      "target": "n7"
+    }
+  ]
+}

@@ -1,0 +1,373 @@
+{
+  "nodes": [
+    {
+      "id": "n0",
+      "type": "block",
+      "statements": [
+        "import logging",
+        "import secrets",
+        "from abc import ABC, abstractmethod",
+        "from typing import ClassVar, Generic, Optional, TypeVar",
+        "from uuid import uuid4",
+        "from fastapi import Request",
+        "from strenum import StrEnum",
+        "from backend.data import integrations",
+        "from backend.data.model import Credentials",
+        "from backend.integrations.providers import ProviderName",
+        "from backend.integrations.webhooks.utils import webhook_ingress_url",
+        "from backend.util.exceptions import MissingConfigError",
+        "from backend.util.settings import Config",
+        "logger = logging.getLogger(__name__)",
+        "app_config = Config()",
+        "WT = TypeVar('WT', bound=StrEnum)",
+        "class BaseWebhooksManager(ABC, Generic[WT]):\n    PROVIDER_NAME: ClassVar[ProviderName]\n    WebhookType: WT\n\n    async def get_suitable_auto_webhook(self, user_id: str, credentials: Credentials, webhook_type: WT, resource: str, events: list[str]) -> integrations.Webhook:\n        if not app_config.platform_base_url:\n            raise MissingConfigError('PLATFORM_BASE_URL must be set to use Webhook functionality')\n        if (webhook := (await integrations.find_webhook_by_credentials_and_props(credentials.id, webhook_type, resource, events))):\n            return webhook\n        return await self._create_webhook(user_id, webhook_type, events, resource, credentials)\n\n    async def get_manual_webhook(self, user_id: str, graph_id: str, webhook_type: WT, events: list[str]):\n        if (current_webhook := (await integrations.find_webhook_by_graph_and_props(graph_id, self.PROVIDER_NAME, webhook_type, events))):\n            return current_webhook\n        return await self._create_webhook(user_id, webhook_type, events, register=False)\n\n    async def prune_webhook_if_dangling(self, webhook_id: str, credentials: Optional[Credentials]) -> bool:\n        webhook = await integrations.get_webhook(webhook_id)\n        if webhook.attached_nodes is None:\n            raise ValueError('Error retrieving webhook including attached nodes')\n        if webhook.attached_nodes:\n            return False\n        if credentials:\n            await self._deregister_webhook(webhook, credentials)\n        await integrations.delete_webhook(webhook.id)\n        return True\n\n    @classmethod\n    @abstractmethod\n    async def validate_payload(cls, webhook: integrations.Webhook, request: Request) -> tuple[dict, str]:\n        \"\"\"\n        Validates an incoming webhook request and returns its payload and type.\n\n        Params:\n            webhook: Object representing the configured webhook and its properties in our system.\n            request: Incoming FastAPI `Request`\n\n        Returns:\n            dict: The validated payload\n            str: The event type associated with the payload\n        \"\"\"\n\n    async def trigger_ping(self, webhook: integrations.Webhook, credentials: Credentials | None) -> None:\n        \"\"\"\n        Triggers a ping to the given webhook.\n\n        Raises:\n            NotImplementedError: if the provider doesn't support pinging\n        \"\"\"\n        raise NotImplementedError(f\"{self.__class__.__name__} doesn't support pinging\")\n\n    @abstractmethod\n    async def _register_webhook(self, credentials: Credentials, webhook_type: WT, resource: str, events: list[str], ingress_url: str, secret: str) -> tuple[str, dict]:\n        \"\"\"\n        Registers a new webhook with the provider.\n\n        Params:\n            credentials: The credentials with which to create the webhook\n            webhook_type: The provider-specific webhook type to create\n            resource: The resource to receive events for\n            events: The events to subscribe to\n            ingress_url: The ingress URL for webhook payloads\n            secret: Secret used to verify webhook payloads\n\n        Returns:\n            str: Webhook ID assigned by the provider\n            config: Provider-specific configuration for the webhook\n        \"\"\"\n        ...\n\n    @abstractmethod\n    async def _deregister_webhook(self, webhook: integrations.Webhook, credentials: Credentials) -> None:\n        ...\n\n    async def _create_webhook(self, user_id: str, webhook_type: WT, events: list[str], resource: str='', credentials: Optional[Credentials]=None, register: bool=True) -> integrations.Webhook:\n        if not app_config.platform_base_url:\n            raise MissingConfigError('PLATFORM_BASE_URL must be set to use Webhook functionality')\n        id = str(uuid4())\n        secret = secrets.token_hex(32)\n        provider_name = self.PROVIDER_NAME\n        ingress_url = webhook_ingress_url(provider_name=provider_name, webhook_id=id)\n        if register:\n            if not credentials:\n                raise TypeError('credentials are required if register = True')\n            (provider_webhook_id, config) = await self._register_webhook(credentials, webhook_type, resource, events, ingress_url, secret)\n        else:\n            (provider_webhook_id, config) = ('', {})\n        return await integrations.create_webhook(integrations.Webhook(id=id, user_id=user_id, provider=provider_name, credentials_id=credentials.id if credentials else '', webhook_type=webhook_type, resource=resource, events=events, provider_webhook_id=provider_webhook_id, config=config, secret=secret))",
+        "PROVIDER_NAME: ClassVar[ProviderName]",
+        "WebhookType: WT",
+        "async def get_suitable_auto_webhook(self, user_id: str, credentials: Credentials, webhook_type: WT, resource: str, events: list[str]) -> integrations.Webhook:\n    if not app_config.platform_base_url:\n        raise MissingConfigError('PLATFORM_BASE_URL must be set to use Webhook functionality')\n    if (webhook := (await integrations.find_webhook_by_credentials_and_props(credentials.id, webhook_type, resource, events))):\n        return webhook\n    return await self._create_webhook(user_id, webhook_type, events, resource, credentials)",
+        "not app_config.platform_base_url"
+      ],
+      "code": "import logging\nimport secrets\nfrom abc import ABC, abstractmethod\nfrom typing import ClassVar, Generic, Optional, TypeVar\nfrom uuid import uuid4\nfrom fastapi import Request\nfrom strenum import StrEnum\nfrom backend.data import integrations\nfrom backend.data.model import Credentials\nfrom backend.integrations.providers import ProviderName\nfrom backend.integrations.webhooks.utils import webhook_ingress_url\nfrom backend.util.exceptions import MissingConfigError\nfrom backend.util.settings import Config\nlogger = logging.getLogger(__name__)\napp_config = Config()\nWT = TypeVar('WT', bound=StrEnum)\nclass BaseWebhooksManager(ABC, Generic[WT]):\n    PROVIDER_NAME: ClassVar[ProviderName]\n    WebhookType: WT\n\n    async def get_suitable_auto_webhook(self, user_id: str, credentials: Credentials, webhook_type: WT, resource: str, events: list[str]) -> integrations.Webhook:\n        if not app_config.platform_base_url:\n            raise MissingConfigError('PLATFORM_BASE_URL must be set to use Webhook functionality')\n        if (webhook := (await integrations.find_webhook_by_credentials_and_props(credentials.id, webhook_type, resource, events))):\n            return webhook\n        return await self._create_webhook(user_id, webhook_type, events, resource, credentials)\n\n    async def get_manual_webhook(self, user_id: str, graph_id: str, webhook_type: WT, events: list[str]):\n        if (current_webhook := (await integrations.find_webhook_by_graph_and_props(graph_id, self.PROVIDER_NAME, webhook_type, events))):\n            return current_webhook\n        return await self._create_webhook(user_id, webhook_type, events, register=False)\n\n    async def prune_webhook_if_dangling(self, webhook_id: str, credentials: Optional[Credentials]) -> bool:\n        webhook = await integrations.get_webhook(webhook_id)\n        if webhook.attached_nodes is None:\n            raise ValueError('Error retrieving webhook including attached nodes')\n        if webhook.attached_nodes:\n            return False\n        if credentials:\n            await self._deregister_webhook(webhook, credentials)\n        await integrations.delete_webhook(webhook.id)\n        return True\n\n    @classmethod\n    @abstractmethod\n    async def validate_payload(cls, webhook: integrations.Webhook, request: Request) -> tuple[dict, str]:\n        \"\"\"\n        Validates an incoming webhook request and returns its payload and type.\n\n        Params:\n            webhook: Object representing the configured webhook and its properties in our system.\n            request: Incoming FastAPI `Request`\n\n        Returns:\n            dict: The validated payload\n            str: The event type associated with the payload\n        \"\"\"\n\n    async def trigger_ping(self, webhook: integrations.Webhook, credentials: Credentials | None) -> None:\n        \"\"\"\n        Triggers a ping to the given webhook.\n\n        Raises:\n            NotImplementedError: if the provider doesn't support pinging\n        \"\"\"\n        raise NotImplementedError(f\"{self.__class__.__name__} doesn't support pinging\")\n\n    @abstractmethod\n    async def _register_webhook(self, credentials: Credentials, webhook_type: WT, resource: str, events: list[str], ingress_url: str, secret: str) -> tuple[str, dict]:\n        \"\"\"\n        Registers a new webhook with the provider.\n\n        Params:\n            credentials: The credentials with which to create the webhook\n            webhook_type: The provider-specific webhook type to create\n            resource: The resource to receive events for\n            events: The events to subscribe to\n            ingress_url: The ingress URL for webhook payloads\n            secret: Secret used to verify webhook payloads\n\n        Returns:\n            str: Webhook ID assigned by the provider\n            config: Provider-specific configuration for the webhook\n        \"\"\"\n        ...\n\n    @abstractmethod\n    async def _deregister_webhook(self, webhook: integrations.Webhook, credentials: Credentials) -> None:\n        ...\n\n    async def _create_webhook(self, user_id: str, webhook_type: WT, events: list[str], resource: str='', credentials: Optional[Credentials]=None, register: bool=True) -> integrations.Webhook:\n        if not app_config.platform_base_url:\n            raise MissingConfigError('PLATFORM_BASE_URL must be set to use Webhook functionality')\n        id = str(uuid4())\n        secret = secrets.token_hex(32)\n        provider_name = self.PROVIDER_NAME\n        ingress_url = webhook_ingress_url(provider_name=provider_name, webhook_id=id)\n        if register:\n            if not credentials:\n                raise TypeError('credentials are required if register = True')\n            (provider_webhook_id, config) = await self._register_webhook(credentials, webhook_type, resource, events, ingress_url, secret)\n        else:\n            (provider_webhook_id, config) = ('', {})\n        return await integrations.create_webhook(integrations.Webhook(id=id, user_id=user_id, provider=provider_name, credentials_id=credentials.id if credentials else '', webhook_type=webhook_type, resource=resource, events=events, provider_webhook_id=provider_webhook_id, config=config, secret=secret))\nPROVIDER_NAME: ClassVar[ProviderName]\nWebhookType: WT\nasync def get_suitable_auto_webhook(self, user_id: str, credentials: Credentials, webhook_type: WT, resource: str, events: list[str]) -> integrations.Webhook:\n    if not app_config.platform_base_url:\n        raise MissingConfigError('PLATFORM_BASE_URL must be set to use Webhook functionality')\n    if (webhook := (await integrations.find_webhook_by_credentials_and_props(credentials.id, webhook_type, resource, events))):\n        return webhook\n    return await self._create_webhook(user_id, webhook_type, events, resource, credentials)\nnot app_config.platform_base_url"
+    },
+    {
+      "id": "n1",
+      "type": "block",
+      "statements": [
+        "raise MissingConfigError('PLATFORM_BASE_URL must be set to use Webhook functionality')"
+      ],
+      "code": "raise MissingConfigError('PLATFORM_BASE_URL must be set to use Webhook functionality')"
+    },
+    {
+      "id": "n2",
+      "type": "block",
+      "statements": [],
+      "code": ""
+    },
+    {
+      "id": "n3",
+      "type": "block",
+      "statements": [
+        "(webhook := (await integrations.find_webhook_by_credentials_and_props(credentials.id, webhook_type, resource, events)))"
+      ],
+      "code": "(webhook := (await integrations.find_webhook_by_credentials_and_props(credentials.id, webhook_type, resource, events)))"
+    },
+    {
+      "id": "n4",
+      "type": "block",
+      "statements": [
+        "return webhook"
+      ],
+      "code": "return webhook"
+    },
+    {
+      "id": "n5",
+      "type": "block",
+      "statements": [],
+      "code": "\nreturn await self._create_webhook(user_id, webhook_type, events, resource, credentials)"
+    },
+    {
+      "id": "n6",
+      "type": "block",
+      "statements": [
+        "async def get_manual_webhook(self, user_id: str, graph_id: str, webhook_type: WT, events: list[str]):\n    if (current_webhook := (await integrations.find_webhook_by_graph_and_props(graph_id, self.PROVIDER_NAME, webhook_type, events))):\n        return current_webhook\n    return await self._create_webhook(user_id, webhook_type, events, register=False)",
+        "(current_webhook := (await integrations.find_webhook_by_graph_and_props(graph_id, self.PROVIDER_NAME, webhook_type, events)))"
+      ],
+      "code": "async def get_manual_webhook(self, user_id: str, graph_id: str, webhook_type: WT, events: list[str]):\n    if (current_webhook := (await integrations.find_webhook_by_graph_and_props(graph_id, self.PROVIDER_NAME, webhook_type, events))):\n        return current_webhook\n    return await self._create_webhook(user_id, webhook_type, events, register=False)\n(current_webhook := (await integrations.find_webhook_by_graph_and_props(graph_id, self.PROVIDER_NAME, webhook_type, events)))"
+    },
+    {
+      "id": "n7",
+      "type": "block",
+      "statements": [
+        "return current_webhook"
+      ],
+      "code": "return current_webhook"
+    },
+    {
+      "id": "n8",
+      "type": "block",
+      "statements": [],
+      "code": "\nreturn await self._create_webhook(user_id, webhook_type, events, register=False)"
+    },
+    {
+      "id": "n9",
+      "type": "block",
+      "statements": [
+        "async def prune_webhook_if_dangling(self, webhook_id: str, credentials: Optional[Credentials]) -> bool:\n    webhook = await integrations.get_webhook(webhook_id)\n    if webhook.attached_nodes is None:\n        raise ValueError('Error retrieving webhook including attached nodes')\n    if webhook.attached_nodes:\n        return False\n    if credentials:\n        await self._deregister_webhook(webhook, credentials)\n    await integrations.delete_webhook(webhook.id)\n    return True",
+        "webhook = await integrations.get_webhook(webhook_id)",
+        "webhook.attached_nodes Is None"
+      ],
+      "code": "async def prune_webhook_if_dangling(self, webhook_id: str, credentials: Optional[Credentials]) -> bool:\n    webhook = await integrations.get_webhook(webhook_id)\n    if webhook.attached_nodes is None:\n        raise ValueError('Error retrieving webhook including attached nodes')\n    if webhook.attached_nodes:\n        return False\n    if credentials:\n        await self._deregister_webhook(webhook, credentials)\n    await integrations.delete_webhook(webhook.id)\n    return True\nwebhook = await integrations.get_webhook(webhook_id)\nwebhook.attached_nodes Is None"
+    },
+    {
+      "id": "n10",
+      "type": "block",
+      "statements": [
+        "raise ValueError('Error retrieving webhook including attached nodes')"
+      ],
+      "code": "raise ValueError('Error retrieving webhook including attached nodes')"
+    },
+    {
+      "id": "n11",
+      "type": "block",
+      "statements": [],
+      "code": ""
+    },
+    {
+      "id": "n12",
+      "type": "block",
+      "statements": [
+        "webhook.attached_nodes"
+      ],
+      "code": "webhook.attached_nodes"
+    },
+    {
+      "id": "n13",
+      "type": "block",
+      "statements": [
+        "return False"
+      ],
+      "code": "return False"
+    },
+    {
+      "id": "n14",
+      "type": "block",
+      "statements": [],
+      "code": "\ncredentials"
+    },
+    {
+      "id": "n15",
+      "type": "block",
+      "statements": [
+        "await self._deregister_webhook(webhook, credentials)"
+      ],
+      "code": "await self._deregister_webhook(webhook, credentials)"
+    },
+    {
+      "id": "n16",
+      "type": "block",
+      "statements": [],
+      "code": ""
+    },
+    {
+      "id": "n17",
+      "type": "block",
+      "statements": [
+        "await integrations.delete_webhook(webhook.id)",
+        "return True"
+      ],
+      "code": "await integrations.delete_webhook(webhook.id)\nreturn True"
+    },
+    {
+      "id": "n18",
+      "type": "block",
+      "statements": [
+        "@classmethod\n@abstractmethod\nasync def validate_payload(cls, webhook: integrations.Webhook, request: Request) -> tuple[dict, str]:\n    \"\"\"\n        Validates an incoming webhook request and returns its payload and type.\n\n        Params:\n            webhook: Object representing the configured webhook and its properties in our system.\n            request: Incoming FastAPI `Request`\n\n        Returns:\n            dict: The validated payload\n            str: The event type associated with the payload\n        \"\"\"",
+        "'\\n        Validates an incoming webhook request and returns its payload and type.\\n\\n        Params:\\n            webhook: Object representing the configured webhook and its properties in our system.\\n            request: Incoming FastAPI `Request`\\n\\n        Returns:\\n            dict: The validated payload\\n            str: The event type associated with the payload\\n        '",
+        "async def trigger_ping(self, webhook: integrations.Webhook, credentials: Credentials | None) -> None:\n    \"\"\"\n        Triggers a ping to the given webhook.\n\n        Raises:\n            NotImplementedError: if the provider doesn't support pinging\n        \"\"\"\n    raise NotImplementedError(f\"{self.__class__.__name__} doesn't support pinging\")",
+        "\"\\n        Triggers a ping to the given webhook.\\n\\n        Raises:\\n            NotImplementedError: if the provider doesn't support pinging\\n        \"",
+        "raise NotImplementedError(f\"{self.__class__.__name__} doesn't support pinging\")",
+        "@abstractmethod\nasync def _register_webhook(self, credentials: Credentials, webhook_type: WT, resource: str, events: list[str], ingress_url: str, secret: str) -> tuple[str, dict]:\n    \"\"\"\n        Registers a new webhook with the provider.\n\n        Params:\n            credentials: The credentials with which to create the webhook\n            webhook_type: The provider-specific webhook type to create\n            resource: The resource to receive events for\n            events: The events to subscribe to\n            ingress_url: The ingress URL for webhook payloads\n            secret: Secret used to verify webhook payloads\n\n        Returns:\n            str: Webhook ID assigned by the provider\n            config: Provider-specific configuration for the webhook\n        \"\"\"\n    ...",
+        "'\\n        Registers a new webhook with the provider.\\n\\n        Params:\\n            credentials: The credentials with which to create the webhook\\n            webhook_type: The provider-specific webhook type to create\\n            resource: The resource to receive events for\\n            events: The events to subscribe to\\n            ingress_url: The ingress URL for webhook payloads\\n            secret: Secret used to verify webhook payloads\\n\\n        Returns:\\n            str: Webhook ID assigned by the provider\\n            config: Provider-specific configuration for the webhook\\n        '",
+        "Ellipsis",
+        "@abstractmethod\nasync def _deregister_webhook(self, webhook: integrations.Webhook, credentials: Credentials) -> None:\n    ...",
+        "Ellipsis",
+        "async def _create_webhook(self, user_id: str, webhook_type: WT, events: list[str], resource: str='', credentials: Optional[Credentials]=None, register: bool=True) -> integrations.Webhook:\n    if not app_config.platform_base_url:\n        raise MissingConfigError('PLATFORM_BASE_URL must be set to use Webhook functionality')\n    id = str(uuid4())\n    secret = secrets.token_hex(32)\n    provider_name = self.PROVIDER_NAME\n    ingress_url = webhook_ingress_url(provider_name=provider_name, webhook_id=id)\n    if register:\n        if not credentials:\n            raise TypeError('credentials are required if register = True')\n        (provider_webhook_id, config) = await self._register_webhook(credentials, webhook_type, resource, events, ingress_url, secret)\n    else:\n        (provider_webhook_id, config) = ('', {})\n    return await integrations.create_webhook(integrations.Webhook(id=id, user_id=user_id, provider=provider_name, credentials_id=credentials.id if credentials else '', webhook_type=webhook_type, resource=resource, events=events, provider_webhook_id=provider_webhook_id, config=config, secret=secret))",
+        "not app_config.platform_base_url"
+      ],
+      "code": "@classmethod\n@abstractmethod\nasync def validate_payload(cls, webhook: integrations.Webhook, request: Request) -> tuple[dict, str]:\n    \"\"\"\n        Validates an incoming webhook request and returns its payload and type.\n\n        Params:\n            webhook: Object representing the configured webhook and its properties in our system.\n            request: Incoming FastAPI `Request`\n\n        Returns:\n            dict: The validated payload\n            str: The event type associated with the payload\n        \"\"\"\n'\\n        Validates an incoming webhook request and returns its payload and type.\\n\\n        Params:\\n            webhook: Object representing the configured webhook and its properties in our system.\\n            request: Incoming FastAPI `Request`\\n\\n        Returns:\\n            dict: The validated payload\\n            str: The event type associated with the payload\\n        '\nasync def trigger_ping(self, webhook: integrations.Webhook, credentials: Credentials | None) -> None:\n    \"\"\"\n        Triggers a ping to the given webhook.\n\n        Raises:\n            NotImplementedError: if the provider doesn't support pinging\n        \"\"\"\n    raise NotImplementedError(f\"{self.__class__.__name__} doesn't support pinging\")\n\"\\n        Triggers a ping to the given webhook.\\n\\n        Raises:\\n            NotImplementedError: if the provider doesn't support pinging\\n        \"\nraise NotImplementedError(f\"{self.__class__.__name__} doesn't support pinging\")\n@abstractmethod\nasync def _register_webhook(self, credentials: Credentials, webhook_type: WT, resource: str, events: list[str], ingress_url: str, secret: str) -> tuple[str, dict]:\n    \"\"\"\n        Registers a new webhook with the provider.\n\n        Params:\n            credentials: The credentials with which to create the webhook\n            webhook_type: The provider-specific webhook type to create\n            resource: The resource to receive events for\n            events: The events to subscribe to\n            ingress_url: The ingress URL for webhook payloads\n            secret: Secret used to verify webhook payloads\n\n        Returns:\n            str: Webhook ID assigned by the provider\n            config: Provider-specific configuration for the webhook\n        \"\"\"\n    ...\n'\\n        Registers a new webhook with the provider.\\n\\n        Params:\\n            credentials: The credentials with which to create the webhook\\n            webhook_type: The provider-specific webhook type to create\\n            resource: The resource to receive events for\\n            events: The events to subscribe to\\n            ingress_url: The ingress URL for webhook payloads\\n            secret: Secret used to verify webhook payloads\\n\\n        Returns:\\n            str: Webhook ID assigned by the provider\\n            config: Provider-specific configuration for the webhook\\n        '\nEllipsis\n@abstractmethod\nasync def _deregister_webhook(self, webhook: integrations.Webhook, credentials: Credentials) -> None:\n    ...\nEllipsis\nasync def _create_webhook(self, user_id: str, webhook_type: WT, events: list[str], resource: str='', credentials: Optional[Credentials]=None, register: bool=True) -> integrations.Webhook:\n    if not app_config.platform_base_url:\n        raise MissingConfigError('PLATFORM_BASE_URL must be set to use Webhook functionality')\n    id = str(uuid4())\n    secret = secrets.token_hex(32)\n    provider_name = self.PROVIDER_NAME\n    ingress_url = webhook_ingress_url(provider_name=provider_name, webhook_id=id)\n    if register:\n        if not credentials:\n            raise TypeError('credentials are required if register = True')\n        (provider_webhook_id, config) = await self._register_webhook(credentials, webhook_type, resource, events, ingress_url, secret)\n    else:\n        (provider_webhook_id, config) = ('', {})\n    return await integrations.create_webhook(integrations.Webhook(id=id, user_id=user_id, provider=provider_name, credentials_id=credentials.id if credentials else '', webhook_type=webhook_type, resource=resource, events=events, provider_webhook_id=provider_webhook_id, config=config, secret=secret))\nnot app_config.platform_base_url"
+    },
+    {
+      "id": "n19",
+      "type": "block",
+      "statements": [
+        "raise MissingConfigError('PLATFORM_BASE_URL must be set to use Webhook functionality')"
+      ],
+      "code": "raise MissingConfigError('PLATFORM_BASE_URL must be set to use Webhook functionality')"
+    },
+    {
+      "id": "n20",
+      "type": "block",
+      "statements": [],
+      "code": ""
+    },
+    {
+      "id": "n21",
+      "type": "block",
+      "statements": [
+        "id = str(uuid4())",
+        "secret = secrets.token_hex(32)",
+        "provider_name = self.PROVIDER_NAME",
+        "ingress_url = webhook_ingress_url(provider_name=provider_name, webhook_id=id)",
+        "register"
+      ],
+      "code": "id = str(uuid4())\nsecret = secrets.token_hex(32)\nprovider_name = self.PROVIDER_NAME\ningress_url = webhook_ingress_url(provider_name=provider_name, webhook_id=id)\nregister"
+    },
+    {
+      "id": "n22",
+      "type": "block",
+      "statements": [
+        "not credentials"
+      ],
+      "code": "not credentials"
+    },
+    {
+      "id": "n23",
+      "type": "block",
+      "statements": [
+        "(provider_webhook_id, config) = ('', {})"
+      ],
+      "code": "(provider_webhook_id, config) = ('', {})"
+    },
+    {
+      "id": "n24",
+      "type": "block",
+      "statements": [
+        "return await integrations.create_webhook(integrations.Webhook(id=id, user_id=user_id, provider=provider_name, credentials_id=credentials.id if credentials else '', webhook_type=webhook_type, resource=resource, events=events, provider_webhook_id=provider_webhook_id, config=config, secret=secret))"
+      ],
+      "code": "return await integrations.create_webhook(integrations.Webhook(id=id, user_id=user_id, provider=provider_name, credentials_id=credentials.id if credentials else '', webhook_type=webhook_type, resource=resource, events=events, provider_webhook_id=provider_webhook_id, config=config, secret=secret))"
+    },
+    {
+      "id": "n25",
+      "type": "block",
+      "statements": [
+        "raise TypeError('credentials are required if register = True')"
+      ],
+      "code": "raise TypeError('credentials are required if register = True')"
+    },
+    {
+      "id": "n26",
+      "type": "block",
+      "statements": [],
+      "code": ""
+    },
+    {
+      "id": "n27",
+      "type": "block",
+      "statements": [
+        "(provider_webhook_id, config) = await self._register_webhook(credentials, webhook_type, resource, events, ingress_url, secret)"
+      ],
+      "code": "(provider_webhook_id, config) = await self._register_webhook(credentials, webhook_type, resource, events, ingress_url, secret)"
+    }
+  ],
+  "edges": [
+    {
+      "source": "n22",
+      "target": "n26"
+    },
+    {
+      "source": "n6",
+      "target": "n7"
+    },
+    {
+      "source": "n14",
+      "target": "n15"
+    },
+    {
+      "source": "n0",
+      "target": "n1"
+    },
+    {
+      "source": "n21",
+      "target": "n22"
+    },
+    {
+      "source": "n26",
+      "target": "n27"
+    },
+    {
+      "source": "n2",
+      "target": "n3"
+    },
+    {
+      "source": "n19",
+      "target": "n21"
+    },
+    {
+      "source": "n23",
+      "target": "n24"
+    },
+    {
+      "source": "n16",
+      "target": "n17"
+    },
+    {
+      "source": "n3",
+      "target": "n4"
+    },
+    {
+      "source": "n12",
+      "target": "n13"
+    },
+    {
+      "source": "n21",
+      "target": "n23"
+    },
+    {
+      "source": "n9",
+      "target": "n11"
+    },
+    {
+      "source": "n12",
+      "target": "n14"
+    },
+    {
+      "source": "n14",
+      "target": "n16"
+    },
+    {
+      "source": "n20",
+      "target": "n21"
+    },
+    {
+      "source": "n9",
+      "target": "n10"
+    },
+    {
+      "source": "n22",
+      "target": "n25"
+    },
+    {
+      "source": "n10",
+      "target": "n12"
+    },
+    {
+      "source": "n11",
+      "target": "n12"
+    },
+    {
+      "source": "n18",
+      "target": "n19"
+    },
+    {
+      "source": "n0",
+      "target": "n2"
+    },
+    {
+      "source": "n18",
+      "target": "n20"
+    },
+    {
+      "source": "n1",
+      "target": "n3"
+    },
+    {
+      "source": "n25",
+      "target": "n27"
+    },
+    {
+      "source": "n3",
+      "target": "n5"
+    },
+    {
+      "source": "n6",
+      "target": "n8"
+    },
+    {
+      "source": "n27",
+      "target": "n24"
+    },
+    {
+      "source": "n15",
+      "target": "n17"
+    }
+  ]
+}

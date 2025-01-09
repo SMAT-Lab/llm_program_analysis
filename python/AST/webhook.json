@@ -1,0 +1,2767 @@
+{
+  "value": "from pydantic import BaseModel\n\nfrom backend.data.block import (\n    Block,\n    BlockCategory,\n    BlockOutput,\n    BlockSchema,\n    BlockWebhookConfig,\n)\nfrom backend.data.model import SchemaField\nfrom backend.util import settings\nfrom backend.util.settings import AppEnvironment, BehaveAs\n\nfrom ._api import (\n    TEST_CREDENTIALS,\n    TEST_CREDENTIALS_INPUT,\n    Slant3DCredentialsField,\n    Slant3DCredentialsInput,\n)\n\n\nclass Slant3DTriggerBase:\n    \"\"\"Base class for Slant3D webhook triggers\"\"\"\n\n    class Input(BlockSchema):\n        credentials: Slant3DCredentialsInput = Slant3DCredentialsField()\n        # Webhook URL is handled by the webhook system\n        payload: dict = SchemaField(hidden=True, default={})\n\n    class Output(BlockSchema):\n        payload: dict = SchemaField(\n            description=\"The complete webhook payload received from Slant3D\"\n        )\n        order_id: str = SchemaField(description=\"The ID of the affected order\")\n        error: str = SchemaField(\n            description=\"Error message if payload processing failed\"\n        )\n\n    def run(self, input_data: Input, **kwargs) -> BlockOutput:\n        yield \"payload\", input_data.payload\n        yield \"order_id\", input_data.payload[\"orderId\"]\n\n\nclass Slant3DOrderWebhookBlock(Slant3DTriggerBase, Block):\n    \"\"\"Block for handling Slant3D order webhooks\"\"\"\n\n    class Input(Slant3DTriggerBase.Input):\n        class EventsFilter(BaseModel):\n            \"\"\"\n            Currently Slant3D only supports 'SHIPPED' status updates\n            Could be expanded in the future with more status types\n            \"\"\"\n\n            shipped: bool = True\n\n        events: EventsFilter = SchemaField(\n            title=\"Events\",\n            description=\"Order status events to subscribe to\",\n            default=EventsFilter(shipped=True),\n        )\n\n    class Output(Slant3DTriggerBase.Output):\n        status: str = SchemaField(description=\"The new status of the order\")\n        tracking_number: str = SchemaField(\n            description=\"The tracking number for the shipment\"\n        )\n        carrier_code: str = SchemaField(description=\"The carrier code (e.g., 'usps')\")\n\n    def __init__(self):\n        super().__init__(\n            id=\"8a74c2ad-0104-4640-962f-26c6b69e58cd\",\n            description=(\n                \"This block triggers on Slant3D order status updates and outputs \"\n                \"the event details, including tracking information when orders are shipped.\"\n            ),\n            # All webhooks are currently subscribed to for all orders. This works for self hosted, but not for cloud hosted prod\n            disabled=(\n                settings.Settings().config.behave_as == BehaveAs.CLOUD\n                and settings.Settings().config.app_env != AppEnvironment.LOCAL\n            ),\n            categories={BlockCategory.DEVELOPER_TOOLS},\n            input_schema=self.Input,\n            output_schema=self.Output,\n            webhook_config=BlockWebhookConfig(\n                provider=\"slant3d\",\n                webhook_type=\"orders\",  # Only one type for now\n                resource_format=\"\",  # No resource format needed\n                event_filter_input=\"events\",\n                event_format=\"order.{event}\",\n            ),\n            test_input={\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n                \"events\": {\"shipped\": True},\n                \"payload\": {\n                    \"orderId\": \"1234567890\",\n                    \"status\": \"SHIPPED\",\n                    \"trackingNumber\": \"ABCDEF123456\",\n                    \"carrierCode\": \"usps\",\n                },\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[\n                (\n                    \"payload\",\n                    {\n                        \"orderId\": \"1234567890\",\n                        \"status\": \"SHIPPED\",\n                        \"trackingNumber\": \"ABCDEF123456\",\n                        \"carrierCode\": \"usps\",\n                    },\n                ),\n                (\"order_id\", \"1234567890\"),\n                (\"status\", \"SHIPPED\"),\n                (\"tracking_number\", \"ABCDEF123456\"),\n                (\"carrier_code\", \"usps\"),\n            ],\n        )\n\n    def run(self, input_data: Input, **kwargs) -> BlockOutput:  # type: ignore\n        yield from super().run(input_data, **kwargs)\n\n        # Extract and normalize values from the payload\n        yield \"status\", input_data.payload[\"status\"]\n        yield \"tracking_number\", input_data.payload[\"trackingNumber\"]\n        yield \"carrier_code\", input_data.payload[\"carrierCode\"]",
+  "children": [
+    {
+      "value": "from pydantic import BaseModel",
+      "children": [
+        {
+          "value": "pydantic",
+          "children": [
+            {
+              "value": "pydantic",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "BaseModel",
+          "children": [
+            {
+              "value": "BaseModel",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "from backend.data.block import (\n    Block,\n    BlockCategory,\n    BlockOutput,\n    BlockSchema,\n    BlockWebhookConfig,\n)",
+      "children": [
+        {
+          "value": "backend.data.block",
+          "children": [
+            {
+              "value": "backend",
+              "children": []
+            },
+            {
+              "value": "data",
+              "children": []
+            },
+            {
+              "value": "block",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "Block",
+          "children": [
+            {
+              "value": "Block",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "BlockCategory",
+          "children": [
+            {
+              "value": "BlockCategory",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "BlockOutput",
+          "children": [
+            {
+              "value": "BlockOutput",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "BlockSchema",
+          "children": [
+            {
+              "value": "BlockSchema",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "BlockWebhookConfig",
+          "children": [
+            {
+              "value": "BlockWebhookConfig",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "from backend.data.model import SchemaField",
+      "children": [
+        {
+          "value": "backend.data.model",
+          "children": [
+            {
+              "value": "backend",
+              "children": []
+            },
+            {
+              "value": "data",
+              "children": []
+            },
+            {
+              "value": "model",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "SchemaField",
+          "children": [
+            {
+              "value": "SchemaField",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "from backend.util import settings",
+      "children": [
+        {
+          "value": "backend.util",
+          "children": [
+            {
+              "value": "backend",
+              "children": []
+            },
+            {
+              "value": "util",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "settings",
+          "children": [
+            {
+              "value": "settings",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "from backend.util.settings import AppEnvironment, BehaveAs",
+      "children": [
+        {
+          "value": "backend.util.settings",
+          "children": [
+            {
+              "value": "backend",
+              "children": []
+            },
+            {
+              "value": "util",
+              "children": []
+            },
+            {
+              "value": "settings",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "AppEnvironment",
+          "children": [
+            {
+              "value": "AppEnvironment",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "BehaveAs",
+          "children": [
+            {
+              "value": "BehaveAs",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "from ._api import (\n    TEST_CREDENTIALS,\n    TEST_CREDENTIALS_INPUT,\n    Slant3DCredentialsField,\n    Slant3DCredentialsInput,\n)",
+      "children": [
+        {
+          "value": "._api",
+          "children": [
+            {
+              "value": ".",
+              "children": []
+            },
+            {
+              "value": "_api",
+              "children": [
+                {
+                  "value": "_api",
+                  "children": []
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "value": "TEST_CREDENTIALS",
+          "children": [
+            {
+              "value": "TEST_CREDENTIALS",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "TEST_CREDENTIALS_INPUT",
+          "children": [
+            {
+              "value": "TEST_CREDENTIALS_INPUT",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "Slant3DCredentialsField",
+          "children": [
+            {
+              "value": "Slant3DCredentialsField",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "Slant3DCredentialsInput",
+          "children": [
+            {
+              "value": "Slant3DCredentialsInput",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "class Slant3DTriggerBase:\n    \"\"\"Base class for Slant3D webhook triggers\"\"\"\n\n    class Input(BlockSchema):\n        credentials: Slant3DCredentialsInput = Slant3DCredentialsField()\n        # Webhook URL is handled by the webhook system\n        payload: dict = SchemaField(hidden=True, default={})\n\n    class Output(BlockSchema):\n        payload: dict = SchemaField(\n            description=\"The complete webhook payload received from Slant3D\"\n        )\n        order_id: str = SchemaField(description=\"The ID of the affected order\")\n        error: str = SchemaField(\n            description=\"Error message if payload processing failed\"\n        )\n\n    def run(self, input_data: Input, **kwargs) -> BlockOutput:\n        yield \"payload\", input_data.payload\n        yield \"order_id\", input_data.payload[\"orderId\"]",
+      "children": [
+        {
+          "value": "Slant3DTriggerBase",
+          "children": []
+        },
+        {
+          "value": "\"\"\"Base class for Slant3D webhook triggers\"\"\"\n\n    class Input(BlockSchema):\n        credentials: Slant3DCredentialsInput = Slant3DCredentialsField()\n        # Webhook URL is handled by the webhook system\n        payload: dict = SchemaField(hidden=True, default={})\n\n    class Output(BlockSchema):\n        payload: dict = SchemaField(\n            description=\"The complete webhook payload received from Slant3D\"\n        )\n        order_id: str = SchemaField(description=\"The ID of the affected order\")\n        error: str = SchemaField(\n            description=\"Error message if payload processing failed\"\n        )\n\n    def run(self, input_data: Input, **kwargs) -> BlockOutput:\n        yield \"payload\", input_data.payload\n        yield \"order_id\", input_data.payload[\"orderId\"]",
+          "children": [
+            {
+              "value": "\"\"\"Base class for Slant3D webhook triggers\"\"\"",
+              "children": [
+                {
+                  "value": "\"\"\"Base class for Slant3D webhook triggers\"\"\"",
+                  "children": [
+                    {
+                      "value": "\"\"\"",
+                      "children": []
+                    },
+                    {
+                      "value": "Base class for Slant3D webhook triggers",
+                      "children": []
+                    },
+                    {
+                      "value": "\"\"\"",
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "class Input(BlockSchema):\n        credentials: Slant3DCredentialsInput = Slant3DCredentialsField()\n        # Webhook URL is handled by the webhook system\n        payload: dict = SchemaField(hidden=True, default={})",
+              "children": [
+                {
+                  "value": "Input",
+                  "children": []
+                },
+                {
+                  "value": "(BlockSchema)",
+                  "children": [
+                    {
+                      "value": "BlockSchema",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "value": "credentials: Slant3DCredentialsInput = Slant3DCredentialsField()\n        # Webhook URL is handled by the webhook system\n        payload: dict = SchemaField(hidden=True, default={})",
+                  "children": [
+                    {
+                      "value": "credentials: Slant3DCredentialsInput = Slant3DCredentialsField()",
+                      "children": [
+                        {
+                          "value": "credentials: Slant3DCredentialsInput = Slant3DCredentialsField()",
+                          "children": [
+                            {
+                              "value": "credentials",
+                              "children": []
+                            },
+                            {
+                              "value": "Slant3DCredentialsInput",
+                              "children": [
+                                {
+                                  "value": "Slant3DCredentialsInput",
+                                  "children": []
+                                }
+                              ]
+                            },
+                            {
+                              "value": "Slant3DCredentialsField()",
+                              "children": [
+                                {
+                                  "value": "Slant3DCredentialsField",
+                                  "children": []
+                                },
+                                {
+                                  "value": "()",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "# Webhook URL is handled by the webhook system",
+                      "children": []
+                    },
+                    {
+                      "value": "payload: dict = SchemaField(hidden=True, default={})",
+                      "children": [
+                        {
+                          "value": "payload: dict = SchemaField(hidden=True, default={})",
+                          "children": [
+                            {
+                              "value": "payload",
+                              "children": []
+                            },
+                            {
+                              "value": "dict",
+                              "children": [
+                                {
+                                  "value": "dict",
+                                  "children": []
+                                }
+                              ]
+                            },
+                            {
+                              "value": "SchemaField(hidden=True, default={})",
+                              "children": [
+                                {
+                                  "value": "SchemaField",
+                                  "children": []
+                                },
+                                {
+                                  "value": "(hidden=True, default={})",
+                                  "children": [
+                                    {
+                                      "value": "hidden=True",
+                                      "children": [
+                                        {
+                                          "value": "hidden",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "True",
+                                          "children": []
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "value": "default={}",
+                                      "children": [
+                                        {
+                                          "value": "default",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "{}",
+                                          "children": []
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "class Output(BlockSchema):\n        payload: dict = SchemaField(\n            description=\"The complete webhook payload received from Slant3D\"\n        )\n        order_id: str = SchemaField(description=\"The ID of the affected order\")\n        error: str = SchemaField(\n            description=\"Error message if payload processing failed\"\n        )",
+              "children": [
+                {
+                  "value": "Output",
+                  "children": []
+                },
+                {
+                  "value": "(BlockSchema)",
+                  "children": [
+                    {
+                      "value": "BlockSchema",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "value": "payload: dict = SchemaField(\n            description=\"The complete webhook payload received from Slant3D\"\n        )\n        order_id: str = SchemaField(description=\"The ID of the affected order\")\n        error: str = SchemaField(\n            description=\"Error message if payload processing failed\"\n        )",
+                  "children": [
+                    {
+                      "value": "payload: dict = SchemaField(\n            description=\"The complete webhook payload received from Slant3D\"\n        )",
+                      "children": [
+                        {
+                          "value": "payload: dict = SchemaField(\n            description=\"The complete webhook payload received from Slant3D\"\n        )",
+                          "children": [
+                            {
+                              "value": "payload",
+                              "children": []
+                            },
+                            {
+                              "value": "dict",
+                              "children": [
+                                {
+                                  "value": "dict",
+                                  "children": []
+                                }
+                              ]
+                            },
+                            {
+                              "value": "SchemaField(\n            description=\"The complete webhook payload received from Slant3D\"\n        )",
+                              "children": [
+                                {
+                                  "value": "SchemaField",
+                                  "children": []
+                                },
+                                {
+                                  "value": "(\n            description=\"The complete webhook payload received from Slant3D\"\n        )",
+                                  "children": [
+                                    {
+                                      "value": "description=\"The complete webhook payload received from Slant3D\"",
+                                      "children": [
+                                        {
+                                          "value": "description",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "\"The complete webhook payload received from Slant3D\"",
+                                          "children": [
+                                            {
+                                              "value": "\"",
+                                              "children": []
+                                            },
+                                            {
+                                              "value": "The complete webhook payload received from Slant3D",
+                                              "children": []
+                                            },
+                                            {
+                                              "value": "\"",
+                                              "children": []
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "order_id: str = SchemaField(description=\"The ID of the affected order\")",
+                      "children": [
+                        {
+                          "value": "order_id: str = SchemaField(description=\"The ID of the affected order\")",
+                          "children": [
+                            {
+                              "value": "order_id",
+                              "children": []
+                            },
+                            {
+                              "value": "str",
+                              "children": [
+                                {
+                                  "value": "str",
+                                  "children": []
+                                }
+                              ]
+                            },
+                            {
+                              "value": "SchemaField(description=\"The ID of the affected order\")",
+                              "children": [
+                                {
+                                  "value": "SchemaField",
+                                  "children": []
+                                },
+                                {
+                                  "value": "(description=\"The ID of the affected order\")",
+                                  "children": [
+                                    {
+                                      "value": "description=\"The ID of the affected order\"",
+                                      "children": [
+                                        {
+                                          "value": "description",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "\"The ID of the affected order\"",
+                                          "children": [
+                                            {
+                                              "value": "\"",
+                                              "children": []
+                                            },
+                                            {
+                                              "value": "The ID of the affected order",
+                                              "children": []
+                                            },
+                                            {
+                                              "value": "\"",
+                                              "children": []
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "error: str = SchemaField(\n            description=\"Error message if payload processing failed\"\n        )",
+                      "children": [
+                        {
+                          "value": "error: str = SchemaField(\n            description=\"Error message if payload processing failed\"\n        )",
+                          "children": [
+                            {
+                              "value": "error",
+                              "children": []
+                            },
+                            {
+                              "value": "str",
+                              "children": [
+                                {
+                                  "value": "str",
+                                  "children": []
+                                }
+                              ]
+                            },
+                            {
+                              "value": "SchemaField(\n            description=\"Error message if payload processing failed\"\n        )",
+                              "children": [
+                                {
+                                  "value": "SchemaField",
+                                  "children": []
+                                },
+                                {
+                                  "value": "(\n            description=\"Error message if payload processing failed\"\n        )",
+                                  "children": [
+                                    {
+                                      "value": "description=\"Error message if payload processing failed\"",
+                                      "children": [
+                                        {
+                                          "value": "description",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "\"Error message if payload processing failed\"",
+                                          "children": [
+                                            {
+                                              "value": "\"",
+                                              "children": []
+                                            },
+                                            {
+                                              "value": "Error message if payload processing failed",
+                                              "children": []
+                                            },
+                                            {
+                                              "value": "\"",
+                                              "children": []
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "def run(self, input_data: Input, **kwargs) -> BlockOutput:\n        yield \"payload\", input_data.payload\n        yield \"order_id\", input_data.payload[\"orderId\"]",
+              "children": [
+                {
+                  "value": "run",
+                  "children": []
+                },
+                {
+                  "value": "(self, input_data: Input, **kwargs)",
+                  "children": [
+                    {
+                      "value": "self",
+                      "children": []
+                    },
+                    {
+                      "value": "input_data: Input",
+                      "children": [
+                        {
+                          "value": "input_data",
+                          "children": []
+                        },
+                        {
+                          "value": "Input",
+                          "children": [
+                            {
+                              "value": "Input",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "**kwargs",
+                      "children": [
+                        {
+                          "value": "kwargs",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "value": "BlockOutput",
+                  "children": [
+                    {
+                      "value": "BlockOutput",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "value": "yield \"payload\", input_data.payload\n        yield \"order_id\", input_data.payload[\"orderId\"]",
+                  "children": [
+                    {
+                      "value": "yield \"payload\", input_data.payload",
+                      "children": [
+                        {
+                          "value": "yield \"payload\", input_data.payload",
+                          "children": [
+                            {
+                              "value": "\"payload\", input_data.payload",
+                              "children": [
+                                {
+                                  "value": "\"payload\"",
+                                  "children": [
+                                    {
+                                      "value": "\"",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "payload",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "\"",
+                                      "children": []
+                                    }
+                                  ]
+                                },
+                                {
+                                  "value": "input_data.payload",
+                                  "children": [
+                                    {
+                                      "value": "input_data",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "payload",
+                                      "children": []
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "yield \"order_id\", input_data.payload[\"orderId\"]",
+                      "children": [
+                        {
+                          "value": "yield \"order_id\", input_data.payload[\"orderId\"]",
+                          "children": [
+                            {
+                              "value": "\"order_id\", input_data.payload[\"orderId\"]",
+                              "children": [
+                                {
+                                  "value": "\"order_id\"",
+                                  "children": [
+                                    {
+                                      "value": "\"",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "order_id",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "\"",
+                                      "children": []
+                                    }
+                                  ]
+                                },
+                                {
+                                  "value": "input_data.payload[\"orderId\"]",
+                                  "children": [
+                                    {
+                                      "value": "input_data.payload",
+                                      "children": [
+                                        {
+                                          "value": "input_data",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "payload",
+                                          "children": []
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "value": "\"orderId\"",
+                                      "children": [
+                                        {
+                                          "value": "\"",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "orderId",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "\"",
+                                          "children": []
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "value": "class Slant3DOrderWebhookBlock(Slant3DTriggerBase, Block):\n    \"\"\"Block for handling Slant3D order webhooks\"\"\"\n\n    class Input(Slant3DTriggerBase.Input):\n        class EventsFilter(BaseModel):\n            \"\"\"\n            Currently Slant3D only supports 'SHIPPED' status updates\n            Could be expanded in the future with more status types\n            \"\"\"\n\n            shipped: bool = True\n\n        events: EventsFilter = SchemaField(\n            title=\"Events\",\n            description=\"Order status events to subscribe to\",\n            default=EventsFilter(shipped=True),\n        )\n\n    class Output(Slant3DTriggerBase.Output):\n        status: str = SchemaField(description=\"The new status of the order\")\n        tracking_number: str = SchemaField(\n            description=\"The tracking number for the shipment\"\n        )\n        carrier_code: str = SchemaField(description=\"The carrier code (e.g., 'usps')\")\n\n    def __init__(self):\n        super().__init__(\n            id=\"8a74c2ad-0104-4640-962f-26c6b69e58cd\",\n            description=(\n                \"This block triggers on Slant3D order status updates and outputs \"\n                \"the event details, including tracking information when orders are shipped.\"\n            ),\n            # All webhooks are currently subscribed to for all orders. This works for self hosted, but not for cloud hosted prod\n            disabled=(\n                settings.Settings().config.behave_as == BehaveAs.CLOUD\n                and settings.Settings().config.app_env != AppEnvironment.LOCAL\n            ),\n            categories={BlockCategory.DEVELOPER_TOOLS},\n            input_schema=self.Input,\n            output_schema=self.Output,\n            webhook_config=BlockWebhookConfig(\n                provider=\"slant3d\",\n                webhook_type=\"orders\",  # Only one type for now\n                resource_format=\"\",  # No resource format needed\n                event_filter_input=\"events\",\n                event_format=\"order.{event}\",\n            ),\n            test_input={\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n                \"events\": {\"shipped\": True},\n                \"payload\": {\n                    \"orderId\": \"1234567890\",\n                    \"status\": \"SHIPPED\",\n                    \"trackingNumber\": \"ABCDEF123456\",\n                    \"carrierCode\": \"usps\",\n                },\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[\n                (\n                    \"payload\",\n                    {\n                        \"orderId\": \"1234567890\",\n                        \"status\": \"SHIPPED\",\n                        \"trackingNumber\": \"ABCDEF123456\",\n                        \"carrierCode\": \"usps\",\n                    },\n                ),\n                (\"order_id\", \"1234567890\"),\n                (\"status\", \"SHIPPED\"),\n                (\"tracking_number\", \"ABCDEF123456\"),\n                (\"carrier_code\", \"usps\"),\n            ],\n        )\n\n    def run(self, input_data: Input, **kwargs) -> BlockOutput:  # type: ignore\n        yield from super().run(input_data, **kwargs)\n\n        # Extract and normalize values from the payload\n        yield \"status\", input_data.payload[\"status\"]\n        yield \"tracking_number\", input_data.payload[\"trackingNumber\"]\n        yield \"carrier_code\", input_data.payload[\"carrierCode\"]",
+      "children": [
+        {
+          "value": "Slant3DOrderWebhookBlock",
+          "children": []
+        },
+        {
+          "value": "(Slant3DTriggerBase, Block)",
+          "children": [
+            {
+              "value": "Slant3DTriggerBase",
+              "children": []
+            },
+            {
+              "value": "Block",
+              "children": []
+            }
+          ]
+        },
+        {
+          "value": "\"\"\"Block for handling Slant3D order webhooks\"\"\"\n\n    class Input(Slant3DTriggerBase.Input):\n        class EventsFilter(BaseModel):\n            \"\"\"\n            Currently Slant3D only supports 'SHIPPED' status updates\n            Could be expanded in the future with more status types\n            \"\"\"\n\n            shipped: bool = True\n\n        events: EventsFilter = SchemaField(\n            title=\"Events\",\n            description=\"Order status events to subscribe to\",\n            default=EventsFilter(shipped=True),\n        )\n\n    class Output(Slant3DTriggerBase.Output):\n        status: str = SchemaField(description=\"The new status of the order\")\n        tracking_number: str = SchemaField(\n            description=\"The tracking number for the shipment\"\n        )\n        carrier_code: str = SchemaField(description=\"The carrier code (e.g., 'usps')\")\n\n    def __init__(self):\n        super().__init__(\n            id=\"8a74c2ad-0104-4640-962f-26c6b69e58cd\",\n            description=(\n                \"This block triggers on Slant3D order status updates and outputs \"\n                \"the event details, including tracking information when orders are shipped.\"\n            ),\n            # All webhooks are currently subscribed to for all orders. This works for self hosted, but not for cloud hosted prod\n            disabled=(\n                settings.Settings().config.behave_as == BehaveAs.CLOUD\n                and settings.Settings().config.app_env != AppEnvironment.LOCAL\n            ),\n            categories={BlockCategory.DEVELOPER_TOOLS},\n            input_schema=self.Input,\n            output_schema=self.Output,\n            webhook_config=BlockWebhookConfig(\n                provider=\"slant3d\",\n                webhook_type=\"orders\",  # Only one type for now\n                resource_format=\"\",  # No resource format needed\n                event_filter_input=\"events\",\n                event_format=\"order.{event}\",\n            ),\n            test_input={\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n                \"events\": {\"shipped\": True},\n                \"payload\": {\n                    \"orderId\": \"1234567890\",\n                    \"status\": \"SHIPPED\",\n                    \"trackingNumber\": \"ABCDEF123456\",\n                    \"carrierCode\": \"usps\",\n                },\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[\n                (\n                    \"payload\",\n                    {\n                        \"orderId\": \"1234567890\",\n                        \"status\": \"SHIPPED\",\n                        \"trackingNumber\": \"ABCDEF123456\",\n                        \"carrierCode\": \"usps\",\n                    },\n                ),\n                (\"order_id\", \"1234567890\"),\n                (\"status\", \"SHIPPED\"),\n                (\"tracking_number\", \"ABCDEF123456\"),\n                (\"carrier_code\", \"usps\"),\n            ],\n        )\n\n    def run(self, input_data: Input, **kwargs) -> BlockOutput:  # type: ignore\n        yield from super().run(input_data, **kwargs)\n\n        # Extract and normalize values from the payload\n        yield \"status\", input_data.payload[\"status\"]\n        yield \"tracking_number\", input_data.payload[\"trackingNumber\"]\n        yield \"carrier_code\", input_data.payload[\"carrierCode\"]",
+          "children": [
+            {
+              "value": "\"\"\"Block for handling Slant3D order webhooks\"\"\"",
+              "children": [
+                {
+                  "value": "\"\"\"Block for handling Slant3D order webhooks\"\"\"",
+                  "children": [
+                    {
+                      "value": "\"\"\"",
+                      "children": []
+                    },
+                    {
+                      "value": "Block for handling Slant3D order webhooks",
+                      "children": []
+                    },
+                    {
+                      "value": "\"\"\"",
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "class Input(Slant3DTriggerBase.Input):\n        class EventsFilter(BaseModel):\n            \"\"\"\n            Currently Slant3D only supports 'SHIPPED' status updates\n            Could be expanded in the future with more status types\n            \"\"\"\n\n            shipped: bool = True\n\n        events: EventsFilter = SchemaField(\n            title=\"Events\",\n            description=\"Order status events to subscribe to\",\n            default=EventsFilter(shipped=True),\n        )",
+              "children": [
+                {
+                  "value": "Input",
+                  "children": []
+                },
+                {
+                  "value": "(Slant3DTriggerBase.Input)",
+                  "children": [
+                    {
+                      "value": "Slant3DTriggerBase.Input",
+                      "children": [
+                        {
+                          "value": "Slant3DTriggerBase",
+                          "children": []
+                        },
+                        {
+                          "value": "Input",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "value": "class EventsFilter(BaseModel):\n            \"\"\"\n            Currently Slant3D only supports 'SHIPPED' status updates\n            Could be expanded in the future with more status types\n            \"\"\"\n\n            shipped: bool = True\n\n        events: EventsFilter = SchemaField(\n            title=\"Events\",\n            description=\"Order status events to subscribe to\",\n            default=EventsFilter(shipped=True),\n        )",
+                  "children": [
+                    {
+                      "value": "class EventsFilter(BaseModel):\n            \"\"\"\n            Currently Slant3D only supports 'SHIPPED' status updates\n            Could be expanded in the future with more status types\n            \"\"\"\n\n            shipped: bool = True",
+                      "children": [
+                        {
+                          "value": "EventsFilter",
+                          "children": []
+                        },
+                        {
+                          "value": "(BaseModel)",
+                          "children": [
+                            {
+                              "value": "BaseModel",
+                              "children": []
+                            }
+                          ]
+                        },
+                        {
+                          "value": "\"\"\"\n            Currently Slant3D only supports 'SHIPPED' status updates\n            Could be expanded in the future with more status types\n            \"\"\"\n\n            shipped: bool = True",
+                          "children": [
+                            {
+                              "value": "\"\"\"\n            Currently Slant3D only supports 'SHIPPED' status updates\n            Could be expanded in the future with more status types\n            \"\"\"",
+                              "children": [
+                                {
+                                  "value": "\"\"\"\n            Currently Slant3D only supports 'SHIPPED' status updates\n            Could be expanded in the future with more status types\n            \"\"\"",
+                                  "children": [
+                                    {
+                                      "value": "\"\"\"",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "Currently Slant3D only supports 'SHIPPED' status updates\n            Could be expanded in the future with more status types",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "\"\"\"",
+                                      "children": []
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "value": "shipped: bool = True",
+                              "children": [
+                                {
+                                  "value": "shipped: bool = True",
+                                  "children": [
+                                    {
+                                      "value": "shipped",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "bool",
+                                      "children": [
+                                        {
+                                          "value": "bool",
+                                          "children": []
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "value": "True",
+                                      "children": []
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "events: EventsFilter = SchemaField(\n            title=\"Events\",\n            description=\"Order status events to subscribe to\",\n            default=EventsFilter(shipped=True),\n        )",
+                      "children": [
+                        {
+                          "value": "events: EventsFilter = SchemaField(\n            title=\"Events\",\n            description=\"Order status events to subscribe to\",\n            default=EventsFilter(shipped=True),\n        )",
+                          "children": [
+                            {
+                              "value": "events",
+                              "children": []
+                            },
+                            {
+                              "value": "EventsFilter",
+                              "children": [
+                                {
+                                  "value": "EventsFilter",
+                                  "children": []
+                                }
+                              ]
+                            },
+                            {
+                              "value": "SchemaField(\n            title=\"Events\",\n            description=\"Order status events to subscribe to\",\n            default=EventsFilter(shipped=True),\n        )",
+                              "children": [
+                                {
+                                  "value": "SchemaField",
+                                  "children": []
+                                },
+                                {
+                                  "value": "(\n            title=\"Events\",\n            description=\"Order status events to subscribe to\",\n            default=EventsFilter(shipped=True),\n        )",
+                                  "children": [
+                                    {
+                                      "value": "title=\"Events\"",
+                                      "children": [
+                                        {
+                                          "value": "title",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "\"Events\"",
+                                          "children": [
+                                            {
+                                              "value": "\"",
+                                              "children": []
+                                            },
+                                            {
+                                              "value": "Events",
+                                              "children": []
+                                            },
+                                            {
+                                              "value": "\"",
+                                              "children": []
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "value": "description=\"Order status events to subscribe to\"",
+                                      "children": [
+                                        {
+                                          "value": "description",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "\"Order status events to subscribe to\"",
+                                          "children": [
+                                            {
+                                              "value": "\"",
+                                              "children": []
+                                            },
+                                            {
+                                              "value": "Order status events to subscribe to",
+                                              "children": []
+                                            },
+                                            {
+                                              "value": "\"",
+                                              "children": []
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "value": "default=EventsFilter(shipped=True)",
+                                      "children": [
+                                        {
+                                          "value": "default",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "EventsFilter(shipped=True)",
+                                          "children": [
+                                            {
+                                              "value": "EventsFilter",
+                                              "children": []
+                                            },
+                                            {
+                                              "value": "(shipped=True)",
+                                              "children": [
+                                                {
+                                                  "value": "shipped=True",
+                                                  "children": [
+                                                    {
+                                                      "value": "shipped",
+                                                      "children": []
+                                                    },
+                                                    {
+                                                      "value": "True",
+                                                      "children": []
+                                                    }
+                                                  ]
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "class Output(Slant3DTriggerBase.Output):\n        status: str = SchemaField(description=\"The new status of the order\")\n        tracking_number: str = SchemaField(\n            description=\"The tracking number for the shipment\"\n        )\n        carrier_code: str = SchemaField(description=\"The carrier code (e.g., 'usps')\")",
+              "children": [
+                {
+                  "value": "Output",
+                  "children": []
+                },
+                {
+                  "value": "(Slant3DTriggerBase.Output)",
+                  "children": [
+                    {
+                      "value": "Slant3DTriggerBase.Output",
+                      "children": [
+                        {
+                          "value": "Slant3DTriggerBase",
+                          "children": []
+                        },
+                        {
+                          "value": "Output",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "value": "status: str = SchemaField(description=\"The new status of the order\")\n        tracking_number: str = SchemaField(\n            description=\"The tracking number for the shipment\"\n        )\n        carrier_code: str = SchemaField(description=\"The carrier code (e.g., 'usps')\")",
+                  "children": [
+                    {
+                      "value": "status: str = SchemaField(description=\"The new status of the order\")",
+                      "children": [
+                        {
+                          "value": "status: str = SchemaField(description=\"The new status of the order\")",
+                          "children": [
+                            {
+                              "value": "status",
+                              "children": []
+                            },
+                            {
+                              "value": "str",
+                              "children": [
+                                {
+                                  "value": "str",
+                                  "children": []
+                                }
+                              ]
+                            },
+                            {
+                              "value": "SchemaField(description=\"The new status of the order\")",
+                              "children": [
+                                {
+                                  "value": "SchemaField",
+                                  "children": []
+                                },
+                                {
+                                  "value": "(description=\"The new status of the order\")",
+                                  "children": [
+                                    {
+                                      "value": "description=\"The new status of the order\"",
+                                      "children": [
+                                        {
+                                          "value": "description",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "\"The new status of the order\"",
+                                          "children": [
+                                            {
+                                              "value": "\"",
+                                              "children": []
+                                            },
+                                            {
+                                              "value": "The new status of the order",
+                                              "children": []
+                                            },
+                                            {
+                                              "value": "\"",
+                                              "children": []
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "tracking_number: str = SchemaField(\n            description=\"The tracking number for the shipment\"\n        )",
+                      "children": [
+                        {
+                          "value": "tracking_number: str = SchemaField(\n            description=\"The tracking number for the shipment\"\n        )",
+                          "children": [
+                            {
+                              "value": "tracking_number",
+                              "children": []
+                            },
+                            {
+                              "value": "str",
+                              "children": [
+                                {
+                                  "value": "str",
+                                  "children": []
+                                }
+                              ]
+                            },
+                            {
+                              "value": "SchemaField(\n            description=\"The tracking number for the shipment\"\n        )",
+                              "children": [
+                                {
+                                  "value": "SchemaField",
+                                  "children": []
+                                },
+                                {
+                                  "value": "(\n            description=\"The tracking number for the shipment\"\n        )",
+                                  "children": [
+                                    {
+                                      "value": "description=\"The tracking number for the shipment\"",
+                                      "children": [
+                                        {
+                                          "value": "description",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "\"The tracking number for the shipment\"",
+                                          "children": [
+                                            {
+                                              "value": "\"",
+                                              "children": []
+                                            },
+                                            {
+                                              "value": "The tracking number for the shipment",
+                                              "children": []
+                                            },
+                                            {
+                                              "value": "\"",
+                                              "children": []
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "carrier_code: str = SchemaField(description=\"The carrier code (e.g., 'usps')\")",
+                      "children": [
+                        {
+                          "value": "carrier_code: str = SchemaField(description=\"The carrier code (e.g., 'usps')\")",
+                          "children": [
+                            {
+                              "value": "carrier_code",
+                              "children": []
+                            },
+                            {
+                              "value": "str",
+                              "children": [
+                                {
+                                  "value": "str",
+                                  "children": []
+                                }
+                              ]
+                            },
+                            {
+                              "value": "SchemaField(description=\"The carrier code (e.g., 'usps')\")",
+                              "children": [
+                                {
+                                  "value": "SchemaField",
+                                  "children": []
+                                },
+                                {
+                                  "value": "(description=\"The carrier code (e.g., 'usps')\")",
+                                  "children": [
+                                    {
+                                      "value": "description=\"The carrier code (e.g., 'usps')\"",
+                                      "children": [
+                                        {
+                                          "value": "description",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "\"The carrier code (e.g., 'usps')\"",
+                                          "children": [
+                                            {
+                                              "value": "\"",
+                                              "children": []
+                                            },
+                                            {
+                                              "value": "The carrier code (e.g., 'usps')",
+                                              "children": []
+                                            },
+                                            {
+                                              "value": "\"",
+                                              "children": []
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "def __init__(self):\n        super().__init__(\n            id=\"8a74c2ad-0104-4640-962f-26c6b69e58cd\",\n            description=(\n                \"This block triggers on Slant3D order status updates and outputs \"\n                \"the event details, including tracking information when orders are shipped.\"\n            ),\n            # All webhooks are currently subscribed to for all orders. This works for self hosted, but not for cloud hosted prod\n            disabled=(\n                settings.Settings().config.behave_as == BehaveAs.CLOUD\n                and settings.Settings().config.app_env != AppEnvironment.LOCAL\n            ),\n            categories={BlockCategory.DEVELOPER_TOOLS},\n            input_schema=self.Input,\n            output_schema=self.Output,\n            webhook_config=BlockWebhookConfig(\n                provider=\"slant3d\",\n                webhook_type=\"orders\",  # Only one type for now\n                resource_format=\"\",  # No resource format needed\n                event_filter_input=\"events\",\n                event_format=\"order.{event}\",\n            ),\n            test_input={\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n                \"events\": {\"shipped\": True},\n                \"payload\": {\n                    \"orderId\": \"1234567890\",\n                    \"status\": \"SHIPPED\",\n                    \"trackingNumber\": \"ABCDEF123456\",\n                    \"carrierCode\": \"usps\",\n                },\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[\n                (\n                    \"payload\",\n                    {\n                        \"orderId\": \"1234567890\",\n                        \"status\": \"SHIPPED\",\n                        \"trackingNumber\": \"ABCDEF123456\",\n                        \"carrierCode\": \"usps\",\n                    },\n                ),\n                (\"order_id\", \"1234567890\"),\n                (\"status\", \"SHIPPED\"),\n                (\"tracking_number\", \"ABCDEF123456\"),\n                (\"carrier_code\", \"usps\"),\n            ],\n        )",
+              "children": [
+                {
+                  "value": "__init__",
+                  "children": []
+                },
+                {
+                  "value": "(self)",
+                  "children": [
+                    {
+                      "value": "self",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "value": "super().__init__(\n            id=\"8a74c2ad-0104-4640-962f-26c6b69e58cd\",\n            description=(\n                \"This block triggers on Slant3D order status updates and outputs \"\n                \"the event details, including tracking information when orders are shipped.\"\n            ),\n            # All webhooks are currently subscribed to for all orders. This works for self hosted, but not for cloud hosted prod\n            disabled=(\n                settings.Settings().config.behave_as == BehaveAs.CLOUD\n                and settings.Settings().config.app_env != AppEnvironment.LOCAL\n            ),\n            categories={BlockCategory.DEVELOPER_TOOLS},\n            input_schema=self.Input,\n            output_schema=self.Output,\n            webhook_config=BlockWebhookConfig(\n                provider=\"slant3d\",\n                webhook_type=\"orders\",  # Only one type for now\n                resource_format=\"\",  # No resource format needed\n                event_filter_input=\"events\",\n                event_format=\"order.{event}\",\n            ),\n            test_input={\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n                \"events\": {\"shipped\": True},\n                \"payload\": {\n                    \"orderId\": \"1234567890\",\n                    \"status\": \"SHIPPED\",\n                    \"trackingNumber\": \"ABCDEF123456\",\n                    \"carrierCode\": \"usps\",\n                },\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[\n                (\n                    \"payload\",\n                    {\n                        \"orderId\": \"1234567890\",\n                        \"status\": \"SHIPPED\",\n                        \"trackingNumber\": \"ABCDEF123456\",\n                        \"carrierCode\": \"usps\",\n                    },\n                ),\n                (\"order_id\", \"1234567890\"),\n                (\"status\", \"SHIPPED\"),\n                (\"tracking_number\", \"ABCDEF123456\"),\n                (\"carrier_code\", \"usps\"),\n            ],\n        )",
+                  "children": [
+                    {
+                      "value": "super().__init__(\n            id=\"8a74c2ad-0104-4640-962f-26c6b69e58cd\",\n            description=(\n                \"This block triggers on Slant3D order status updates and outputs \"\n                \"the event details, including tracking information when orders are shipped.\"\n            ),\n            # All webhooks are currently subscribed to for all orders. This works for self hosted, but not for cloud hosted prod\n            disabled=(\n                settings.Settings().config.behave_as == BehaveAs.CLOUD\n                and settings.Settings().config.app_env != AppEnvironment.LOCAL\n            ),\n            categories={BlockCategory.DEVELOPER_TOOLS},\n            input_schema=self.Input,\n            output_schema=self.Output,\n            webhook_config=BlockWebhookConfig(\n                provider=\"slant3d\",\n                webhook_type=\"orders\",  # Only one type for now\n                resource_format=\"\",  # No resource format needed\n                event_filter_input=\"events\",\n                event_format=\"order.{event}\",\n            ),\n            test_input={\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n                \"events\": {\"shipped\": True},\n                \"payload\": {\n                    \"orderId\": \"1234567890\",\n                    \"status\": \"SHIPPED\",\n                    \"trackingNumber\": \"ABCDEF123456\",\n                    \"carrierCode\": \"usps\",\n                },\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[\n                (\n                    \"payload\",\n                    {\n                        \"orderId\": \"1234567890\",\n                        \"status\": \"SHIPPED\",\n                        \"trackingNumber\": \"ABCDEF123456\",\n                        \"carrierCode\": \"usps\",\n                    },\n                ),\n                (\"order_id\", \"1234567890\"),\n                (\"status\", \"SHIPPED\"),\n                (\"tracking_number\", \"ABCDEF123456\"),\n                (\"carrier_code\", \"usps\"),\n            ],\n        )",
+                      "children": [
+                        {
+                          "value": "super().__init__(\n            id=\"8a74c2ad-0104-4640-962f-26c6b69e58cd\",\n            description=(\n                \"This block triggers on Slant3D order status updates and outputs \"\n                \"the event details, including tracking information when orders are shipped.\"\n            ),\n            # All webhooks are currently subscribed to for all orders. This works for self hosted, but not for cloud hosted prod\n            disabled=(\n                settings.Settings().config.behave_as == BehaveAs.CLOUD\n                and settings.Settings().config.app_env != AppEnvironment.LOCAL\n            ),\n            categories={BlockCategory.DEVELOPER_TOOLS},\n            input_schema=self.Input,\n            output_schema=self.Output,\n            webhook_config=BlockWebhookConfig(\n                provider=\"slant3d\",\n                webhook_type=\"orders\",  # Only one type for now\n                resource_format=\"\",  # No resource format needed\n                event_filter_input=\"events\",\n                event_format=\"order.{event}\",\n            ),\n            test_input={\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n                \"events\": {\"shipped\": True},\n                \"payload\": {\n                    \"orderId\": \"1234567890\",\n                    \"status\": \"SHIPPED\",\n                    \"trackingNumber\": \"ABCDEF123456\",\n                    \"carrierCode\": \"usps\",\n                },\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[\n                (\n                    \"payload\",\n                    {\n                        \"orderId\": \"1234567890\",\n                        \"status\": \"SHIPPED\",\n                        \"trackingNumber\": \"ABCDEF123456\",\n                        \"carrierCode\": \"usps\",\n                    },\n                ),\n                (\"order_id\", \"1234567890\"),\n                (\"status\", \"SHIPPED\"),\n                (\"tracking_number\", \"ABCDEF123456\"),\n                (\"carrier_code\", \"usps\"),\n            ],\n        )",
+                          "children": [
+                            {
+                              "value": "super().__init__",
+                              "children": [
+                                {
+                                  "value": "super()",
+                                  "children": [
+                                    {
+                                      "value": "super",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "()",
+                                      "children": []
+                                    }
+                                  ]
+                                },
+                                {
+                                  "value": "__init__",
+                                  "children": []
+                                }
+                              ]
+                            },
+                            {
+                              "value": "(\n            id=\"8a74c2ad-0104-4640-962f-26c6b69e58cd\",\n            description=(\n                \"This block triggers on Slant3D order status updates and outputs \"\n                \"the event details, including tracking information when orders are shipped.\"\n            ),\n            # All webhooks are currently subscribed to for all orders. This works for self hosted, but not for cloud hosted prod\n            disabled=(\n                settings.Settings().config.behave_as == BehaveAs.CLOUD\n                and settings.Settings().config.app_env != AppEnvironment.LOCAL\n            ),\n            categories={BlockCategory.DEVELOPER_TOOLS},\n            input_schema=self.Input,\n            output_schema=self.Output,\n            webhook_config=BlockWebhookConfig(\n                provider=\"slant3d\",\n                webhook_type=\"orders\",  # Only one type for now\n                resource_format=\"\",  # No resource format needed\n                event_filter_input=\"events\",\n                event_format=\"order.{event}\",\n            ),\n            test_input={\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n                \"events\": {\"shipped\": True},\n                \"payload\": {\n                    \"orderId\": \"1234567890\",\n                    \"status\": \"SHIPPED\",\n                    \"trackingNumber\": \"ABCDEF123456\",\n                    \"carrierCode\": \"usps\",\n                },\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[\n                (\n                    \"payload\",\n                    {\n                        \"orderId\": \"1234567890\",\n                        \"status\": \"SHIPPED\",\n                        \"trackingNumber\": \"ABCDEF123456\",\n                        \"carrierCode\": \"usps\",\n                    },\n                ),\n                (\"order_id\", \"1234567890\"),\n                (\"status\", \"SHIPPED\"),\n                (\"tracking_number\", \"ABCDEF123456\"),\n                (\"carrier_code\", \"usps\"),\n            ],\n        )",
+                              "children": [
+                                {
+                                  "value": "id=\"8a74c2ad-0104-4640-962f-26c6b69e58cd\"",
+                                  "children": [
+                                    {
+                                      "value": "id",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "\"8a74c2ad-0104-4640-962f-26c6b69e58cd\"",
+                                      "children": [
+                                        {
+                                          "value": "\"",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "8a74c2ad-0104-4640-962f-26c6b69e58cd",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "\"",
+                                          "children": []
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                },
+                                {
+                                  "value": "description=(\n                \"This block triggers on Slant3D order status updates and outputs \"\n                \"the event details, including tracking information when orders are shipped.\"\n            )",
+                                  "children": [
+                                    {
+                                      "value": "description",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "(\n                \"This block triggers on Slant3D order status updates and outputs \"\n                \"the event details, including tracking information when orders are shipped.\"\n            )",
+                                      "children": [
+                                        {
+                                          "value": "\"This block triggers on Slant3D order status updates and outputs \"\n                \"the event details, including tracking information when orders are shipped.\"",
+                                          "children": [
+                                            {
+                                              "value": "\"This block triggers on Slant3D order status updates and outputs \"",
+                                              "children": [
+                                                {
+                                                  "value": "\"",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "This block triggers on Slant3D order status updates and outputs",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "\"",
+                                                  "children": []
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "value": "\"the event details, including tracking information when orders are shipped.\"",
+                                              "children": [
+                                                {
+                                                  "value": "\"",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "the event details, including tracking information when orders are shipped.",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "\"",
+                                                  "children": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                },
+                                {
+                                  "value": "# All webhooks are currently subscribed to for all orders. This works for self hosted, but not for cloud hosted prod",
+                                  "children": []
+                                },
+                                {
+                                  "value": "disabled=(\n                settings.Settings().config.behave_as == BehaveAs.CLOUD\n                and settings.Settings().config.app_env != AppEnvironment.LOCAL\n            )",
+                                  "children": [
+                                    {
+                                      "value": "disabled",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "(\n                settings.Settings().config.behave_as == BehaveAs.CLOUD\n                and settings.Settings().config.app_env != AppEnvironment.LOCAL\n            )",
+                                      "children": [
+                                        {
+                                          "value": "settings.Settings().config.behave_as == BehaveAs.CLOUD\n                and settings.Settings().config.app_env != AppEnvironment.LOCAL",
+                                          "children": [
+                                            {
+                                              "value": "settings.Settings().config.behave_as == BehaveAs.CLOUD",
+                                              "children": [
+                                                {
+                                                  "value": "settings.Settings().config.behave_as",
+                                                  "children": [
+                                                    {
+                                                      "value": "settings.Settings().config",
+                                                      "children": [
+                                                        {
+                                                          "value": "settings.Settings()",
+                                                          "children": [
+                                                            {
+                                                              "value": "settings.Settings",
+                                                              "children": [
+                                                                {
+                                                                  "value": "settings",
+                                                                  "children": []
+                                                                },
+                                                                {
+                                                                  "value": "Settings",
+                                                                  "children": []
+                                                                }
+                                                              ]
+                                                            },
+                                                            {
+                                                              "value": "()",
+                                                              "children": []
+                                                            }
+                                                          ]
+                                                        },
+                                                        {
+                                                          "value": "config",
+                                                          "children": []
+                                                        }
+                                                      ]
+                                                    },
+                                                    {
+                                                      "value": "behave_as",
+                                                      "children": []
+                                                    }
+                                                  ]
+                                                },
+                                                {
+                                                  "value": "BehaveAs.CLOUD",
+                                                  "children": [
+                                                    {
+                                                      "value": "BehaveAs",
+                                                      "children": []
+                                                    },
+                                                    {
+                                                      "value": "CLOUD",
+                                                      "children": []
+                                                    }
+                                                  ]
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "value": "settings.Settings().config.app_env != AppEnvironment.LOCAL",
+                                              "children": [
+                                                {
+                                                  "value": "settings.Settings().config.app_env",
+                                                  "children": [
+                                                    {
+                                                      "value": "settings.Settings().config",
+                                                      "children": [
+                                                        {
+                                                          "value": "settings.Settings()",
+                                                          "children": [
+                                                            {
+                                                              "value": "settings.Settings",
+                                                              "children": [
+                                                                {
+                                                                  "value": "settings",
+                                                                  "children": []
+                                                                },
+                                                                {
+                                                                  "value": "Settings",
+                                                                  "children": []
+                                                                }
+                                                              ]
+                                                            },
+                                                            {
+                                                              "value": "()",
+                                                              "children": []
+                                                            }
+                                                          ]
+                                                        },
+                                                        {
+                                                          "value": "config",
+                                                          "children": []
+                                                        }
+                                                      ]
+                                                    },
+                                                    {
+                                                      "value": "app_env",
+                                                      "children": []
+                                                    }
+                                                  ]
+                                                },
+                                                {
+                                                  "value": "AppEnvironment.LOCAL",
+                                                  "children": [
+                                                    {
+                                                      "value": "AppEnvironment",
+                                                      "children": []
+                                                    },
+                                                    {
+                                                      "value": "LOCAL",
+                                                      "children": []
+                                                    }
+                                                  ]
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                },
+                                {
+                                  "value": "categories={BlockCategory.DEVELOPER_TOOLS}",
+                                  "children": [
+                                    {
+                                      "value": "categories",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "{BlockCategory.DEVELOPER_TOOLS}",
+                                      "children": [
+                                        {
+                                          "value": "BlockCategory.DEVELOPER_TOOLS",
+                                          "children": [
+                                            {
+                                              "value": "BlockCategory",
+                                              "children": []
+                                            },
+                                            {
+                                              "value": "DEVELOPER_TOOLS",
+                                              "children": []
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                },
+                                {
+                                  "value": "input_schema=self.Input",
+                                  "children": [
+                                    {
+                                      "value": "input_schema",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "self.Input",
+                                      "children": [
+                                        {
+                                          "value": "self",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "Input",
+                                          "children": []
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                },
+                                {
+                                  "value": "output_schema=self.Output",
+                                  "children": [
+                                    {
+                                      "value": "output_schema",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "self.Output",
+                                      "children": [
+                                        {
+                                          "value": "self",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "Output",
+                                          "children": []
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                },
+                                {
+                                  "value": "webhook_config=BlockWebhookConfig(\n                provider=\"slant3d\",\n                webhook_type=\"orders\",  # Only one type for now\n                resource_format=\"\",  # No resource format needed\n                event_filter_input=\"events\",\n                event_format=\"order.{event}\",\n            )",
+                                  "children": [
+                                    {
+                                      "value": "webhook_config",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "BlockWebhookConfig(\n                provider=\"slant3d\",\n                webhook_type=\"orders\",  # Only one type for now\n                resource_format=\"\",  # No resource format needed\n                event_filter_input=\"events\",\n                event_format=\"order.{event}\",\n            )",
+                                      "children": [
+                                        {
+                                          "value": "BlockWebhookConfig",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "(\n                provider=\"slant3d\",\n                webhook_type=\"orders\",  # Only one type for now\n                resource_format=\"\",  # No resource format needed\n                event_filter_input=\"events\",\n                event_format=\"order.{event}\",\n            )",
+                                          "children": [
+                                            {
+                                              "value": "provider=\"slant3d\"",
+                                              "children": [
+                                                {
+                                                  "value": "provider",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "\"slant3d\"",
+                                                  "children": [
+                                                    {
+                                                      "value": "\"",
+                                                      "children": []
+                                                    },
+                                                    {
+                                                      "value": "slant3d",
+                                                      "children": []
+                                                    },
+                                                    {
+                                                      "value": "\"",
+                                                      "children": []
+                                                    }
+                                                  ]
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "value": "webhook_type=\"orders\"",
+                                              "children": [
+                                                {
+                                                  "value": "webhook_type",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "\"orders\"",
+                                                  "children": [
+                                                    {
+                                                      "value": "\"",
+                                                      "children": []
+                                                    },
+                                                    {
+                                                      "value": "orders",
+                                                      "children": []
+                                                    },
+                                                    {
+                                                      "value": "\"",
+                                                      "children": []
+                                                    }
+                                                  ]
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "value": "# Only one type for now",
+                                              "children": []
+                                            },
+                                            {
+                                              "value": "resource_format=\"\"",
+                                              "children": [
+                                                {
+                                                  "value": "resource_format",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "\"\"",
+                                                  "children": [
+                                                    {
+                                                      "value": "\"",
+                                                      "children": []
+                                                    },
+                                                    {
+                                                      "value": "\"",
+                                                      "children": []
+                                                    }
+                                                  ]
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "value": "# No resource format needed",
+                                              "children": []
+                                            },
+                                            {
+                                              "value": "event_filter_input=\"events\"",
+                                              "children": [
+                                                {
+                                                  "value": "event_filter_input",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "\"events\"",
+                                                  "children": [
+                                                    {
+                                                      "value": "\"",
+                                                      "children": []
+                                                    },
+                                                    {
+                                                      "value": "events",
+                                                      "children": []
+                                                    },
+                                                    {
+                                                      "value": "\"",
+                                                      "children": []
+                                                    }
+                                                  ]
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "value": "event_format=\"order.{event}\"",
+                                              "children": [
+                                                {
+                                                  "value": "event_format",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "\"order.{event}\"",
+                                                  "children": [
+                                                    {
+                                                      "value": "\"",
+                                                      "children": []
+                                                    },
+                                                    {
+                                                      "value": "order.{event}",
+                                                      "children": []
+                                                    },
+                                                    {
+                                                      "value": "\"",
+                                                      "children": []
+                                                    }
+                                                  ]
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                },
+                                {
+                                  "value": "test_input={\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n                \"events\": {\"shipped\": True},\n                \"payload\": {\n                    \"orderId\": \"1234567890\",\n                    \"status\": \"SHIPPED\",\n                    \"trackingNumber\": \"ABCDEF123456\",\n                    \"carrierCode\": \"usps\",\n                },\n            }",
+                                  "children": [
+                                    {
+                                      "value": "test_input",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "{\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n                \"events\": {\"shipped\": True},\n                \"payload\": {\n                    \"orderId\": \"1234567890\",\n                    \"status\": \"SHIPPED\",\n                    \"trackingNumber\": \"ABCDEF123456\",\n                    \"carrierCode\": \"usps\",\n                },\n            }",
+                                      "children": [
+                                        {
+                                          "value": "\"credentials\": TEST_CREDENTIALS_INPUT",
+                                          "children": [
+                                            {
+                                              "value": "\"credentials\"",
+                                              "children": [
+                                                {
+                                                  "value": "\"",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "credentials",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "\"",
+                                                  "children": []
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "value": "TEST_CREDENTIALS_INPUT",
+                                              "children": []
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "value": "\"events\": {\"shipped\": True}",
+                                          "children": [
+                                            {
+                                              "value": "\"events\"",
+                                              "children": [
+                                                {
+                                                  "value": "\"",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "events",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "\"",
+                                                  "children": []
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "value": "{\"shipped\": True}",
+                                              "children": [
+                                                {
+                                                  "value": "\"shipped\": True",
+                                                  "children": [
+                                                    {
+                                                      "value": "\"shipped\"",
+                                                      "children": [
+                                                        {
+                                                          "value": "\"",
+                                                          "children": []
+                                                        },
+                                                        {
+                                                          "value": "shipped",
+                                                          "children": []
+                                                        },
+                                                        {
+                                                          "value": "\"",
+                                                          "children": []
+                                                        }
+                                                      ]
+                                                    },
+                                                    {
+                                                      "value": "True",
+                                                      "children": []
+                                                    }
+                                                  ]
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "value": "\"payload\": {\n                    \"orderId\": \"1234567890\",\n                    \"status\": \"SHIPPED\",\n                    \"trackingNumber\": \"ABCDEF123456\",\n                    \"carrierCode\": \"usps\",\n                }",
+                                          "children": [
+                                            {
+                                              "value": "\"payload\"",
+                                              "children": [
+                                                {
+                                                  "value": "\"",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "payload",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "\"",
+                                                  "children": []
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "value": "{\n                    \"orderId\": \"1234567890\",\n                    \"status\": \"SHIPPED\",\n                    \"trackingNumber\": \"ABCDEF123456\",\n                    \"carrierCode\": \"usps\",\n                }",
+                                              "children": [
+                                                {
+                                                  "value": "\"orderId\": \"1234567890\"",
+                                                  "children": [
+                                                    {
+                                                      "value": "\"orderId\"",
+                                                      "children": [
+                                                        {
+                                                          "value": "\"",
+                                                          "children": []
+                                                        },
+                                                        {
+                                                          "value": "orderId",
+                                                          "children": []
+                                                        },
+                                                        {
+                                                          "value": "\"",
+                                                          "children": []
+                                                        }
+                                                      ]
+                                                    },
+                                                    {
+                                                      "value": "\"1234567890\"",
+                                                      "children": [
+                                                        {
+                                                          "value": "\"",
+                                                          "children": []
+                                                        },
+                                                        {
+                                                          "value": "1234567890",
+                                                          "children": []
+                                                        },
+                                                        {
+                                                          "value": "\"",
+                                                          "children": []
+                                                        }
+                                                      ]
+                                                    }
+                                                  ]
+                                                },
+                                                {
+                                                  "value": "\"status\": \"SHIPPED\"",
+                                                  "children": [
+                                                    {
+                                                      "value": "\"status\"",
+                                                      "children": [
+                                                        {
+                                                          "value": "\"",
+                                                          "children": []
+                                                        },
+                                                        {
+                                                          "value": "status",
+                                                          "children": []
+                                                        },
+                                                        {
+                                                          "value": "\"",
+                                                          "children": []
+                                                        }
+                                                      ]
+                                                    },
+                                                    {
+                                                      "value": "\"SHIPPED\"",
+                                                      "children": [
+                                                        {
+                                                          "value": "\"",
+                                                          "children": []
+                                                        },
+                                                        {
+                                                          "value": "SHIPPED",
+                                                          "children": []
+                                                        },
+                                                        {
+                                                          "value": "\"",
+                                                          "children": []
+                                                        }
+                                                      ]
+                                                    }
+                                                  ]
+                                                },
+                                                {
+                                                  "value": "\"trackingNumber\": \"ABCDEF123456\"",
+                                                  "children": [
+                                                    {
+                                                      "value": "\"trackingNumber\"",
+                                                      "children": [
+                                                        {
+                                                          "value": "\"",
+                                                          "children": []
+                                                        },
+                                                        {
+                                                          "value": "trackingNumber",
+                                                          "children": []
+                                                        },
+                                                        {
+                                                          "value": "\"",
+                                                          "children": []
+                                                        }
+                                                      ]
+                                                    },
+                                                    {
+                                                      "value": "\"ABCDEF123456\"",
+                                                      "children": [
+                                                        {
+                                                          "value": "\"",
+                                                          "children": []
+                                                        },
+                                                        {
+                                                          "value": "ABCDEF123456",
+                                                          "children": []
+                                                        },
+                                                        {
+                                                          "value": "\"",
+                                                          "children": []
+                                                        }
+                                                      ]
+                                                    }
+                                                  ]
+                                                },
+                                                {
+                                                  "value": "\"carrierCode\": \"usps\"",
+                                                  "children": [
+                                                    {
+                                                      "value": "\"carrierCode\"",
+                                                      "children": [
+                                                        {
+                                                          "value": "\"",
+                                                          "children": []
+                                                        },
+                                                        {
+                                                          "value": "carrierCode",
+                                                          "children": []
+                                                        },
+                                                        {
+                                                          "value": "\"",
+                                                          "children": []
+                                                        }
+                                                      ]
+                                                    },
+                                                    {
+                                                      "value": "\"usps\"",
+                                                      "children": [
+                                                        {
+                                                          "value": "\"",
+                                                          "children": []
+                                                        },
+                                                        {
+                                                          "value": "usps",
+                                                          "children": []
+                                                        },
+                                                        {
+                                                          "value": "\"",
+                                                          "children": []
+                                                        }
+                                                      ]
+                                                    }
+                                                  ]
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                },
+                                {
+                                  "value": "test_credentials=TEST_CREDENTIALS",
+                                  "children": [
+                                    {
+                                      "value": "test_credentials",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "TEST_CREDENTIALS",
+                                      "children": []
+                                    }
+                                  ]
+                                },
+                                {
+                                  "value": "test_output=[\n                (\n                    \"payload\",\n                    {\n                        \"orderId\": \"1234567890\",\n                        \"status\": \"SHIPPED\",\n                        \"trackingNumber\": \"ABCDEF123456\",\n                        \"carrierCode\": \"usps\",\n                    },\n                ),\n                (\"order_id\", \"1234567890\"),\n                (\"status\", \"SHIPPED\"),\n                (\"tracking_number\", \"ABCDEF123456\"),\n                (\"carrier_code\", \"usps\"),\n            ]",
+                                  "children": [
+                                    {
+                                      "value": "test_output",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "[\n                (\n                    \"payload\",\n                    {\n                        \"orderId\": \"1234567890\",\n                        \"status\": \"SHIPPED\",\n                        \"trackingNumber\": \"ABCDEF123456\",\n                        \"carrierCode\": \"usps\",\n                    },\n                ),\n                (\"order_id\", \"1234567890\"),\n                (\"status\", \"SHIPPED\"),\n                (\"tracking_number\", \"ABCDEF123456\"),\n                (\"carrier_code\", \"usps\"),\n            ]",
+                                      "children": [
+                                        {
+                                          "value": "(\n                    \"payload\",\n                    {\n                        \"orderId\": \"1234567890\",\n                        \"status\": \"SHIPPED\",\n                        \"trackingNumber\": \"ABCDEF123456\",\n                        \"carrierCode\": \"usps\",\n                    },\n                )",
+                                          "children": [
+                                            {
+                                              "value": "\"payload\"",
+                                              "children": [
+                                                {
+                                                  "value": "\"",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "payload",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "\"",
+                                                  "children": []
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "value": "{\n                        \"orderId\": \"1234567890\",\n                        \"status\": \"SHIPPED\",\n                        \"trackingNumber\": \"ABCDEF123456\",\n                        \"carrierCode\": \"usps\",\n                    }",
+                                              "children": [
+                                                {
+                                                  "value": "\"orderId\": \"1234567890\"",
+                                                  "children": [
+                                                    {
+                                                      "value": "\"orderId\"",
+                                                      "children": [
+                                                        {
+                                                          "value": "\"",
+                                                          "children": []
+                                                        },
+                                                        {
+                                                          "value": "orderId",
+                                                          "children": []
+                                                        },
+                                                        {
+                                                          "value": "\"",
+                                                          "children": []
+                                                        }
+                                                      ]
+                                                    },
+                                                    {
+                                                      "value": "\"1234567890\"",
+                                                      "children": [
+                                                        {
+                                                          "value": "\"",
+                                                          "children": []
+                                                        },
+                                                        {
+                                                          "value": "1234567890",
+                                                          "children": []
+                                                        },
+                                                        {
+                                                          "value": "\"",
+                                                          "children": []
+                                                        }
+                                                      ]
+                                                    }
+                                                  ]
+                                                },
+                                                {
+                                                  "value": "\"status\": \"SHIPPED\"",
+                                                  "children": [
+                                                    {
+                                                      "value": "\"status\"",
+                                                      "children": [
+                                                        {
+                                                          "value": "\"",
+                                                          "children": []
+                                                        },
+                                                        {
+                                                          "value": "status",
+                                                          "children": []
+                                                        },
+                                                        {
+                                                          "value": "\"",
+                                                          "children": []
+                                                        }
+                                                      ]
+                                                    },
+                                                    {
+                                                      "value": "\"SHIPPED\"",
+                                                      "children": [
+                                                        {
+                                                          "value": "\"",
+                                                          "children": []
+                                                        },
+                                                        {
+                                                          "value": "SHIPPED",
+                                                          "children": []
+                                                        },
+                                                        {
+                                                          "value": "\"",
+                                                          "children": []
+                                                        }
+                                                      ]
+                                                    }
+                                                  ]
+                                                },
+                                                {
+                                                  "value": "\"trackingNumber\": \"ABCDEF123456\"",
+                                                  "children": [
+                                                    {
+                                                      "value": "\"trackingNumber\"",
+                                                      "children": [
+                                                        {
+                                                          "value": "\"",
+                                                          "children": []
+                                                        },
+                                                        {
+                                                          "value": "trackingNumber",
+                                                          "children": []
+                                                        },
+                                                        {
+                                                          "value": "\"",
+                                                          "children": []
+                                                        }
+                                                      ]
+                                                    },
+                                                    {
+                                                      "value": "\"ABCDEF123456\"",
+                                                      "children": [
+                                                        {
+                                                          "value": "\"",
+                                                          "children": []
+                                                        },
+                                                        {
+                                                          "value": "ABCDEF123456",
+                                                          "children": []
+                                                        },
+                                                        {
+                                                          "value": "\"",
+                                                          "children": []
+                                                        }
+                                                      ]
+                                                    }
+                                                  ]
+                                                },
+                                                {
+                                                  "value": "\"carrierCode\": \"usps\"",
+                                                  "children": [
+                                                    {
+                                                      "value": "\"carrierCode\"",
+                                                      "children": [
+                                                        {
+                                                          "value": "\"",
+                                                          "children": []
+                                                        },
+                                                        {
+                                                          "value": "carrierCode",
+                                                          "children": []
+                                                        },
+                                                        {
+                                                          "value": "\"",
+                                                          "children": []
+                                                        }
+                                                      ]
+                                                    },
+                                                    {
+                                                      "value": "\"usps\"",
+                                                      "children": [
+                                                        {
+                                                          "value": "\"",
+                                                          "children": []
+                                                        },
+                                                        {
+                                                          "value": "usps",
+                                                          "children": []
+                                                        },
+                                                        {
+                                                          "value": "\"",
+                                                          "children": []
+                                                        }
+                                                      ]
+                                                    }
+                                                  ]
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "value": "(\"order_id\", \"1234567890\")",
+                                          "children": [
+                                            {
+                                              "value": "\"order_id\"",
+                                              "children": [
+                                                {
+                                                  "value": "\"",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "order_id",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "\"",
+                                                  "children": []
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "value": "\"1234567890\"",
+                                              "children": [
+                                                {
+                                                  "value": "\"",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "1234567890",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "\"",
+                                                  "children": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "value": "(\"status\", \"SHIPPED\")",
+                                          "children": [
+                                            {
+                                              "value": "\"status\"",
+                                              "children": [
+                                                {
+                                                  "value": "\"",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "status",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "\"",
+                                                  "children": []
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "value": "\"SHIPPED\"",
+                                              "children": [
+                                                {
+                                                  "value": "\"",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "SHIPPED",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "\"",
+                                                  "children": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "value": "(\"tracking_number\", \"ABCDEF123456\")",
+                                          "children": [
+                                            {
+                                              "value": "\"tracking_number\"",
+                                              "children": [
+                                                {
+                                                  "value": "\"",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "tracking_number",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "\"",
+                                                  "children": []
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "value": "\"ABCDEF123456\"",
+                                              "children": [
+                                                {
+                                                  "value": "\"",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "ABCDEF123456",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "\"",
+                                                  "children": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "value": "(\"carrier_code\", \"usps\")",
+                                          "children": [
+                                            {
+                                              "value": "\"carrier_code\"",
+                                              "children": [
+                                                {
+                                                  "value": "\"",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "carrier_code",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "\"",
+                                                  "children": []
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "value": "\"usps\"",
+                                              "children": [
+                                                {
+                                                  "value": "\"",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "usps",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "value": "\"",
+                                                  "children": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "value": "def run(self, input_data: Input, **kwargs) -> BlockOutput:  # type: ignore\n        yield from super().run(input_data, **kwargs)\n\n        # Extract and normalize values from the payload\n        yield \"status\", input_data.payload[\"status\"]\n        yield \"tracking_number\", input_data.payload[\"trackingNumber\"]\n        yield \"carrier_code\", input_data.payload[\"carrierCode\"]",
+              "children": [
+                {
+                  "value": "run",
+                  "children": []
+                },
+                {
+                  "value": "(self, input_data: Input, **kwargs)",
+                  "children": [
+                    {
+                      "value": "self",
+                      "children": []
+                    },
+                    {
+                      "value": "input_data: Input",
+                      "children": [
+                        {
+                          "value": "input_data",
+                          "children": []
+                        },
+                        {
+                          "value": "Input",
+                          "children": [
+                            {
+                              "value": "Input",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "**kwargs",
+                      "children": [
+                        {
+                          "value": "kwargs",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "value": "BlockOutput",
+                  "children": [
+                    {
+                      "value": "BlockOutput",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "value": "# type: ignore",
+                  "children": []
+                },
+                {
+                  "value": "yield from super().run(input_data, **kwargs)\n\n        # Extract and normalize values from the payload\n        yield \"status\", input_data.payload[\"status\"]\n        yield \"tracking_number\", input_data.payload[\"trackingNumber\"]\n        yield \"carrier_code\", input_data.payload[\"carrierCode\"]",
+                  "children": [
+                    {
+                      "value": "yield from super().run(input_data, **kwargs)",
+                      "children": [
+                        {
+                          "value": "yield from super().run(input_data, **kwargs)",
+                          "children": [
+                            {
+                              "value": "super().run(input_data, **kwargs)",
+                              "children": [
+                                {
+                                  "value": "super().run",
+                                  "children": [
+                                    {
+                                      "value": "super()",
+                                      "children": [
+                                        {
+                                          "value": "super",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "()",
+                                          "children": []
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "value": "run",
+                                      "children": []
+                                    }
+                                  ]
+                                },
+                                {
+                                  "value": "(input_data, **kwargs)",
+                                  "children": [
+                                    {
+                                      "value": "input_data",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "**kwargs",
+                                      "children": [
+                                        {
+                                          "value": "kwargs",
+                                          "children": []
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "# Extract and normalize values from the payload",
+                      "children": []
+                    },
+                    {
+                      "value": "yield \"status\", input_data.payload[\"status\"]",
+                      "children": [
+                        {
+                          "value": "yield \"status\", input_data.payload[\"status\"]",
+                          "children": [
+                            {
+                              "value": "\"status\", input_data.payload[\"status\"]",
+                              "children": [
+                                {
+                                  "value": "\"status\"",
+                                  "children": [
+                                    {
+                                      "value": "\"",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "status",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "\"",
+                                      "children": []
+                                    }
+                                  ]
+                                },
+                                {
+                                  "value": "input_data.payload[\"status\"]",
+                                  "children": [
+                                    {
+                                      "value": "input_data.payload",
+                                      "children": [
+                                        {
+                                          "value": "input_data",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "payload",
+                                          "children": []
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "value": "\"status\"",
+                                      "children": [
+                                        {
+                                          "value": "\"",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "status",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "\"",
+                                          "children": []
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "yield \"tracking_number\", input_data.payload[\"trackingNumber\"]",
+                      "children": [
+                        {
+                          "value": "yield \"tracking_number\", input_data.payload[\"trackingNumber\"]",
+                          "children": [
+                            {
+                              "value": "\"tracking_number\", input_data.payload[\"trackingNumber\"]",
+                              "children": [
+                                {
+                                  "value": "\"tracking_number\"",
+                                  "children": [
+                                    {
+                                      "value": "\"",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "tracking_number",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "\"",
+                                      "children": []
+                                    }
+                                  ]
+                                },
+                                {
+                                  "value": "input_data.payload[\"trackingNumber\"]",
+                                  "children": [
+                                    {
+                                      "value": "input_data.payload",
+                                      "children": [
+                                        {
+                                          "value": "input_data",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "payload",
+                                          "children": []
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "value": "\"trackingNumber\"",
+                                      "children": [
+                                        {
+                                          "value": "\"",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "trackingNumber",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "\"",
+                                          "children": []
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "value": "yield \"carrier_code\", input_data.payload[\"carrierCode\"]",
+                      "children": [
+                        {
+                          "value": "yield \"carrier_code\", input_data.payload[\"carrierCode\"]",
+                          "children": [
+                            {
+                              "value": "\"carrier_code\", input_data.payload[\"carrierCode\"]",
+                              "children": [
+                                {
+                                  "value": "\"carrier_code\"",
+                                  "children": [
+                                    {
+                                      "value": "\"",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "carrier_code",
+                                      "children": []
+                                    },
+                                    {
+                                      "value": "\"",
+                                      "children": []
+                                    }
+                                  ]
+                                },
+                                {
+                                  "value": "input_data.payload[\"carrierCode\"]",
+                                  "children": [
+                                    {
+                                      "value": "input_data.payload",
+                                      "children": [
+                                        {
+                                          "value": "input_data",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "payload",
+                                          "children": []
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "value": "\"carrierCode\"",
+                                      "children": [
+                                        {
+                                          "value": "\"",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "carrierCode",
+                                          "children": []
+                                        },
+                                        {
+                                          "value": "\"",
+                                          "children": []
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,838 @@
+{
+  "nodes": [
+    {
+      "id": "n0",
+      "code": "import random\nfrom collections import defaultdict\nfrom enum import Enum\nfrom typing import Any, Dict, List, Optional, Union\n\nfrom backend.data.block import Block, BlockCategory, BlockOutput, BlockSchema\nfrom backend.data.model import SchemaField\n\n\n\n\n"
+    },
+    {
+      "id": "n1",
+      "code": "class SamplingMethod(str, Enum):\n    RANDOM = \"random\"\n    SYSTEMATIC = \"systematic\"\n    TOP = \"top\"\n    BOTTOM = \"bottom\"\n    STRATIFIED = \"stratified\"\n    WEIGHTED = \"weighted\"\n    RESERVOIR = \"reservoir\"\n    CLUSTER = \"cluster\"\n"
+    },
+    {
+      "id": "n2",
+      "code": "class DataSamplingBlock(Block):\n    class Input(BlockSchema):\n        data: Union[Dict[str, Any], List[Union[dict, List[Any]]]] = SchemaField(\n            description=\"The dataset to sample from. Can be a single dictionary, a list of dictionaries, or a list of lists.\",\n            placeholder=\"{'id': 1, 'value': 'a'} or [{'id': 1, 'value': 'a'}, {'id': 2, 'value': 'b'}, ...]\",\n        )\n        sample_size: int = SchemaField(\n            description=\"The number of samples to take from the dataset.\",\n            placeholder=\"10\",\n            default=10,\n        )\n        sampling_method: SamplingMethod = SchemaField(\n            description=\"The method to use for sampling.\",\n            default=SamplingMethod.RANDOM,\n        )\n        accumulate: bool = SchemaField(\n            description=\"Whether to accumulate data before sampling.\",\n            default=False,\n        )\n        random_seed: Optional[int] = SchemaField(\n            description=\"Seed for random number generator (optional).\",\n            default=None,\n        )\n        stratify_key: Optional[str] = SchemaField(\n            description=\"Key to use for stratified sampling (required for stratified sampling).\",\n            default=None,\n        )\n        weight_key: Optional[str] = SchemaField(\n            description=\"Key to use for weighted sampling (required for weighted sampling).\",\n            default=None,\n        )\n        cluster_key: Optional[str] = SchemaField(\n            description=\"Key to use for cluster sampling (required for cluster sampling).\",\n            default=None,\n        )\n\n\n    class Output(BlockSchema):\n        sampled_data: List[Union[dict, List[Any]]] = SchemaField(\n            description=\"The sampled subset of the input data.\"\n        )\n        sample_indices: List[int] = SchemaField(\n            description=\"The indices of the sampled data in the original dataset.\"\n        )\n\n\n    def __init__(self):\n        super().__init__(\n            id=\"4a448883-71fa-49cf-91cf-70d793bd7d87\",\n            description=\"This block samples data from a given dataset using various sampling methods.\",\n            categories={BlockCategory.LOGIC},\n            input_schema=DataSamplingBlock.Input,\n            output_schema=DataSamplingBlock.Output,\n            test_input={\n                \"data\": [\n                    {\"id\": i, \"value\": chr(97 + i), \"group\": i % 3} for i in range(10)\n                ],\n                \"sample_size\": 3,\n                \"sampling_method\": SamplingMethod.STRATIFIED,\n                \"accumulate\": False,\n                \"random_seed\": 42,\n                \"stratify_key\": \"group\",\n            },\n            test_output=[\n                (\n                    \"sampled_data\",\n                    [\n                        {\"id\": 0, \"value\": \"a\", \"group\": 0},\n                        {\"id\": 1, \"value\": \"b\", \"group\": 1},\n                        {\"id\": 8, \"value\": \"i\", \"group\": 2},\n                    ],\n                ),\n                (\"sample_indices\", [0, 1, 8]),\n            ],\n        )\n\n        self.accumulated_data = []\n\n    def run(self, input_data: Input, **kwargs) -> BlockOutput:\n        if input_data.accumulate:\n            if isinstance(input_data.data, dict):\n                self.accumulated_data.append(input_data.data)\n            elif isinstance(input_data.data, list):\n                self.accumulated_data.extend(input_data.data)\n            else:\n                raise ValueError(f\"Unsupported data type: {type(input_data.data)}\")\n"
+    },
+    {
+      "id": "n3",
+      "code": "            # If we don't have enough data yet, return without sampling\n            if len(self.accumulated_data) < input_data.sample_size:\n                return\n"
+    },
+    {
+      "id": "n4",
+      "code": "            data_to_sample = self.accumulated_data\n        else:\n            # If not accumulating, use the input data directly\n            data_to_sample = (\n                input_data.data\n                if isinstance(input_data.data, list)\n                else [input_data.data]\n            )\n\n        if input_data.random_seed is not None:\n            random.seed(input_data.random_seed)\n\n        data_size = len(data_to_sample)\n\n        if input_data.sample_size > data_size:\n            raise ValueError(\n                f\"Sample size ({input_data.sample_size}) cannot be larger than the dataset size ({data_size}).\"\n            )\n\n        indices = []\n"
+    },
+    {
+      "id": "n5",
+      "code": "        if input_data.sampling_method == SamplingMethod.RANDOM:\n            indices = random.sample(range(data_size), input_data.sample_size)\n"
+    },
+    {
+      "id": "n6",
+      "code": "            step = data_size // input_data.sample_size\n            start = random.randint(0, step - 1)\n            indices = list(range(start, data_size, step))[: input_data.sample_size]\n"
+    },
+    {
+      "id": "n7",
+      "code": "            indices = list(range(input_data.sample_size))\n"
+    },
+    {
+      "id": "n8",
+      "code": "            indices = list(range(data_size - input_data.sample_size, data_size))\n"
+    },
+    {
+      "id": "n9",
+      "code": "            if not input_data.stratify_key:\n                raise ValueError(\n                    \"Stratify key must be provided for stratified sampling.\"\n                )\n\n            strata = defaultdict(list)\n            for i, item in enumerate(data_to_sample):\n                if isinstance(item, dict):\n                    strata_value = item.get(input_data.stratify_key)\n                elif hasattr(item, input_data.stratify_key):\n                    strata_value = getattr(item, input_data.stratify_key)\n                else:\n                    raise ValueError(\n                        f\"Stratify key '{input_data.stratify_key}' not found in item {item}\"\n                    )\n\n                if strata_value is None:\n                    raise ValueError(\n                        f\"Stratify value for key '{input_data.stratify_key}' is None\"\n                    )\n\n                strata[str(strata_value)].append(i)\n\n            # Calculate the number of samples to take from each stratum\n            stratum_sizes = {\n                k: max(1, int(len(v) / data_size * input_data.sample_size))\n                for k, v in strata.items()\n            }\n\n            # Adjust sizes to ensure we get exactly sample_size samples\n            while sum(stratum_sizes.values()) != input_data.sample_size:\n                if sum(stratum_sizes.values()) < input_data.sample_size:\n                    stratum_sizes[\n                        max(stratum_sizes, key=lambda k: stratum_sizes[k])\n                    ] += 1\n                else:\n                    stratum_sizes[\n                        max(stratum_sizes, key=lambda k: stratum_sizes[k])\n                    ] -= 1\n\n            for stratum, size in stratum_sizes.items():\n                indices.extend(random.sample(strata[stratum], size))\n"
+    },
+    {
+      "id": "n10",
+      "code": "            if not input_data.weight_key:\n                raise ValueError(\"Weight key must be provided for weighted sampling.\")\n\n            for item in data_to_sample:\n                if isinstance(item, dict):\n                    weight = item.get(input_data.weight_key)\n                elif hasattr(item, input_data.weight_key):\n                    weight = getattr(item, input_data.weight_key)\n                else:\n                    raise ValueError(\n                        f\"Weight key '{input_data.weight_key}' not found in item {item}\"\n                    )\n\n                if weight is None:\n                    raise ValueError(\n                        f\"Weight value for key '{input_data.weight_key}' is None\"\n                    )\n\n                    weights.append(float(weight))\n                except ValueError:\n                    raise ValueError(\n                        f\"Weight value '{weight}' cannot be converted to a number\"\n                    )\n\n            if not weights:\n                raise ValueError(\n                    f\"No valid weights found using key '{input_data.weight_key}'\"\n                )\n\n            indices = random.choices(\n                range(data_size), weights=weights, k=input_data.sample_size\n            )\n"
+    },
+    {
+      "id": "n11",
+      "code": "            indices = list(range(input_data.sample_size))\n            for i in range(input_data.sample_size, data_size):\n                j = random.randint(0, i)\n                if j < input_data.sample_size:\n                    indices[j] = i\n"
+    },
+    {
+      "id": "n12",
+      "code": "            if not input_data.cluster_key:\n                raise ValueError(\"Cluster key must be provided for cluster sampling.\")\n\n            for i, item in enumerate(data_to_sample):\n                if isinstance(item, dict):\n                    cluster_value = item.get(input_data.cluster_key)\n                elif hasattr(item, input_data.cluster_key):\n                    cluster_value = getattr(item, input_data.cluster_key)\n                else:\n                    raise TypeError(\n                        f\"Item {item} does not have the cluster key '{input_data.cluster_key}'\"\n                    )\n\n                clusters[str(cluster_value)].append(i)\n\n            # Randomly select clusters until we have enough samples\n            selected_clusters = []\n            while (\n                sum(len(clusters[c]) for c in selected_clusters)\n                < input_data.sample_size\n            ):\n                available_clusters = [c for c in clusters if c not in selected_clusters]\n                if not available_clusters:\n                    break\n                selected_clusters.append(random.choice(available_clusters))\n\n            for cluster in selected_clusters:\n                indices.extend(clusters[cluster])\n\n            # If we have more samples than needed, randomly remove some\n            if len(indices) > input_data.sample_size:\n                indices = random.sample(indices, input_data.sample_size)\n"
+    },
+    {
+      "id": "n13",
+      "code": "            raise ValueError(f\"Unknown sampling method: {input_data.sampling_method}\")\n"
+    },
+    {
+      "id": "n14",
+      "code": "        sampled_data = [data_to_sample[i] for i in indices]\n\n        # Clear accumulated data after sampling if accumulation is enabled\n        if input_data.accumulate:\n            self.accumulated_data = []\n\n        yield \"sampled_data\", sampled_data\n        yield \"sample_indices\", indices\n"
+    },
+    {
+      "id": "n15",
+      "code": "    class Input(BlockSchema):\n\n        data: Union[Dict[str, Any], List[Union[dict, List[Any]]]] = SchemaField(\n            description=\"The dataset to sample from. Can be a single dictionary, a list of dictionaries, or a list of lists.\",\n            placeholder=\"{'id': 1, 'value': 'a'} or [{'id': 1, 'value': 'a'}, {'id': 2, 'value': 'b'}, ...]\",\n        )\n\n        sample_size: int = SchemaField(\n            description=\"The number of samples to take from the dataset.\",\n            placeholder=\"10\",\n            default=10,\n        )\n\n        sampling_method: SamplingMethod = SchemaField(\n            description=\"The method to use for sampling.\",\n            default=SamplingMethod.RANDOM,\n        )\n\n        accumulate: bool = SchemaField(\n            description=\"Whether to accumulate data before sampling.\",\n            default=False,\n        )\n\n        random_seed: Optional[int] = SchemaField(\n            description=\"Seed for random number generator (optional).\",\n            default=None,\n        )\n\n        stratify_key: Optional[str] = SchemaField(\n            description=\"Key to use for stratified sampling (required for stratified sampling).\",\n            default=None,\n        )\n\n        weight_key: Optional[str] = SchemaField(\n            description=\"Key to use for weighted sampling (required for weighted sampling).\",\n            default=None,\n        )\n\n        cluster_key: Optional[str] = SchemaField(\n            description=\"Key to use for cluster sampling (required for cluster sampling).\",\n            default=None,\n        )\n"
+    },
+    {
+      "id": "n16",
+      "code": "    class Output(BlockSchema):\n        sampled_data: List[Union[dict, List[Any]]] = SchemaField(\n            description=\"The sampled subset of the input data.\"\n        )\n\n        sample_indices: List[int] = SchemaField(\n            description=\"The indices of the sampled data in the original dataset.\"\n        )\n"
+    },
+    {
+      "id": "n17",
+      "code": "    def __init__(self):\n        super().__init__(\n            id=\"4a448883-71fa-49cf-91cf-70d793bd7d87\",\n            description=\"This block samples data from a given dataset using various sampling methods.\",\n            categories={BlockCategory.LOGIC},\n            input_schema=DataSamplingBlock.Input,\n            output_schema=DataSamplingBlock.Output,\n            test_input={\n                \"data\": [\n                    {\"id\": i, \"value\": chr(97 + i), \"group\": i % 3} for i in range(10)\n                ],\n                \"sample_size\": 3,\n                \"sampling_method\": SamplingMethod.STRATIFIED,\n                \"accumulate\": False,\n                \"random_seed\": 42,\n                \"stratify_key\": \"group\",\n            },\n            test_output=[\n                (\n                    \"sampled_data\",\n                    [\n                        {\"id\": 0, \"value\": \"a\", \"group\": 0},\n                        {\"id\": 1, \"value\": \"b\", \"group\": 1},\n                        {\"id\": 8, \"value\": \"i\", \"group\": 2},\n                    ],\n                ),\n                (\"sample_indices\", [0, 1, 8]),\n            ],\n        )\n\n        self.accumulated_data = []\n"
+    },
+    {
+      "id": "n18",
+      "code": "    def run(self, input_data: Input, **kwargs) -> BlockOutput:\n\n        if input_data.accumulate:\n"
+    },
+    {
+      "id": "n19",
+      "code": "            if isinstance(input_data.data, dict):\n"
+    },
+    {
+      "id": "n20",
+      "code": "                self.accumulated_data.append(input_data.data)\n"
+    },
+    {
+      "id": "n21",
+      "code": "            elif isinstance(input_data.data, list):\n"
+    },
+    {
+      "id": "n22",
+      "code": "                self.accumulated_data.extend(input_data.data)\n"
+    },
+    {
+      "id": "n23",
+      "code": "            else:\n\n                raise ValueError(f\"Unsupported data type: {type(input_data.data)}\")\n"
+    },
+    {
+      "id": "n24",
+      "code": "\n"
+    },
+    {
+      "id": "n25",
+      "code": "            # If we don't have enough data yet, return without sampling\n\n            if len(self.accumulated_data) < input_data.sample_size:\n"
+    },
+    {
+      "id": "n26",
+      "code": "                return\n"
+    },
+    {
+      "id": "n27",
+      "code": "\n"
+    },
+    {
+      "id": "n28",
+      "code": "            data_to_sample = self.accumulated_data\n"
+    },
+    {
+      "id": "n29",
+      "code": "        else:\n\n            # If not accumulating, use the input data directly\n\n            data_to_sample = (\n                input_data.data\n                if isinstance(input_data.data, list)\n                else [input_data.data]\n            )\n"
+    },
+    {
+      "id": "n30",
+      "code": "\n"
+    },
+    {
+      "id": "n31",
+      "code": "        if input_data.random_seed is not None:\n"
+    },
+    {
+      "id": "n32",
+      "code": "            random.seed(input_data.random_seed)\n"
+    },
+    {
+      "id": "n33",
+      "code": "\n\n        data_size = len(data_to_sample)\n\n\n\n        if input_data.sample_size > data_size:\n"
+    },
+    {
+      "id": "n34",
+      "code": "            raise ValueError(\n                f\"Sample size ({input_data.sample_size}) cannot be larger than the dataset size ({data_size}).\"\n            )\n"
+    },
+    {
+      "id": "n35",
+      "code": "\n"
+    },
+    {
+      "id": "n36",
+      "code": "        indices = []\n\n\n\n        if input_data.sampling_method == SamplingMethod.RANDOM:\n"
+    },
+    {
+      "id": "n37",
+      "code": "            indices = random.sample(range(data_size), input_data.sample_size)\n"
+    },
+    {
+      "id": "n38",
+      "code": "        elif input_data.sampling_method == SamplingMethod.SYSTEMATIC:\n"
+    },
+    {
+      "id": "n39",
+      "code": "            step = data_size // input_data.sample_size\n            start = random.randint(0, step - 1)\n            indices = list(range(start, data_size, step))[: input_data.sample_size]\n"
+    },
+    {
+      "id": "n40",
+      "code": "        elif input_data.sampling_method == SamplingMethod.TOP:\n"
+    },
+    {
+      "id": "n41",
+      "code": "            indices = list(range(input_data.sample_size))\n"
+    },
+    {
+      "id": "n42",
+      "code": "        elif input_data.sampling_method == SamplingMethod.BOTTOM:\n"
+    },
+    {
+      "id": "n43",
+      "code": "            indices = list(range(data_size - input_data.sample_size, data_size))\n"
+    },
+    {
+      "id": "n44",
+      "code": "        elif input_data.sampling_method == SamplingMethod.STRATIFIED:\n"
+    },
+    {
+      "id": "n45",
+      "code": "            if not input_data.stratify_key:\n"
+    },
+    {
+      "id": "n46",
+      "code": "                raise ValueError(\n                    \"Stratify key must be provided for stratified sampling.\"\n                )\n"
+    },
+    {
+      "id": "n47",
+      "code": "            strata = defaultdict(list)\n\n            for i, item in enumerate(data_to_sample):\n\n                if isinstance(item, dict):\n"
+    },
+    {
+      "id": "n48",
+      "code": "                    strata_value = item.get(input_data.stratify_key)\n"
+    },
+    {
+      "id": "n49",
+      "code": "                elif hasattr(item, input_data.stratify_key):\n"
+    },
+    {
+      "id": "n50",
+      "code": "                    strata_value = getattr(item, input_data.stratify_key)\n"
+    },
+    {
+      "id": "n51",
+      "code": "                else:\n\n                    raise ValueError(\n                        f\"Stratify key '{input_data.stratify_key}' not found in item {item}\"\n                    )\n"
+    },
+    {
+      "id": "n52",
+      "code": "\n\n                if strata_value is None:\n"
+    },
+    {
+      "id": "n53",
+      "code": "                    raise ValueError(\n                        f\"Stratify value for key '{input_data.stratify_key}' is None\"\n                    )\n"
+    },
+    {
+      "id": "n54",
+      "code": "\n\n                strata[str(strata_value)].append(i)\n\n\n\n            # Calculate the number of samples to take from each stratum\n\n            stratum_sizes = {\n                k: max(1, int(len(v) / data_size * input_data.sample_size))\n                for k, v in strata.items()\n            }\n\n\n\n            # Adjust sizes to ensure we get exactly sample_size samples\n"
+    },
+    {
+      "id": "n55",
+      "code": "            while sum(stratum_sizes.values()) != input_data.sample_size:\n"
+    },
+    {
+      "id": "n56",
+      "code": "                if sum(stratum_sizes.values()) < input_data.sample_size:\n"
+    },
+    {
+      "id": "n57",
+      "code": "                    stratum_sizes[\n                        max(stratum_sizes, key=lambda k: stratum_sizes[k])\n                    ] += 1\n"
+    },
+    {
+      "id": "n58",
+      "code": "                else:\n\n                    stratum_sizes[\n                        max(stratum_sizes, key=lambda k: stratum_sizes[k])\n                    ] -= 1\n"
+    },
+    {
+      "id": "n59",
+      "code": "\n\n            for stratum, size in stratum_sizes.items():\n\n                indices.extend(random.sample(strata[stratum], size))\n"
+    },
+    {
+      "id": "n60",
+      "code": "        elif input_data.sampling_method == SamplingMethod.WEIGHTED:\n"
+    },
+    {
+      "id": "n61",
+      "code": "            if not input_data.weight_key:\n"
+    },
+    {
+      "id": "n62",
+      "code": "                raise ValueError(\"Weight key must be provided for weighted sampling.\")\n"
+    },
+    {
+      "id": "n63",
+      "code": "            weights = []\n\n            for item in data_to_sample:\n\n                if isinstance(item, dict):\n"
+    },
+    {
+      "id": "n64",
+      "code": "                    weight = item.get(input_data.weight_key)\n"
+    },
+    {
+      "id": "n65",
+      "code": "                elif hasattr(item, input_data.weight_key):\n"
+    },
+    {
+      "id": "n66",
+      "code": "                    weight = getattr(item, input_data.weight_key)\n"
+    },
+    {
+      "id": "n67",
+      "code": "                else:\n\n                    raise ValueError(\n                        f\"Weight key '{input_data.weight_key}' not found in item {item}\"\n                    )\n"
+    },
+    {
+      "id": "n68",
+      "code": "\n\n                if weight is None:\n"
+    },
+    {
+      "id": "n69",
+      "code": "                    raise ValueError(\n                        f\"Weight value for key '{input_data.weight_key}' is None\"\n                    )\n"
+    },
+    {
+      "id": "n70",
+      "code": "                try:\n\n                    weights.append(float(weight))\n\n\n\n            if not weights:\n"
+    },
+    {
+      "id": "n71",
+      "code": "                except ValueError:\n\n                    raise ValueError(\n                        f\"Weight value '{weight}' cannot be converted to a number\"\n                    )\n"
+    },
+    {
+      "id": "n72",
+      "code": "                raise ValueError(\n                    f\"No valid weights found using key '{input_data.weight_key}'\"\n                )\n"
+    },
+    {
+      "id": "n73",
+      "code": "\n\n            indices = random.choices(\n                range(data_size), weights=weights, k=input_data.sample_size\n            )\n"
+    },
+    {
+      "id": "n74",
+      "code": "        elif input_data.sampling_method == SamplingMethod.RESERVOIR:\n"
+    },
+    {
+      "id": "n75",
+      "code": "            indices = list(range(input_data.sample_size))\n"
+    },
+    {
+      "id": "n76",
+      "code": "            for i in range(input_data.sample_size, data_size):\n\n                j = random.randint(0, i)\n\n                if j < input_data.sample_size:\n"
+    },
+    {
+      "id": "n77",
+      "code": "                    indices[j] = i\n"
+    },
+    {
+      "id": "n78",
+      "code": "        elif input_data.sampling_method == SamplingMethod.CLUSTER:\n"
+    },
+    {
+      "id": "n79",
+      "code": "            if not input_data.cluster_key:\n"
+    },
+    {
+      "id": "n80",
+      "code": "                raise ValueError(\"Cluster key must be provided for cluster sampling.\")\n"
+    },
+    {
+      "id": "n81",
+      "code": "            clusters = defaultdict(list)\n\n            for i, item in enumerate(data_to_sample):\n\n                if isinstance(item, dict):\n"
+    },
+    {
+      "id": "n82",
+      "code": "                    cluster_value = item.get(input_data.cluster_key)\n"
+    },
+    {
+      "id": "n83",
+      "code": "                elif hasattr(item, input_data.cluster_key):\n"
+    },
+    {
+      "id": "n84",
+      "code": "                    cluster_value = getattr(item, input_data.cluster_key)\n"
+    },
+    {
+      "id": "n85",
+      "code": "                else:\n\n                    raise TypeError(\n                        f\"Item {item} does not have the cluster key '{input_data.cluster_key}'\"\n                    )\n"
+    },
+    {
+      "id": "n86",
+      "code": "\n\n                clusters[str(cluster_value)].append(i)\n\n\n\n            # Randomly select clusters until we have enough samples\n\n            selected_clusters = []\n"
+    },
+    {
+      "id": "n87",
+      "code": "            while (\n                sum(len(clusters[c]) for c in selected_clusters)\n                < input_data.sample_size\n            ):\n"
+    },
+    {
+      "id": "n88",
+      "code": "                available_clusters = [c for c in clusters if c not in selected_clusters]\n\n                if not available_clusters:\n"
+    },
+    {
+      "id": "n89",
+      "code": "                    break\n"
+    },
+    {
+      "id": "n90",
+      "code": "                selected_clusters.append(random.choice(available_clusters))\n"
+    },
+    {
+      "id": "n91",
+      "code": "\n\n            for cluster in selected_clusters:\n\n                indices.extend(clusters[cluster])\n\n\n\n            # If we have more samples than needed, randomly remove some\n\n            if len(indices) > input_data.sample_size:\n"
+    },
+    {
+      "id": "n92",
+      "code": "                indices = random.sample(indices, input_data.sample_size)\n"
+    },
+    {
+      "id": "n93",
+      "code": "        else:\n\n            raise ValueError(f\"Unknown sampling method: {input_data.sampling_method}\")\n"
+    },
+    {
+      "id": "n94",
+      "code": "\n"
+    },
+    {
+      "id": "n95",
+      "code": "        sampled_data = [data_to_sample[i] for i in indices]\n\n\n\n        # Clear accumulated data after sampling if accumulation is enabled\n\n        if input_data.accumulate:\n"
+    },
+    {
+      "id": "n96",
+      "code": "            self.accumulated_data = []\n"
+    },
+    {
+      "id": "n97",
+      "code": "\n\n        yield \"sampled_data\", sampled_data\n\n        yield \"sample_indices\", indices\n"
+    },
+    {
+      "id": "n98",
+      "code": "\n"
+    }
+  ],
+  "edges": [
+    {
+      "source": "n74",
+      "target": "n75"
+    },
+    {
+      "source": "n83",
+      "target": "n85"
+    },
+    {
+      "source": "n60",
+      "target": "n74"
+    },
+    {
+      "source": "n40",
+      "target": "n41"
+    },
+    {
+      "source": "n9",
+      "target": "n14"
+    },
+    {
+      "source": "n2",
+      "target": "n4"
+    },
+    {
+      "source": "n68",
+      "target": "n69"
+    },
+    {
+      "source": "n19",
+      "target": "n20"
+    },
+    {
+      "source": "n21",
+      "target": "n23"
+    },
+    {
+      "source": "n31",
+      "target": "n33"
+    },
+    {
+      "source": "n8",
+      "target": "n14"
+    },
+    {
+      "source": "n4",
+      "target": "n12"
+    },
+    {
+      "source": "n49",
+      "target": "n50"
+    },
+    {
+      "source": "n44",
+      "target": "n60"
+    },
+    {
+      "source": "n22",
+      "target": "n25"
+    },
+    {
+      "source": "n45",
+      "target": "n46"
+    },
+    {
+      "source": "n88",
+      "target": "n90"
+    },
+    {
+      "source": "n88",
+      "target": "n89"
+    },
+    {
+      "source": "n81",
+      "target": "n82"
+    },
+    {
+      "source": "n29",
+      "target": "n31"
+    },
+    {
+      "source": "n91",
+      "target": "n95"
+    },
+    {
+      "source": "n75",
+      "target": "n76"
+    },
+    {
+      "source": "n91",
+      "target": "n92"
+    },
+    {
+      "source": "n36",
+      "target": "n37"
+    },
+    {
+      "source": "n55",
+      "target": "n59"
+    },
+    {
+      "source": "n61",
+      "target": "n62"
+    },
+    {
+      "source": "n11",
+      "target": "n14"
+    },
+    {
+      "source": "n65",
+      "target": "n66"
+    },
+    {
+      "source": "n38",
+      "target": "n39"
+    },
+    {
+      "source": "n48",
+      "target": "n52"
+    },
+    {
+      "source": "n4",
+      "target": "n11"
+    },
+    {
+      "source": "n63",
+      "target": "n64"
+    },
+    {
+      "source": "n21",
+      "target": "n22"
+    },
+    {
+      "source": "n2",
+      "target": "n3"
+    },
+    {
+      "source": "n19",
+      "target": "n21"
+    },
+    {
+      "source": "n25",
+      "target": "n28"
+    },
+    {
+      "source": "n96",
+      "target": "n97"
+    },
+    {
+      "source": "n42",
+      "target": "n43"
+    },
+    {
+      "source": "n81",
+      "target": "n83"
+    },
+    {
+      "source": "n95",
+      "target": "n97"
+    },
+    {
+      "source": "n92",
+      "target": "n95"
+    },
+    {
+      "source": "n87",
+      "target": "n91"
+    },
+    {
+      "source": "n4",
+      "target": "n7"
+    },
+    {
+      "source": "n79",
+      "target": "n81"
+    },
+    {
+      "source": "n70",
+      "target": "n73"
+    },
+    {
+      "source": "n20",
+      "target": "n25"
+    },
+    {
+      "source": "n64",
+      "target": "n68"
+    },
+    {
+      "source": "n38",
+      "target": "n40"
+    },
+    {
+      "source": "n42",
+      "target": "n44"
+    },
+    {
+      "source": "n77",
+      "target": "n76"
+    },
+    {
+      "source": "n86",
+      "target": "n87"
+    },
+    {
+      "source": "n65",
+      "target": "n67"
+    },
+    {
+      "source": "n33",
+      "target": "n34"
+    },
+    {
+      "source": "n7",
+      "target": "n14"
+    },
+    {
+      "source": "n66",
+      "target": "n68"
+    },
+    {
+      "source": "n28",
+      "target": "n31"
+    },
+    {
+      "source": "n10",
+      "target": "n14"
+    },
+    {
+      "source": "n56",
+      "target": "n58"
+    },
+    {
+      "source": "n55",
+      "target": "n56"
+    },
+    {
+      "source": "n58",
+      "target": "n55"
+    },
+    {
+      "source": "n47",
+      "target": "n49"
+    },
+    {
+      "source": "n83",
+      "target": "n84"
+    },
+    {
+      "source": "n44",
+      "target": "n45"
+    },
+    {
+      "source": "n43",
+      "target": "n95"
+    },
+    {
+      "source": "n39",
+      "target": "n95"
+    },
+    {
+      "source": "n6",
+      "target": "n14"
+    },
+    {
+      "source": "n95",
+      "target": "n96"
+    },
+    {
+      "source": "n78",
+      "target": "n93"
+    },
+    {
+      "source": "n74",
+      "target": "n78"
+    },
+    {
+      "source": "n90",
+      "target": "n87"
+    },
+    {
+      "source": "n4",
+      "target": "n6"
+    },
+    {
+      "source": "n57",
+      "target": "n55"
+    },
+    {
+      "source": "n4",
+      "target": "n8"
+    },
+    {
+      "source": "n47",
+      "target": "n48"
+    },
+    {
+      "source": "n79",
+      "target": "n80"
+    },
+    {
+      "source": "n60",
+      "target": "n61"
+    },
+    {
+      "source": "n33",
+      "target": "n36"
+    },
+    {
+      "source": "n18",
+      "target": "n29"
+    },
+    {
+      "source": "n73",
+      "target": "n95"
+    },
+    {
+      "source": "n37",
+      "target": "n95"
+    },
+    {
+      "source": "n25",
+      "target": "n26"
+    },
+    {
+      "source": "n40",
+      "target": "n42"
+    },
+    {
+      "source": "n70",
+      "target": "n72"
+    },
+    {
+      "source": "n63",
+      "target": "n65"
+    },
+    {
+      "source": "n59",
+      "target": "n95"
+    },
+    {
+      "source": "n54",
+      "target": "n55"
+    },
+    {
+      "source": "n52",
+      "target": "n53"
+    },
+    {
+      "source": "n82",
+      "target": "n86"
+    },
+    {
+      "source": "n78",
+      "target": "n79"
+    },
+    {
+      "source": "n4",
+      "target": "n10"
+    },
+    {
+      "source": "n61",
+      "target": "n63"
+    },
+    {
+      "source": "n5",
+      "target": "n14"
+    },
+    {
+      "source": "n87",
+      "target": "n88"
+    },
+    {
+      "source": "n68",
+      "target": "n70"
+    },
+    {
+      "source": "n4",
+      "target": "n5"
+    },
+    {
+      "source": "n84",
+      "target": "n86"
+    },
+    {
+      "source": "n50",
+      "target": "n52"
+    },
+    {
+      "source": "n12",
+      "target": "n14"
+    },
+    {
+      "source": "n32",
+      "target": "n33"
+    },
+    {
+      "source": "n36",
+      "target": "n38"
+    },
+    {
+      "source": "n49",
+      "target": "n51"
+    },
+    {
+      "source": "n41",
+      "target": "n95"
+    },
+    {
+      "source": "n4",
+      "target": "n9"
+    },
+    {
+      "source": "n31",
+      "target": "n32"
+    },
+    {
+      "source": "n45",
+      "target": "n47"
+    },
+    {
+      "source": "n18",
+      "target": "n19"
+    },
+    {
+      "source": "n52",
+      "target": "n54"
+    },
+    {
+      "source": "n76",
+      "target": "n77"
+    },
+    {
+      "source": "n56",
+      "target": "n57"
+    }
+  ]
+}

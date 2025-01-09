@@ -1,0 +1,590 @@
+{
+    "nodes": [
+        {
+            "id": "1",
+            "type": "block",
+            "statements": [
+                "import asyncio",
+                "import contextlib",
+                "import logging",
+                "from functools import wraps",
+                "from typing import Any, Awaitable, Callable, Dict, Optional, TypeVar, Union, cast",
+                "import ldclient",
+                "from fastapi import HTTPException",
+                "from ldclient import Context, LDClient",
+                "from ldclient.config import Config",
+                "from typing_extensions import ParamSpec",
+                "from .config import SETTINGS",
+                "logger = logging.getLogger(__name__)",
+                "logging.basicConfig()",
+                "P = ParamSpec('P')",
+                "T = TypeVar('T')",
+                "def get_client() -> LDClient:\n    \"\"\"Get the LaunchDarkly client singleton.\"\"\"\n    return ldclient.get()",
+                "'Get the LaunchDarkly client singleton.'",
+                "return ldclient.get()"
+            ]
+        },
+        {
+            "id": "2",
+            "type": "block",
+            "statements": [
+                "def initialize_launchdarkly() -> None:\n    sdk_key = SETTINGS.launch_darkly_sdk_key\n    logger.debug(f\"Initializing LaunchDarkly with SDK key: {('present' if sdk_key else 'missing')}\")\n    if not sdk_key:\n        logger.warning('LaunchDarkly SDK key not configured')\n        return\n    config = Config(sdk_key)\n    ldclient.set_config(config)\n    if ldclient.get().is_initialized():\n        logger.info('LaunchDarkly client initialized successfully')\n    else:\n        logger.error('LaunchDarkly client failed to initialize')",
+                "sdk_key = SETTINGS.launch_darkly_sdk_key",
+                "logger.debug(f\"Initializing LaunchDarkly with SDK key: {('present' if sdk_key else 'missing')}\")",
+                "not sdk_key"
+            ]
+        },
+        {
+            "id": "3",
+            "type": "block",
+            "statements": [
+                "logger.warning('LaunchDarkly SDK key not configured')",
+                "return"
+            ]
+        },
+        {
+            "id": "4",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "5",
+            "type": "block",
+            "statements": [
+                "config = Config(sdk_key)",
+                "ldclient.set_config(config)",
+                "ldclient.get().is_initialized()"
+            ]
+        },
+        {
+            "id": "6",
+            "type": "block",
+            "statements": [
+                "logger.info('LaunchDarkly client initialized successfully')"
+            ]
+        },
+        {
+            "id": "7",
+            "type": "block",
+            "statements": [
+                "logger.error('LaunchDarkly client failed to initialize')"
+            ]
+        },
+        {
+            "id": "8",
+            "type": "block",
+            "statements": [
+                "def shutdown_launchdarkly() -> None:\n    \"\"\"Shutdown the LaunchDarkly client.\"\"\"\n    if ldclient.get().is_initialized():\n        ldclient.get().close()\n        logger.info('LaunchDarkly client closed successfully')",
+                "'Shutdown the LaunchDarkly client.'",
+                "ldclient.get().is_initialized()"
+            ]
+        },
+        {
+            "id": "9",
+            "type": "block",
+            "statements": [
+                "ldclient.get().close()",
+                "logger.info('LaunchDarkly client closed successfully')"
+            ]
+        },
+        {
+            "id": "10",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "11",
+            "type": "block",
+            "statements": [
+                "def create_context(user_id: str, additional_attributes: Optional[Dict[str, Any]]=None) -> Context:\n    \"\"\"Create LaunchDarkly context with optional additional attributes.\"\"\"\n    builder = Context.builder(str(user_id)).kind('user')\n    if additional_attributes:\n        for (key, value) in additional_attributes.items():\n            builder.set(key, value)\n    return builder.build()",
+                "'Create LaunchDarkly context with optional additional attributes.'",
+                "builder = Context.builder(str(user_id)).kind('user')",
+                "additional_attributes"
+            ]
+        },
+        {
+            "id": "12",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "13",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "14",
+            "type": "block",
+            "statements": [
+                "return builder.build()"
+            ]
+        },
+        {
+            "id": "15",
+            "type": "block",
+            "statements": [
+                "(key, value)",
+                "additional_attributes.items()"
+            ]
+        },
+        {
+            "id": "16",
+            "type": "block",
+            "statements": [
+                "builder.set(key, value)"
+            ]
+        },
+        {
+            "id": "17",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "18",
+            "type": "block",
+            "statements": [
+                "def feature_flag(flag_key: str, default: bool=False) -> Callable[[Callable[P, Union[T, Awaitable[T]]]], Callable[P, Union[T, Awaitable[T]]]]:\n    \"\"\"\n    Decorator for feature flag protected endpoints.\n    \"\"\"\n\n    def decorator(func: Callable[P, Union[T, Awaitable[T]]]) -> Callable[P, Union[T, Awaitable[T]]]:\n\n        @wraps(func)\n        async def async_wrapper(*args: P.args, **kwargs: P.kwargs) -> T:\n            try:\n                user_id = kwargs.get('user_id')\n                if not user_id:\n                    raise ValueError('user_id is required')\n                if not get_client().is_initialized():\n                    logger.warning(f'LaunchDarkly not initialized, using default={default}')\n                    is_enabled = default\n                else:\n                    context = create_context(str(user_id))\n                    is_enabled = get_client().variation(flag_key, context, default)\n                if not is_enabled:\n                    raise HTTPException(status_code=404, detail='Feature not available')\n                result = func(*args, **kwargs)\n                if asyncio.iscoroutine(result):\n                    return await result\n                return cast(T, result)\n            except Exception as e:\n                logger.error(f'Error evaluating feature flag {flag_key}: {e}')\n                raise\n\n        @wraps(func)\n        def sync_wrapper(*args: P.args, **kwargs: P.kwargs) -> T:\n            try:\n                user_id = kwargs.get('user_id')\n                if not user_id:\n                    raise ValueError('user_id is required')\n                if not get_client().is_initialized():\n                    logger.warning(f'LaunchDarkly not initialized, using default={default}')\n                    is_enabled = default\n                else:\n                    context = create_context(str(user_id))\n                    is_enabled = get_client().variation(flag_key, context, default)\n                if not is_enabled:\n                    raise HTTPException(status_code=404, detail='Feature not available')\n                return cast(T, func(*args, **kwargs))\n            except Exception as e:\n                logger.error(f'Error evaluating feature flag {flag_key}: {e}')\n                raise\n        return cast(Callable[P, Union[T, Awaitable[T]]], async_wrapper if asyncio.iscoroutinefunction(func) else sync_wrapper)\n    return decorator",
+                "'\\n    Decorator for feature flag protected endpoints.\\n    '",
+                "def decorator(func: Callable[P, Union[T, Awaitable[T]]]) -> Callable[P, Union[T, Awaitable[T]]]:\n\n    @wraps(func)\n    async def async_wrapper(*args: P.args, **kwargs: P.kwargs) -> T:\n        try:\n            user_id = kwargs.get('user_id')\n            if not user_id:\n                raise ValueError('user_id is required')\n            if not get_client().is_initialized():\n                logger.warning(f'LaunchDarkly not initialized, using default={default}')\n                is_enabled = default\n            else:\n                context = create_context(str(user_id))\n                is_enabled = get_client().variation(flag_key, context, default)\n            if not is_enabled:\n                raise HTTPException(status_code=404, detail='Feature not available')\n            result = func(*args, **kwargs)\n            if asyncio.iscoroutine(result):\n                return await result\n            return cast(T, result)\n        except Exception as e:\n            logger.error(f'Error evaluating feature flag {flag_key}: {e}')\n            raise\n\n    @wraps(func)\n    def sync_wrapper(*args: P.args, **kwargs: P.kwargs) -> T:\n        try:\n            user_id = kwargs.get('user_id')\n            if not user_id:\n                raise ValueError('user_id is required')\n            if not get_client().is_initialized():\n                logger.warning(f'LaunchDarkly not initialized, using default={default}')\n                is_enabled = default\n            else:\n                context = create_context(str(user_id))\n                is_enabled = get_client().variation(flag_key, context, default)\n            if not is_enabled:\n                raise HTTPException(status_code=404, detail='Feature not available')\n            return cast(T, func(*args, **kwargs))\n        except Exception as e:\n            logger.error(f'Error evaluating feature flag {flag_key}: {e}')\n            raise\n    return cast(Callable[P, Union[T, Awaitable[T]]], async_wrapper if asyncio.iscoroutinefunction(func) else sync_wrapper)",
+                "@wraps(func)\nasync def async_wrapper(*args: P.args, **kwargs: P.kwargs) -> T:\n    try:\n        user_id = kwargs.get('user_id')\n        if not user_id:\n            raise ValueError('user_id is required')\n        if not get_client().is_initialized():\n            logger.warning(f'LaunchDarkly not initialized, using default={default}')\n            is_enabled = default\n        else:\n            context = create_context(str(user_id))\n            is_enabled = get_client().variation(flag_key, context, default)\n        if not is_enabled:\n            raise HTTPException(status_code=404, detail='Feature not available')\n        result = func(*args, **kwargs)\n        if asyncio.iscoroutine(result):\n            return await result\n        return cast(T, result)\n    except Exception as e:\n        logger.error(f'Error evaluating feature flag {flag_key}: {e}')\n        raise",
+                "try:\n    user_id = kwargs.get('user_id')\n    if not user_id:\n        raise ValueError('user_id is required')\n    if not get_client().is_initialized():\n        logger.warning(f'LaunchDarkly not initialized, using default={default}')\n        is_enabled = default\n    else:\n        context = create_context(str(user_id))\n        is_enabled = get_client().variation(flag_key, context, default)\n    if not is_enabled:\n        raise HTTPException(status_code=404, detail='Feature not available')\n    result = func(*args, **kwargs)\n    if asyncio.iscoroutine(result):\n        return await result\n    return cast(T, result)\nexcept Exception as e:\n    logger.error(f'Error evaluating feature flag {flag_key}: {e}')\n    raise",
+                "user_id = kwargs.get('user_id')",
+                "not user_id"
+            ]
+        },
+        {
+            "id": "19",
+            "type": "block",
+            "statements": [
+                "raise ValueError('user_id is required')"
+            ]
+        },
+        {
+            "id": "20",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "21",
+            "type": "block",
+            "statements": [
+                "not get_client().is_initialized()"
+            ]
+        },
+        {
+            "id": "22",
+            "type": "block",
+            "statements": [
+                "logger.warning(f'LaunchDarkly not initialized, using default={default}')",
+                "is_enabled = default"
+            ]
+        },
+        {
+            "id": "23",
+            "type": "block",
+            "statements": [
+                "context = create_context(str(user_id))",
+                "is_enabled = get_client().variation(flag_key, context, default)"
+            ]
+        },
+        {
+            "id": "24",
+            "type": "block",
+            "statements": [
+                "not is_enabled"
+            ]
+        },
+        {
+            "id": "25",
+            "type": "block",
+            "statements": [
+                "raise HTTPException(status_code=404, detail='Feature not available')"
+            ]
+        },
+        {
+            "id": "26",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "27",
+            "type": "block",
+            "statements": [
+                "result = func(*args, **kwargs)",
+                "asyncio.iscoroutine(result)"
+            ]
+        },
+        {
+            "id": "28",
+            "type": "block",
+            "statements": [
+                "return await result"
+            ]
+        },
+        {
+            "id": "29",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "30",
+            "type": "block",
+            "statements": [
+                "return cast(T, result)"
+            ]
+        },
+        {
+            "id": "31",
+            "type": "block",
+            "statements": [
+                "logger.error(f'Error evaluating feature flag {flag_key}: {e}')",
+                "raise",
+                "@wraps(func)\ndef sync_wrapper(*args: P.args, **kwargs: P.kwargs) -> T:\n    try:\n        user_id = kwargs.get('user_id')\n        if not user_id:\n            raise ValueError('user_id is required')\n        if not get_client().is_initialized():\n            logger.warning(f'LaunchDarkly not initialized, using default={default}')\n            is_enabled = default\n        else:\n            context = create_context(str(user_id))\n            is_enabled = get_client().variation(flag_key, context, default)\n        if not is_enabled:\n            raise HTTPException(status_code=404, detail='Feature not available')\n        return cast(T, func(*args, **kwargs))\n    except Exception as e:\n        logger.error(f'Error evaluating feature flag {flag_key}: {e}')\n        raise",
+                "try:\n    user_id = kwargs.get('user_id')\n    if not user_id:\n        raise ValueError('user_id is required')\n    if not get_client().is_initialized():\n        logger.warning(f'LaunchDarkly not initialized, using default={default}')\n        is_enabled = default\n    else:\n        context = create_context(str(user_id))\n        is_enabled = get_client().variation(flag_key, context, default)\n    if not is_enabled:\n        raise HTTPException(status_code=404, detail='Feature not available')\n    return cast(T, func(*args, **kwargs))\nexcept Exception as e:\n    logger.error(f'Error evaluating feature flag {flag_key}: {e}')\n    raise",
+                "user_id = kwargs.get('user_id')",
+                "not user_id"
+            ]
+        },
+        {
+            "id": "32",
+            "type": "block",
+            "statements": [
+                "raise ValueError('user_id is required')"
+            ]
+        },
+        {
+            "id": "33",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "34",
+            "type": "block",
+            "statements": [
+                "not get_client().is_initialized()"
+            ]
+        },
+        {
+            "id": "35",
+            "type": "block",
+            "statements": [
+                "logger.warning(f'LaunchDarkly not initialized, using default={default}')",
+                "is_enabled = default"
+            ]
+        },
+        {
+            "id": "36",
+            "type": "block",
+            "statements": [
+                "context = create_context(str(user_id))",
+                "is_enabled = get_client().variation(flag_key, context, default)"
+            ]
+        },
+        {
+            "id": "37",
+            "type": "block",
+            "statements": [
+                "not is_enabled"
+            ]
+        },
+        {
+            "id": "38",
+            "type": "block",
+            "statements": [
+                "raise HTTPException(status_code=404, detail='Feature not available')"
+            ]
+        },
+        {
+            "id": "39",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "40",
+            "type": "block",
+            "statements": [
+                "return cast(T, func(*args, **kwargs))"
+            ]
+        },
+        {
+            "id": "41",
+            "type": "block",
+            "statements": [
+                "logger.error(f'Error evaluating feature flag {flag_key}: {e}')",
+                "raise",
+                "return cast(Callable[P, Union[T, Awaitable[T]]], async_wrapper if asyncio.iscoroutinefunction(func) else sync_wrapper)"
+            ]
+        },
+        {
+            "id": "42",
+            "type": "block",
+            "statements": [
+                "return decorator"
+            ]
+        },
+        {
+            "id": "43",
+            "type": "block",
+            "statements": [
+                "def percentage_rollout(flag_key: str, default: bool=False) -> Callable[[Callable[P, Union[T, Awaitable[T]]]], Callable[P, Union[T, Awaitable[T]]]]:\n    \"\"\"Decorator for percentage-based rollouts.\"\"\"\n    return feature_flag(flag_key, default)",
+                "'Decorator for percentage-based rollouts.'",
+                "return feature_flag(flag_key, default)"
+            ]
+        },
+        {
+            "id": "44",
+            "type": "block",
+            "statements": [
+                "def beta_feature(flag_key: Optional[str]=None, unauthorized_response: Any={'message': 'Not available in beta'}) -> Callable[[Callable[P, Union[T, Awaitable[T]]]], Callable[P, Union[T, Awaitable[T]]]]:\n    \"\"\"Decorator for beta features.\"\"\"\n    actual_key = f'beta-{flag_key}' if flag_key else 'beta'\n    return feature_flag(actual_key, False)",
+                "'Decorator for beta features.'",
+                "actual_key = f'beta-{flag_key}' if flag_key else 'beta'",
+                "return feature_flag(actual_key, False)"
+            ]
+        },
+        {
+            "id": "45",
+            "type": "block",
+            "statements": [
+                "@contextlib.contextmanager\ndef mock_flag_variation(flag_key: str, return_value: Any):\n    \"\"\"Context manager for testing feature flags.\"\"\"\n    original_variation = get_client().variation\n    get_client().variation = lambda key, context, default: return_value if key == flag_key else original_variation(key, context, default)\n    try:\n        yield\n    finally:\n        get_client().variation = original_variation",
+                "'Context manager for testing feature flags.'",
+                "original_variation = get_client().variation",
+                "get_client().variation = lambda key, context, default: return_value if key == flag_key else original_variation(key, context, default)",
+                "try:\n    yield\nfinally:\n    get_client().variation = original_variation",
+                "(yield)",
+                "get_client().variation = original_variation"
+            ]
+        }
+    ],
+    "edges": [
+        {
+            "source": "2",
+            "target": "3",
+            "type": "true"
+        },
+        {
+            "source": "2",
+            "target": "4",
+            "type": "false"
+        },
+        {
+            "source": "4",
+            "target": "5",
+            "type": "next"
+        },
+        {
+            "source": "5",
+            "target": "6",
+            "type": "true"
+        },
+        {
+            "source": "5",
+            "target": "7",
+            "type": "false"
+        },
+        {
+            "source": "6",
+            "target": "8",
+            "type": "next"
+        },
+        {
+            "source": "7",
+            "target": "8",
+            "type": "next"
+        },
+        {
+            "source": "8",
+            "target": "9",
+            "type": "true"
+        },
+        {
+            "source": "8",
+            "target": "10",
+            "type": "false"
+        },
+        {
+            "source": "9",
+            "target": "11",
+            "type": "next"
+        },
+        {
+            "source": "10",
+            "target": "11",
+            "type": "next"
+        },
+        {
+            "source": "11",
+            "target": "12",
+            "type": "true"
+        },
+        {
+            "source": "11",
+            "target": "13",
+            "type": "false"
+        },
+        {
+            "source": "12",
+            "target": "15",
+            "type": "next"
+        },
+        {
+            "source": "13",
+            "target": "14",
+            "type": "next"
+        },
+        {
+            "source": "15",
+            "target": "16",
+            "type": "true"
+        },
+        {
+            "source": "15",
+            "target": "17",
+            "type": "false"
+        },
+        {
+            "source": "16",
+            "target": "15",
+            "type": "next"
+        },
+        {
+            "source": "17",
+            "target": "14",
+            "type": "next"
+        },
+        {
+            "source": "18",
+            "target": "19",
+            "type": "true"
+        },
+        {
+            "source": "18",
+            "target": "20",
+            "type": "false"
+        },
+        {
+            "source": "19",
+            "target": "21",
+            "type": "next"
+        },
+        {
+            "source": "20",
+            "target": "21",
+            "type": "next"
+        },
+        {
+            "source": "21",
+            "target": "22",
+            "type": "true"
+        },
+        {
+            "source": "21",
+            "target": "23",
+            "type": "false"
+        },
+        {
+            "source": "22",
+            "target": "24",
+            "type": "next"
+        },
+        {
+            "source": "23",
+            "target": "24",
+            "type": "next"
+        },
+        {
+            "source": "24",
+            "target": "25",
+            "type": "true"
+        },
+        {
+            "source": "24",
+            "target": "26",
+            "type": "false"
+        },
+        {
+            "source": "25",
+            "target": "27",
+            "type": "next"
+        },
+        {
+            "source": "26",
+            "target": "27",
+            "type": "next"
+        },
+        {
+            "source": "27",
+            "target": "28",
+            "type": "true"
+        },
+        {
+            "source": "27",
+            "target": "29",
+            "type": "false"
+        },
+        {
+            "source": "29",
+            "target": "30",
+            "type": "next"
+        },
+        {
+            "source": "31",
+            "target": "32",
+            "type": "true"
+        },
+        {
+            "source": "31",
+            "target": "33",
+            "type": "false"
+        },
+        {
+            "source": "32",
+            "target": "34",
+            "type": "next"
+        },
+        {
+            "source": "33",
+            "target": "34",
+            "type": "next"
+        },
+        {
+            "source": "34",
+            "target": "35",
+            "type": "true"
+        },
+        {
+            "source": "34",
+            "target": "36",
+            "type": "false"
+        },
+        {
+            "source": "35",
+            "target": "37",
+            "type": "next"
+        },
+        {
+            "source": "36",
+            "target": "37",
+            "type": "next"
+        },
+        {
+            "source": "37",
+            "target": "38",
+            "type": "true"
+        },
+        {
+            "source": "37",
+            "target": "39",
+            "type": "false"
+        },
+        {
+            "source": "38",
+            "target": "40",
+            "type": "next"
+        },
+        {
+            "source": "39",
+            "target": "40",
+            "type": "next"
+        }
+    ]
+}

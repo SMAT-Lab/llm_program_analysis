@@ -1,0 +1,578 @@
+{
+    "nodes": [
+        {
+            "id": "chunk_0_GlobalBlock_1",
+            "code": "# -*- coding: utf-8 -*-\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_2",
+            "code": "import re\nimport sys\nfrom string import punctuation\nfrom typing import List, Tuple, Dict\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_3",
+            "code": "# Temporary replacement\n# The descriptions that contain () at the end must adapt to the new policy later\npunctuation = punctuation.replace('()', '')\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_4",
+            "code": "anchor = '###'\nauth_keys = ['apiKey', 'OAuth', 'X-Mashape-Key', 'User-Agent', 'No']\nhttps_keys = ['Yes', 'No']\ncors_keys = ['Yes', 'No', 'Unknown']\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_5",
+            "code": "index_title = 0\nindex_desc = 1\nindex_auth = 2\nindex_https = 3\nindex_cors = 4\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_6",
+            "code": "num_segments = 5\nmin_entries_per_category = 3\nmax_description_length = 100\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_7",
+            "code": "anchor_re = re.compile(anchor + '\\s(.+)')\ncategory_title_in_index_re = re.compile('\\*\\s\\[(.*)\\]')\nlink_re = re.compile('\\[(.+)\\]\\((http.*)\\)')\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_8",
+            "code": "# Type aliases\nAPIList = List[str]\nCategories = Dict[str, APIList]\nCategoriesLineNumber = Dict[str, int]\n"
+        },
+        {
+            "id": "chunk_1_error_message_1",
+            "code": "def error_message(line_number: int, message: str) -> str:\n    line = line_number + 1\n    return f'(L{line:03d}) {message}'\n"
+        },
+        {
+            "id": "chunk_2_get_categories_content_1",
+            "code": "def get_categories_content(contents: List[str]) -> Tuple[Categories, CategoriesLineNumber]:\n\n"
+        },
+        {
+            "id": "chunk_2_get_categories_content_2",
+            "code": "    categories = {}\n    category_line_num = {}\n\n"
+        },
+        {
+            "id": "chunk_2_get_categories_content_3",
+            "code": "    for line_num, line_content in enumerate(contents):\n\n"
+        },
+        {
+            "id": "chunk_2_get_categories_content_4",
+            "code": "        if line_content.startswith(anchor):\n            category = line_content.split(anchor)[1].strip()\n            categories[category] = []\n            category_line_num[category] = line_num\n            continue\n"
+        },
+        {
+            "id": "chunk_2_get_categories_content_5",
+            "code": "\n        if not line_content.startswith('|') or line_content.startswith('|---'):\n            continue\n\n"
+        },
+        {
+            "id": "chunk_2_get_categories_content_6",
+            "code": "        raw_title = [\n            raw_content.strip() for raw_content in line_content.split('|')[1:-1]\n        ][0]\n\n"
+        },
+        {
+            "id": "chunk_2_get_categories_content_7",
+            "code": "        title_match = link_re.match(raw_title)\n        if title_match:\n                title = title_match.group(1).upper()\n                categories[category].append(title)\n\n"
+        },
+        {
+            "id": "chunk_2_get_categories_content_8",
+            "code": "    return (categories, category_line_num)\n\n\n"
+        },
+        {
+            "id": "chunk_3_check_alphabetical_order_1",
+            "code": "def check_alphabetical_order(lines: List[str]) -> List[str]:\n\n"
+        },
+        {
+            "id": "chunk_3_check_alphabetical_order_2",
+            "code": "    err_msgs = []\n\n"
+        },
+        {
+            "id": "chunk_3_check_alphabetical_order_3",
+            "code": "    categories, category_line_num = get_categories_content(contents=lines)\n\n"
+        },
+        {
+            "id": "chunk_3_check_alphabetical_order_4",
+            "code": "    for category, api_list in categories.items():\n        if sorted(api_list) != api_list:\n            err_msg = error_message(\n                category_line_num[category], \n                f'{category} category is not alphabetical order'\n            )\n            err_msgs.append(err_msg)\n    \n"
+        },
+        {
+            "id": "chunk_3_check_alphabetical_order_5",
+            "code": "    return err_msgs\n\n\n"
+        },
+        {
+            "id": "chunk_4_check_title_1",
+            "code": "def check_title(line_num: int, raw_title: str) -> List[str]:\n\n    err_msgs = []\n"
+        },
+        {
+            "id": "chunk_4_check_title_2",
+            "code": "    title_match = link_re.match(raw_title)\n"
+        },
+        {
+            "id": "chunk_4_check_title_3",
+            "code": "    if not title_match:\n        err_msg = error_message(line_num, 'Title syntax should be \"[TITLE](LINK)\"')\n        err_msgs.append(err_msg)\n"
+        },
+        {
+            "id": "chunk_4_check_title_4",
+            "code": "        # do not allow \"... API\" in the entry title\n        title = title_match.group(1)\n        if title.upper().endswith(' API'):\n            err_msg = error_message(line_num, 'Title should not end with \"... API\". Every entry is an API here!')\n            err_msgs.append(err_msg)\n"
+        },
+        {
+            "id": "chunk_4_check_title_5",
+            "code": "    return err_msgs\n"
+        },
+        {
+            "id": "chunk_5_check_description_1",
+            "code": "    err_msgs = []\n"
+        },
+        {
+            "id": "chunk_5_check_description_2",
+            "code": "    first_char = description[0]\n    if first_char.upper() != first_char:\n"
+        },
+        {
+            "id": "chunk_5_check_description_3",
+            "code": "        err_msg = error_message(line_num, 'first character of description is not capitalized')\n        err_msgs.append(err_msg)\n"
+        },
+        {
+            "id": "chunk_5_check_description_4",
+            "code": "    last_char = description[-1]\n    if last_char in punctuation:\n"
+        },
+        {
+            "id": "chunk_5_check_description_5",
+            "code": "        err_msg = error_message(line_num, f'description should not end with {last_char}')\n        err_msgs.append(err_msg)\n"
+        },
+        {
+            "id": "chunk_5_check_description_6",
+            "code": "    desc_length = len(description)\n    if desc_length > max_description_length:\n"
+        },
+        {
+            "id": "chunk_5_check_description_7",
+            "code": "        err_msg = error_message(line_num, f'description should not exceed {max_description_length} characters (currently {desc_length})')\n        err_msgs.append(err_msg)\n"
+        },
+        {
+            "id": "chunk_5_check_description_8",
+            "code": "    return err_msgs\n"
+        },
+        {
+            "id": "chunk_6_check_auth_1",
+            "code": "def check_auth(line_num: int, auth: str) -> List[str]:\n\n"
+        },
+        {
+            "id": "chunk_6_check_auth_2",
+            "code": "    err_msgs = []\n\n    backtick = '`'\n"
+        },
+        {
+            "id": "chunk_6_check_auth_3",
+            "code": "    if auth != 'No' and (not auth.startswith(backtick) or not auth.endswith(backtick)):\n        err_msg = error_message(line_num, 'auth value is not enclosed with `backticks`')\n        err_msgs.append(err_msg)\n"
+        },
+        {
+            "id": "chunk_6_check_auth_4",
+            "code": "    if auth.replace(backtick, '') not in auth_keys:\n        err_msg = error_message(line_num, f'{auth} is not a valid Auth option')\n        err_msgs.append(err_msg)\n"
+        },
+        {
+            "id": "chunk_6_check_auth_5",
+            "code": "    return err_msgs\n"
+        },
+        {
+            "id": "chunk_7_check_https_1",
+            "code": "    err_msgs = []\n"
+        },
+        {
+            "id": "chunk_7_check_https_2",
+            "code": "    if https not in https_keys:\n        err_msg = error_message(line_num, f'{https} is not a valid HTTPS option')\n        err_msgs.append(err_msg)\n"
+        },
+        {
+            "id": "chunk_7_check_https_3",
+            "code": "    return err_msgs\n"
+        },
+        {
+            "id": "chunk_8_check_cors_1",
+            "code": "    err_msgs = []\n"
+        },
+        {
+            "id": "chunk_8_check_cors_2",
+            "code": "    if cors not in cors_keys:\n        err_msg = error_message(line_num, f'{cors} is not a valid CORS option')\n        err_msgs.append(err_msg)\n"
+        },
+        {
+            "id": "chunk_8_check_cors_3",
+            "code": "    return err_msgs\n"
+        },
+        {
+            "id": "chunk_9_check_entry_1",
+            "code": "    raw_title = segments[index_title]\n    description = segments[index_desc]\n    auth = segments[index_auth]\n    https = segments[index_https]\n    cors = segments[index_cors]\n"
+        },
+        {
+            "id": "chunk_9_check_entry_2",
+            "code": "    title_err_msgs = check_title(line_num, raw_title)\n    desc_err_msgs = check_description(line_num, description)\n    auth_err_msgs = check_auth(line_num, auth)\n    https_err_msgs = check_https(line_num, https)\n    cors_err_msgs = check_cors(line_num, cors)\n"
+        },
+        {
+            "id": "chunk_9_check_entry_3",
+            "code": "    err_msgs = [\n        *title_err_msgs,\n        *desc_err_msgs,\n        *auth_err_msgs,\n        *https_err_msgs,\n        *cors_err_msgs\n    ]\n"
+        },
+        {
+            "id": "chunk_9_check_entry_4",
+            "code": "    return err_msgs\n"
+        },
+        {
+            "id": "chunk_10_check_file_format_1",
+            "code": "    err_msgs = []\n    category_title_in_index = []\n"
+        },
+        {
+            "id": "chunk_10_check_file_format_2",
+            "code": "    alphabetical_err_msgs = check_alphabetical_order(lines)\n    err_msgs.extend(alphabetical_err_msgs)\n"
+        },
+        {
+            "id": "chunk_10_check_file_format_3",
+            "code": "    num_in_category = min_entries_per_category + 1\n    category = ''\n    category_line = 0\n"
+        },
+        {
+            "id": "chunk_10_check_file_format_4",
+            "code": "    for line_num, line_content in enumerate(lines):\n"
+        },
+        {
+            "id": "chunk_10_check_file_format_5",
+            "code": "        category_title_match = category_title_in_index_re.match(line_content)\n        if category_title_match:\n            category_title_in_index.append(category_title_match.group(1))\n"
+        },
+        {
+            "id": "chunk_10_check_file_format_6",
+            "code": "        if line_content.startswith(anchor):\n            category_match = anchor_re.match(line_content)\n            if category_match:\n                if category_match.group(1) not in category_title_in_index:\n                    err_msg = error_message(line_num, f'category header ({category_match.group(1)}) not added to Index section')\n                    err_msgs.append(err_msg)\n            else:\n                err_msg = error_message(line_num, 'category header is not formatted correctly')\n                err_msgs.append(err_msg)\n"
+        },
+        {
+            "id": "chunk_10_check_file_format_7",
+            "code": "            if num_in_category < min_entries_per_category:\n                err_msg = error_message(category_line, f'{category} category does not have the minimum {min_entries_per_category} entries (only has {num_in_category})')\n                err_msgs.append(err_msg)\n"
+        },
+        {
+            "id": "chunk_10_check_file_format_8",
+            "code": "            category = line_content.split(' ')[1]\n            category_line = line_num\n            num_in_category = 0\n            continue\n"
+        },
+        {
+            "id": "chunk_10_check_file_format_9",
+            "code": "        if not line_content.startswith('|') or line_content.startswith('|---'):\n            continue\n"
+        },
+        {
+            "id": "chunk_10_check_file_format_10",
+            "code": "        num_in_category += 1\n        segments = line_content.split('|')[1:-1]\n        if len(segments) < num_segments:\n            err_msg = error_message(line_num, f'entry does not have all the required columns (have {len(segments)}, need {num_segments})')\n            err_msgs.append(err_msg)\n            continue\n"
+        },
+        {
+            "id": "chunk_10_check_file_format_11",
+            "code": "        for segment in segments:\n            # every line segment should start and end with exactly 1 space\n            if len(segment) - len(segment.lstrip()) != 1 or len(segment) - len(segment.rstrip()) != 1:\n                err_msg = error_message(line_num, 'each segment must start and end with exactly 1 space')\n                err_msgs.append(err_msg)\n"
+        },
+        {
+            "id": "chunk_10_check_file_format_12",
+            "code": "        segments = [segment.strip() for segment in segments]\n        entry_err_msgs = check_entry(line_num, segments)\n        err_msgs.extend(entry_err_msgs)\n"
+        },
+        {
+            "id": "chunk_10_check_file_format_13",
+            "code": "    return err_msgs\n"
+        },
+        {
+            "id": "chunk_11_main_1",
+            "code": "    with open(filename, mode='r', encoding='utf-8') as file:\n        lines = list(line.rstrip() for line in file)\n"
+        },
+        {
+            "id": "chunk_11_main_2",
+            "code": "    file_format_err_msgs = check_file_format(lines)\n"
+        },
+        {
+            "id": "chunk_11_main_3",
+            "code": "    if file_format_err_msgs:\n        for err_msg in file_format_err_msgs:\n            print(err_msg)\n        sys.exit(1)\n"
+        },
+        {
+            "id": "chunk_12_GlobalBlock_1",
+            "code": "if __name__ == '__main__':\n"
+        },
+        {
+            "id": "chunk_12_GlobalBlock_2",
+            "code": "    num_args = len(sys.argv)\n"
+        },
+        {
+            "id": "chunk_12_GlobalBlock_3",
+            "code": "    if num_args < 2:\n        print('No .md file passed (file should contain Markdown table syntax)')\n        sys.exit(1)\n"
+        },
+        {
+            "id": "chunk_12_GlobalBlock_4",
+            "code": "    filename = sys.argv[1]\n"
+        },
+        {
+            "id": "chunk_12_GlobalBlock_5",
+            "code": "    main(filename)\n"
+        }
+    ],
+    "edges": [
+        {
+            "from": "chunk_0_GlobalBlock_1",
+            "to": "chunk_0_GlobalBlock_2"
+        },
+        {
+            "from": "chunk_0_GlobalBlock_2",
+            "to": "chunk_0_GlobalBlock_3"
+        },
+        {
+            "from": "chunk_0_GlobalBlock_3",
+            "to": "chunk_0_GlobalBlock_4"
+        },
+        {
+            "from": "chunk_0_GlobalBlock_4",
+            "to": "chunk_0_GlobalBlock_5"
+        },
+        {
+            "from": "chunk_0_GlobalBlock_5",
+            "to": "chunk_0_GlobalBlock_6"
+        },
+        {
+            "from": "chunk_0_GlobalBlock_6",
+            "to": "chunk_0_GlobalBlock_7"
+        },
+        {
+            "from": "chunk_0_GlobalBlock_7",
+            "to": "chunk_0_GlobalBlock_8"
+        },
+        {
+            "from": "chunk_2_get_categories_content_1",
+            "to": "chunk_2_get_categories_content_2"
+        },
+        {
+            "from": "chunk_2_get_categories_content_2",
+            "to": "chunk_2_get_categories_content_3"
+        },
+        {
+            "from": "chunk_2_get_categories_content_3",
+            "to": "chunk_2_get_categories_content_4"
+        },
+        {
+            "from": "chunk_2_get_categories_content_3",
+            "to": "chunk_2_get_categories_content_8"
+        },
+        {
+            "from": "chunk_2_get_categories_content_4",
+            "to": "chunk_2_get_categories_content_3"
+        },
+        {
+            "from": "chunk_2_get_categories_content_4",
+            "to": "chunk_2_get_categories_content_5"
+        },
+        {
+            "from": "chunk_2_get_categories_content_5",
+            "to": "chunk_2_get_categories_content_3"
+        },
+        {
+            "from": "chunk_2_get_categories_content_5",
+            "to": "chunk_2_get_categories_content_6"
+        },
+        {
+            "from": "chunk_2_get_categories_content_6",
+            "to": "chunk_2_get_categories_content_7"
+        },
+        {
+            "from": "chunk_2_get_categories_content_7",
+            "to": "chunk_2_get_categories_content_3"
+        },
+        {
+            "from": "chunk_3_check_alphabetical_order_1",
+            "to": "chunk_3_check_alphabetical_order_2"
+        },
+        {
+            "from": "chunk_3_check_alphabetical_order_2",
+            "to": "chunk_3_check_alphabetical_order_3"
+        },
+        {
+            "from": "chunk_3_check_alphabetical_order_3",
+            "to": "chunk_3_check_alphabetical_order_4"
+        },
+        {
+            "from": "chunk_3_check_alphabetical_order_4",
+            "to": "chunk_3_check_alphabetical_order_4"
+        },
+        {
+            "from": "chunk_3_check_alphabetical_order_4",
+            "to": "chunk_3_check_alphabetical_order_5"
+        },
+        {
+            "from": "chunk_4_check_title_1",
+            "to": "chunk_4_check_title_2"
+        },
+        {
+            "from": "chunk_4_check_title_2",
+            "to": "chunk_4_check_title_3"
+        },
+        {
+            "from": "chunk_4_check_title_2",
+            "to": "chunk_4_check_title_4"
+        },
+        {
+            "from": "chunk_4_check_title_3",
+            "to": "chunk_4_check_title_5"
+        },
+        {
+            "from": "chunk_4_check_title_4",
+            "to": "chunk_4_check_title_5"
+        },
+        {
+            "from": "chunk_5_check_description_1",
+            "to": "chunk_5_check_description_2"
+        },
+        {
+            "from": "chunk_5_check_description_2",
+            "to": "chunk_5_check_description_3"
+        },
+        {
+            "from": "chunk_5_check_description_2",
+            "to": "chunk_5_check_description_4"
+        },
+        {
+            "from": "chunk_5_check_description_3",
+            "to": "chunk_5_check_description_4"
+        },
+        {
+            "from": "chunk_5_check_description_4",
+            "to": "chunk_5_check_description_5"
+        },
+        {
+            "from": "chunk_5_check_description_4",
+            "to": "chunk_5_check_description_6"
+        },
+        {
+            "from": "chunk_5_check_description_5",
+            "to": "chunk_5_check_description_6"
+        },
+        {
+            "from": "chunk_5_check_description_6",
+            "to": "chunk_5_check_description_7"
+        },
+        {
+            "from": "chunk_5_check_description_6",
+            "to": "chunk_5_check_description_8"
+        },
+        {
+            "from": "chunk_5_check_description_7",
+            "to": "chunk_5_check_description_8"
+        },
+        {
+            "from": "chunk_6_check_auth_1",
+            "to": "chunk_6_check_auth_2"
+        },
+        {
+            "from": "chunk_6_check_auth_2",
+            "to": "chunk_6_check_auth_3"
+        },
+        {
+            "from": "chunk_6_check_auth_3",
+            "to": "chunk_6_check_auth_4"
+        },
+        {
+            "from": "chunk_6_check_auth_3",
+            "to": "chunk_6_check_auth_5"
+        },
+        {
+            "from": "chunk_6_check_auth_4",
+            "to": "chunk_6_check_auth_5"
+        },
+        {
+            "from": "chunk_7_check_https_1",
+            "to": "chunk_7_check_https_2"
+        },
+        {
+            "from": "chunk_7_check_https_2",
+            "to": "chunk_7_check_https_3"
+        },
+        {
+            "from": "chunk_8_check_cors_1",
+            "to": "chunk_8_check_cors_2"
+        },
+        {
+            "from": "chunk_8_check_cors_2",
+            "to": "chunk_8_check_cors_3"
+        },
+        {
+            "from": "chunk_9_check_entry_1",
+            "to": "chunk_9_check_entry_2"
+        },
+        {
+            "from": "chunk_9_check_entry_2",
+            "to": "chunk_9_check_entry_3"
+        },
+        {
+            "from": "chunk_9_check_entry_3",
+            "to": "chunk_9_check_entry_4"
+        },
+        {
+            "from": "chunk_10_check_file_format_1",
+            "to": "chunk_10_check_file_format_2"
+        },
+        {
+            "from": "chunk_10_check_file_format_2",
+            "to": "chunk_10_check_file_format_3"
+        },
+        {
+            "from": "chunk_10_check_file_format_3",
+            "to": "chunk_10_check_file_format_4"
+        },
+        {
+            "from": "chunk_10_check_file_format_4",
+            "to": "chunk_10_check_file_format_5"
+        },
+        {
+            "from": "chunk_10_check_file_format_4",
+            "to": "chunk_10_check_file_format_13"
+        },
+        {
+            "from": "chunk_10_check_file_format_5",
+            "to": "chunk_10_check_file_format_6"
+        },
+        {
+            "from": "chunk_10_check_file_format_6",
+            "to": "chunk_10_check_file_format_7"
+        },
+        {
+            "from": "chunk_10_check_file_format_6",
+            "to": "chunk_10_check_file_format_9"
+        },
+        {
+            "from": "chunk_10_check_file_format_7",
+            "to": "chunk_10_check_file_format_8"
+        },
+        {
+            "from": "chunk_10_check_file_format_8",
+            "to": "chunk_10_check_file_format_4"
+        },
+        {
+            "from": "chunk_10_check_file_format_9",
+            "to": "chunk_10_check_file_format_10"
+        },
+        {
+            "from": "chunk_10_check_file_format_9",
+            "to": "chunk_10_check_file_format_4"
+        },
+        {
+            "from": "chunk_10_check_file_format_10",
+            "to": "chunk_10_check_file_format_11"
+        },
+        {
+            "from": "chunk_10_check_file_format_10",
+            "to": "chunk_10_check_file_format_4"
+        },
+        {
+            "from": "chunk_10_check_file_format_11",
+            "to": "chunk_10_check_file_format_12"
+        },
+        {
+            "from": "chunk_10_check_file_format_12",
+            "to": "chunk_10_check_file_format_4"
+        },
+        {
+            "from": "chunk_11_main_1",
+            "to": "chunk_11_main_2"
+        },
+        {
+            "from": "chunk_11_main_2",
+            "to": "chunk_11_main_3"
+        },
+        {
+            "from": "chunk_12_GlobalBlock_1",
+            "to": "chunk_12_GlobalBlock_2"
+        },
+        {
+            "from": "chunk_12_GlobalBlock_2",
+            "to": "chunk_12_GlobalBlock_3"
+        },
+        {
+            "from": "chunk_12_GlobalBlock_3",
+            "to": "chunk_12_GlobalBlock_4"
+        },
+        {
+            "from": "chunk_12_GlobalBlock_3",
+            "to": "chunk_12_GlobalBlock_5"
+        },
+        {
+            "from": "chunk_12_GlobalBlock_4",
+            "to": "chunk_12_GlobalBlock_5"
+        }
+    ]
+}

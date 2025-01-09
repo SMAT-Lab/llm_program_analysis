@@ -1,0 +1,446 @@
+{
+    "nodes": [
+        {
+            "id": "chunk_0_GlobalBlock_1",
+            "code": "import logging\nimport secrets\nfrom abc import ABC, abstractmethod\nfrom typing import ClassVar, Generic, Optional, TypeVar\nfrom uuid import uuid4\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_2",
+            "code": "from fastapi import Request\nfrom strenum import StrEnum\n\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_3",
+            "code": "from backend.data import integrations\nfrom backend.data.model import Credentials\nfrom backend.integrations.providers import ProviderName\nfrom backend.integrations.webhooks.utils import webhook_ingress_url\nfrom backend.util.exceptions import MissingConfigError\nfrom backend.util.settings import Config\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_4",
+            "code": "logger = logging.getLogger(__name__)\napp_config = Config()\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_5",
+            "code": "WT = TypeVar(\"WT\", bound=StrEnum)\n"
+        },
+        {
+            "id": "chunk_1_BaseWebhooksManager_1",
+            "code": "class BaseWebhooksManager(ABC, Generic[WT]):\n    # --8<-- [start:BaseWebhooksManager1]\n    PROVIDER_NAME: ClassVar[ProviderName]\n    # --8<-- [end:BaseWebhooksManager1]\n"
+        },
+        {
+            "id": "chunk_1_BaseWebhooksManager_2",
+            "code": "    WebhookType: WT\n"
+        },
+        {
+            "id": "chunk_1_BaseWebhooksManager_3",
+            "code": "    async def get_suitable_auto_webhook(\n        self,\n        user_id: str,\n        credentials: Credentials,\n        webhook_type: WT,\n        resource: str,\n        events: list[str],\n    ) -> integrations.Webhook:\n"
+        },
+        {
+            "id": "chunk_1_BaseWebhooksManager_4",
+            "code": "        if not app_config.platform_base_url:\n            raise MissingConfigError(\n                \"PLATFORM_BASE_URL must be set to use Webhook functionality\"\n            )\n"
+        },
+        {
+            "id": "chunk_1_BaseWebhooksManager_5",
+            "code": "        if webhook := await integrations.find_webhook_by_credentials_and_props(\n            credentials.id, webhook_type, resource, events\n        ):\n            return webhook\n"
+        },
+        {
+            "id": "chunk_1_BaseWebhooksManager_6",
+            "code": "        return await self._create_webhook(\n            user_id, webhook_type, events, resource, credentials\n        )\n"
+        },
+        {
+            "id": "chunk_1_BaseWebhooksManager_7",
+            "code": "    async def get_manual_webhook(\n        self,\n        user_id: str,\n        graph_id: str,\n        webhook_type: WT,\n        events: list[str],\n    ):\n"
+        },
+        {
+            "id": "chunk_1_BaseWebhooksManager_8",
+            "code": "        if current_webhook := await integrations.find_webhook_by_graph_and_props(\n            graph_id, self.PROVIDER_NAME, webhook_type, events\n        ):\n            return current_webhook\n"
+        },
+        {
+            "id": "chunk_1_BaseWebhooksManager_9",
+            "code": "        return await self._create_webhook(\n            user_id,\n            webhook_type,\n            events,\n            register=False,\n        )\n"
+        },
+        {
+            "id": "chunk_1_BaseWebhooksManager_10",
+            "code": "    async def prune_webhook_if_dangling(\n        self, webhook_id: str, credentials: Optional[Credentials]\n    ) -> bool:\n"
+        },
+        {
+            "id": "chunk_1_BaseWebhooksManager_11",
+            "code": "        webhook = await integrations.get_webhook(webhook_id)\n        if webhook.attached_nodes is None:\n            raise ValueError(\"Error retrieving webhook including attached nodes\")\n"
+        },
+        {
+            "id": "chunk_1_BaseWebhooksManager_12",
+            "code": "        if webhook.attached_nodes:\n            # Don't prune webhook if in use\n            return False\n"
+        },
+        {
+            "id": "chunk_1_BaseWebhooksManager_13",
+            "code": "        if credentials:\n            await self._deregister_webhook(webhook, credentials)\n        await integrations.delete_webhook(webhook.id)\n        return True\n"
+        },
+        {
+            "id": "chunk_1_BaseWebhooksManager_14",
+            "code": "    # --8<-- [start:BaseWebhooksManager3]\n    @classmethod\n    @abstractmethod\n    async def validate_payload(\n        cls, webhook: integrations.Webhook, request: Request\n    ) -> tuple[dict, str]:\n        \"\"\"\n        Validates an incoming webhook request and returns its payload and type.\n\n        Params:\n            webhook: Object representing the configured webhook and its properties in our system.\n            request: Incoming FastAPI `Request`\n\n        Returns:\n            dict: The validated payload\n            str: The event type associated with the payload\n        \"\"\"\n\n    # --8<-- [end:BaseWebhooksManager3]\n"
+        },
+        {
+            "id": "chunk_1_BaseWebhooksManager_15",
+            "code": "    # --8<-- [start:BaseWebhooksManager5]\n    async def trigger_ping(\n        self, webhook: integrations.Webhook, credentials: Credentials | None\n    ) -> None:\n        \"\"\"\n        Triggers a ping to the given webhook.\n\n        Raises:\n            NotImplementedError: if the provider doesn't support pinging\n        \"\"\"\n        # --8<-- [end:BaseWebhooksManager5]\n"
+        },
+        {
+            "id": "chunk_1_BaseWebhooksManager_16",
+            "code": "        raise NotImplementedError(f\"{self.__class__.__name__} doesn't support pinging\")\n"
+        },
+        {
+            "id": "chunk_1_BaseWebhooksManager_17",
+            "code": "    # --8<-- [start:BaseWebhooksManager2]\n    @abstractmethod\n    async def _register_webhook(\n        self,\n        credentials: Credentials,\n        webhook_type: WT,\n        resource: str,\n        events: list[str],\n        ingress_url: str,\n        secret: str,\n    ) -> tuple[str, dict]:\n        \"\"\"\n        Registers a new webhook with the provider.\n\n        Params:\n            credentials: The credentials with which to create the webhook\n            webhook_type: The provider-specific webhook type to create\n            resource: The resource to receive events for\n            events: The events to subscribe to\n            ingress_url: The ingress URL for webhook payloads\n            secret: Secret used to verify webhook payloads\n\n        Returns:\n            str: Webhook ID assigned by the provider\n            config: Provider-specific configuration for the webhook\n        \"\"\"\n        ...\n\n    # --8<-- [end:BaseWebhooksManager2]\n"
+        },
+        {
+            "id": "chunk_1_BaseWebhooksManager_18",
+            "code": "    # --8<-- [start:BaseWebhooksManager4]\n    @abstractmethod\n    async def _deregister_webhook(\n        self, webhook: integrations.Webhook, credentials: Credentials\n    ) -> None: ...\n\n    # --8<-- [end:BaseWebhooksManager4]\n"
+        },
+        {
+            "id": "chunk_1_BaseWebhooksManager_19",
+            "code": "    async def _create_webhook(\n        self,\n        user_id: str,\n        webhook_type: WT,\n        events: list[str],\n        resource: str = \"\",\n        credentials: Optional[Credentials] = None,\n        register: bool = True,\n    ) -> integrations.Webhook:\n"
+        },
+        {
+            "id": "chunk_1_BaseWebhooksManager_20",
+            "code": "        if not app_config.platform_base_url:\n            raise MissingConfigError(\n                \"PLATFORM_BASE_URL must be set to use Webhook functionality\"\n            )\n"
+        },
+        {
+            "id": "chunk_1_BaseWebhooksManager_21",
+            "code": "        id = str(uuid4())\n        secret = secrets.token_hex(32)\n        provider_name = self.PROVIDER_NAME\n        ingress_url = webhook_ingress_url(provider_name=provider_name, webhook_id=id)\n"
+        },
+        {
+            "id": "chunk_1_BaseWebhooksManager_22",
+            "code": "        if register:\n            if not credentials:\n                raise TypeError(\"credentials are required if register = True\")\n"
+        },
+        {
+            "id": "chunk_1_BaseWebhooksManager_23",
+            "code": "            provider_webhook_id, config = await self._register_webhook(\n                credentials, webhook_type, resource, events, ingress_url, secret\n            )\n"
+        },
+        {
+            "id": "chunk_1_BaseWebhooksManager_24",
+            "code": "        else:\n            provider_webhook_id, config = \"\", {}\n"
+        },
+        {
+            "id": "chunk_1_BaseWebhooksManager_25",
+            "code": "        return await integrations.create_webhook(\n            integrations.Webhook(\n                id=id,\n                user_id=user_id,\n                provider=provider_name,\n                credentials_id=credentials.id if credentials else \"\",\n                webhook_type=webhook_type,\n                resource=resource,\n                events=events,\n                provider_webhook_id=provider_webhook_id,\n                config=config,\n                secret=secret,\n            )\n        )\n"
+        },
+        {
+            "id": "chunk_2_BaseWebhooksManager.get_suitable_auto_webhook_1",
+            "code": "    async def get_suitable_auto_webhook(\n        self,\n        user_id: str,\n        credentials: Credentials,\n        webhook_type: WT,\n        resource: str,\n        events: list[str],\n    ) -> integrations.Webhook:\n"
+        },
+        {
+            "id": "chunk_2_BaseWebhooksManager.get_suitable_auto_webhook_2",
+            "code": "        if not app_config.platform_base_url:\n            raise MissingConfigError(\n                \"PLATFORM_BASE_URL must be set to use Webhook functionality\"\n            )\n"
+        },
+        {
+            "id": "chunk_2_BaseWebhooksManager.get_suitable_auto_webhook_3",
+            "code": "        if webhook := await integrations.find_webhook_by_credentials_and_props(\n            credentials.id, webhook_type, resource, events\n        ):\n            return webhook\n"
+        },
+        {
+            "id": "chunk_2_BaseWebhooksManager.get_suitable_auto_webhook_4",
+            "code": "        return await self._create_webhook(\n            user_id, webhook_type, events, resource, credentials\n        )\n"
+        },
+        {
+            "id": "chunk_3_BaseWebhooksManager.get_manual_webhook_1",
+            "code": "    async def get_manual_webhook(\n        self,\n        user_id: str,\n        graph_id: str,\n        webhook_type: WT,\n        events: list[str],\n    ):\n"
+        },
+        {
+            "id": "chunk_3_BaseWebhooksManager.get_manual_webhook_2",
+            "code": "        if current_webhook := await integrations.find_webhook_by_graph_and_props(\n            graph_id, self.PROVIDER_NAME, webhook_type, events\n        ):\n"
+        },
+        {
+            "id": "chunk_3_BaseWebhooksManager.get_manual_webhook_3",
+            "code": "            return current_webhook\n"
+        },
+        {
+            "id": "chunk_3_BaseWebhooksManager.get_manual_webhook_4",
+            "code": "        return await self._create_webhook(\n            user_id,\n            webhook_type,\n            events,\n            register=False,\n        )\n"
+        },
+        {
+            "id": "chunk_4_BaseWebhooksManager.prune_webhook_if_dangling_1",
+            "code": "    async def prune_webhook_if_dangling(\n        self, webhook_id: str, credentials: Optional[Credentials]\n    ) -> bool:\n"
+        },
+        {
+            "id": "chunk_4_BaseWebhooksManager.prune_webhook_if_dangling_2",
+            "code": "        webhook = await integrations.get_webhook(webhook_id)\n"
+        },
+        {
+            "id": "chunk_4_BaseWebhooksManager.prune_webhook_if_dangling_3",
+            "code": "        if webhook.attached_nodes is None:\n            raise ValueError(\"Error retrieving webhook including attached nodes\")\n"
+        },
+        {
+            "id": "chunk_4_BaseWebhooksManager.prune_webhook_if_dangling_4",
+            "code": "        if webhook.attached_nodes:\n            # Don't prune webhook if in use\n            return False\n"
+        },
+        {
+            "id": "chunk_4_BaseWebhooksManager.prune_webhook_if_dangling_5",
+            "code": "        if credentials:\n            await self._deregister_webhook(webhook, credentials)\n"
+        },
+        {
+            "id": "chunk_4_BaseWebhooksManager.prune_webhook_if_dangling_6",
+            "code": "        await integrations.delete_webhook(webhook.id)\n        return True\n"
+        },
+        {
+            "id": "chunk_5_BaseWebhooksManager.validate_payload_1",
+            "code": "    async def validate_payload(\n        cls, webhook: integrations.Webhook, request: Request\n    ) -> tuple[dict, str]:\n        \"\"\"\n        Validates an incoming webhook request and returns its payload and type.\n\n        Params:\n            webhook: Object representing the configured webhook and its properties in our system.\n            request: Incoming FastAPI `Request`\n\n        Returns:\n            dict: The validated payload\n            str: The event type associated with the payload\n        \"\"\"\n\n    # --8<-- [end:BaseWebhooksManager3]\n"
+        },
+        {
+            "id": "chunk_6_BaseWebhooksManager.trigger_ping_1",
+            "code": "    async def trigger_ping(\n        self, webhook: integrations.Webhook, credentials: Credentials | None\n    ) -> None:\n        \"\"\"\n        Triggers a ping to the given webhook.\n\n        Raises:\n            NotImplementedError: if the provider doesn't support pinging\n        \"\"\"\n        # --8<-- [end:BaseWebhooksManager5]\n        raise NotImplementedError(f\"{self.__class__.__name__} doesn't support pinging\")\n"
+        },
+        {
+            "id": "chunk_7_BaseWebhooksManager._register_webhook_1",
+            "code": "    async def _register_webhook(\n        self,\n        credentials: Credentials,\n        webhook_type: WT,\n        resource: str,\n        events: list[str],\n        ingress_url: str,\n        secret: str,\n    ) -> tuple[str, dict]:\n"
+        },
+        {
+            "id": "chunk_7_BaseWebhooksManager._register_webhook_2",
+            "code": "        \"\"\"\n        Registers a new webhook with the provider.\n\n        Params:\n            credentials: The credentials with which to create the webhook\n            webhook_type: The provider-specific webhook type to create\n            resource: The resource to receive events for\n            events: The events to subscribe to\n            ingress_url: The ingress URL for webhook payloads\n            secret: Secret used to verify webhook payloads\n\n        Returns:\n            str: Webhook ID assigned by the provider\n            config: Provider-specific configuration for the webhook\n        \"\"\"\n"
+        },
+        {
+            "id": "chunk_7_BaseWebhooksManager._register_webhook_3",
+            "code": "        ...\n"
+        },
+        {
+            "id": "chunk_7_BaseWebhooksManager._register_webhook_4",
+            "code": "\n    # --8<-- [end:BaseWebhooksManager2]\n"
+        },
+        {
+            "id": "chunk_8_BaseWebhooksManager._deregister_webhook_1",
+            "code": "    async def _deregister_webhook(\n        self, webhook: integrations.Webhook, credentials: Credentials\n    ) -> None: ...\n"
+        },
+        {
+            "id": "chunk_8_BaseWebhooksManager._deregister_webhook_2",
+            "code": "    # --8<-- [end:BaseWebhooksManager4]\n"
+        },
+        {
+            "id": "chunk_9_BaseWebhooksManager._create_webhook_1",
+            "code": "    async def _create_webhook(\n        self,\n        user_id: str,\n        webhook_type: WT,\n        events: list[str],\n        resource: str = \"\",\n        credentials: Optional[Credentials] = None,\n        register: bool = True,\n    ) -> integrations.Webhook:\n"
+        },
+        {
+            "id": "chunk_9_BaseWebhooksManager._create_webhook_2",
+            "code": "        if not app_config.platform_base_url:\n            raise MissingConfigError(\n                \"PLATFORM_BASE_URL must be set to use Webhook functionality\"\n            )\n"
+        },
+        {
+            "id": "chunk_9_BaseWebhooksManager._create_webhook_3",
+            "code": "        id = str(uuid4())\n        secret = secrets.token_hex(32)\n        provider_name = self.PROVIDER_NAME\n        ingress_url = webhook_ingress_url(provider_name=provider_name, webhook_id=id)\n"
+        },
+        {
+            "id": "chunk_9_BaseWebhooksManager._create_webhook_4",
+            "code": "        if register:\n            if not credentials:\n                raise TypeError(\"credentials are required if register = True\")\n"
+        },
+        {
+            "id": "chunk_9_BaseWebhooksManager._create_webhook_5",
+            "code": "            provider_webhook_id, config = await self._register_webhook(\n                credentials, webhook_type, resource, events, ingress_url, secret\n            )\n"
+        },
+        {
+            "id": "chunk_9_BaseWebhooksManager._create_webhook_6",
+            "code": "        else:\n            provider_webhook_id, config = \"\", {}\n"
+        },
+        {
+            "id": "chunk_9_BaseWebhooksManager._create_webhook_7",
+            "code": "        return await integrations.create_webhook(\n            integrations.Webhook(\n                id=id,\n                user_id=user_id,\n                provider=provider_name,\n                credentials_id=credentials.id if credentials else \"\",\n                webhook_type=webhook_type,\n                resource=resource,\n                events=events,\n                provider_webhook_id=provider_webhook_id,\n                config=config,\n                secret=secret,\n            )\n        )\n"
+        }
+    ],
+    "edges": [
+        {
+            "from": "chunk_0_GlobalBlock_1",
+            "to": "chunk_0_GlobalBlock_2"
+        },
+        {
+            "from": "chunk_0_GlobalBlock_2",
+            "to": "chunk_0_GlobalBlock_3"
+        },
+        {
+            "from": "chunk_0_GlobalBlock_3",
+            "to": "chunk_0_GlobalBlock_4"
+        },
+        {
+            "from": "chunk_0_GlobalBlock_4",
+            "to": "chunk_0_GlobalBlock_5"
+        },
+        {
+            "from": "chunk_1_BaseWebhooksManager_1",
+            "to": "chunk_1_BaseWebhooksManager_2"
+        },
+        {
+            "from": "chunk_1_BaseWebhooksManager_2",
+            "to": "chunk_1_BaseWebhooksManager_3"
+        },
+        {
+            "from": "chunk_1_BaseWebhooksManager_2",
+            "to": "chunk_1_BaseWebhooksManager_7"
+        },
+        {
+            "from": "chunk_1_BaseWebhooksManager_2",
+            "to": "chunk_1_BaseWebhooksManager_10"
+        },
+        {
+            "from": "chunk_1_BaseWebhooksManager_2",
+            "to": "chunk_1_BaseWebhooksManager_14"
+        },
+        {
+            "from": "chunk_1_BaseWebhooksManager_2",
+            "to": "chunk_1_BaseWebhooksManager_15"
+        },
+        {
+            "from": "chunk_1_BaseWebhooksManager_2",
+            "to": "chunk_1_BaseWebhooksManager_17"
+        },
+        {
+            "from": "chunk_1_BaseWebhooksManager_2",
+            "to": "chunk_1_BaseWebhooksManager_18"
+        },
+        {
+            "from": "chunk_1_BaseWebhooksManager_2",
+            "to": "chunk_1_BaseWebhooksManager_19"
+        },
+        {
+            "from": "chunk_1_BaseWebhooksManager_3",
+            "to": "chunk_1_BaseWebhooksManager_4"
+        },
+        {
+            "from": "chunk_1_BaseWebhooksManager_4",
+            "to": "chunk_1_BaseWebhooksManager_5"
+        },
+        {
+            "from": "chunk_1_BaseWebhooksManager_5",
+            "to": "chunk_1_BaseWebhooksManager_6"
+        },
+        {
+            "from": "chunk_1_BaseWebhooksManager_7",
+            "to": "chunk_1_BaseWebhooksManager_8"
+        },
+        {
+            "from": "chunk_1_BaseWebhooksManager_8",
+            "to": "chunk_1_BaseWebhooksManager_9"
+        },
+        {
+            "from": "chunk_1_BaseWebhooksManager_10",
+            "to": "chunk_1_BaseWebhooksManager_11"
+        },
+        {
+            "from": "chunk_1_BaseWebhooksManager_11",
+            "to": "chunk_1_BaseWebhooksManager_12"
+        },
+        {
+            "from": "chunk_1_BaseWebhooksManager_12",
+            "to": "chunk_1_BaseWebhooksManager_13"
+        },
+        {
+            "from": "chunk_1_BaseWebhooksManager_15",
+            "to": "chunk_1_BaseWebhooksManager_16"
+        },
+        {
+            "from": "chunk_1_BaseWebhooksManager_19",
+            "to": "chunk_1_BaseWebhooksManager_20"
+        },
+        {
+            "from": "chunk_1_BaseWebhooksManager_20",
+            "to": "chunk_1_BaseWebhooksManager_21"
+        },
+        {
+            "from": "chunk_1_BaseWebhooksManager_21",
+            "to": "chunk_1_BaseWebhooksManager_22"
+        },
+        {
+            "from": "chunk_1_BaseWebhooksManager_21",
+            "to": "chunk_1_BaseWebhooksManager_24"
+        },
+        {
+            "from": "chunk_1_BaseWebhooksManager_22",
+            "to": "chunk_1_BaseWebhooksManager_23"
+        },
+        {
+            "from": "chunk_1_BaseWebhooksManager_23",
+            "to": "chunk_1_BaseWebhooksManager_25"
+        },
+        {
+            "from": "chunk_1_BaseWebhooksManager_24",
+            "to": "chunk_1_BaseWebhooksManager_25"
+        },
+        {
+            "from": "chunk_2_BaseWebhooksManager.get_suitable_auto_webhook_1",
+            "to": "chunk_2_BaseWebhooksManager.get_suitable_auto_webhook_2"
+        },
+        {
+            "from": "chunk_2_BaseWebhooksManager.get_suitable_auto_webhook_2",
+            "to": "chunk_2_BaseWebhooksManager.get_suitable_auto_webhook_3"
+        },
+        {
+            "from": "chunk_2_BaseWebhooksManager.get_suitable_auto_webhook_3",
+            "to": "chunk_2_BaseWebhooksManager.get_suitable_auto_webhook_4"
+        },
+        {
+            "from": "chunk_3_BaseWebhooksManager.get_manual_webhook_1",
+            "to": "chunk_3_BaseWebhooksManager.get_manual_webhook_2"
+        },
+        {
+            "from": "chunk_3_BaseWebhooksManager.get_manual_webhook_2",
+            "to": "chunk_3_BaseWebhooksManager.get_manual_webhook_3"
+        },
+        {
+            "from": "chunk_3_BaseWebhooksManager.get_manual_webhook_2",
+            "to": "chunk_3_BaseWebhooksManager.get_manual_webhook_4"
+        },
+        {
+            "from": "chunk_4_BaseWebhooksManager.prune_webhook_if_dangling_1",
+            "to": "chunk_4_BaseWebhooksManager.prune_webhook_if_dangling_2"
+        },
+        {
+            "from": "chunk_4_BaseWebhooksManager.prune_webhook_if_dangling_2",
+            "to": "chunk_4_BaseWebhooksManager.prune_webhook_if_dangling_3"
+        },
+        {
+            "from": "chunk_4_BaseWebhooksManager.prune_webhook_if_dangling_3",
+            "to": "chunk_4_BaseWebhooksManager.prune_webhook_if_dangling_4"
+        },
+        {
+            "from": "chunk_4_BaseWebhooksManager.prune_webhook_if_dangling_4",
+            "to": "chunk_4_BaseWebhooksManager.prune_webhook_if_dangling_5"
+        },
+        {
+            "from": "chunk_4_BaseWebhooksManager.prune_webhook_if_dangling_4",
+            "to": "chunk_4_BaseWebhooksManager.prune_webhook_if_dangling_6"
+        },
+        {
+            "from": "chunk_4_BaseWebhooksManager.prune_webhook_if_dangling_5",
+            "to": "chunk_4_BaseWebhooksManager.prune_webhook_if_dangling_6"
+        },
+        {
+            "from": "chunk_7_BaseWebhooksManager._register_webhook_1",
+            "to": "chunk_7_BaseWebhooksManager._register_webhook_2"
+        },
+        {
+            "from": "chunk_7_BaseWebhooksManager._register_webhook_2",
+            "to": "chunk_7_BaseWebhooksManager._register_webhook_3"
+        },
+        {
+            "from": "chunk_7_BaseWebhooksManager._register_webhook_3",
+            "to": "chunk_7_BaseWebhooksManager._register_webhook_4"
+        },
+        {
+            "from": "chunk_9_BaseWebhooksManager._create_webhook_1",
+            "to": "chunk_9_BaseWebhooksManager._create_webhook_2"
+        },
+        {
+            "from": "chunk_9_BaseWebhooksManager._create_webhook_2",
+            "to": "chunk_9_BaseWebhooksManager._create_webhook_3"
+        },
+        {
+            "from": "chunk_9_BaseWebhooksManager._create_webhook_3",
+            "to": "chunk_9_BaseWebhooksManager._create_webhook_4"
+        },
+        {
+            "from": "chunk_9_BaseWebhooksManager._create_webhook_4",
+            "to": "chunk_9_BaseWebhooksManager._create_webhook_5"
+        },
+        {
+            "from": "chunk_9_BaseWebhooksManager._create_webhook_4",
+            "to": "chunk_9_BaseWebhooksManager._create_webhook_6"
+        },
+        {
+            "from": "chunk_9_BaseWebhooksManager._create_webhook_5",
+            "to": "chunk_9_BaseWebhooksManager._create_webhook_7"
+        },
+        {
+            "from": "chunk_9_BaseWebhooksManager._create_webhook_6",
+            "to": "chunk_9_BaseWebhooksManager._create_webhook_7"
+        }
+    ]
+}

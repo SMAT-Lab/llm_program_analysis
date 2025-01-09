@@ -1,0 +1,10 @@
+class ColorPalettePreset(str, Enum):
+    NONE = "NONE"
+    EMBER = "EMBER"
+    FRESH = "FRESH"
+    JUNGLE = "JUNGLE"
+    MAGIC = "MAGIC"
+    MELON = "MELON"
+    MOSAIC = "MOSAIC"
+    PASTEL = "PASTEL"
+    ULTRAMARINE = "ULTRAMARINE"

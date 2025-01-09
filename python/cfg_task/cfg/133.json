@@ -1,0 +1,1397 @@
+{
+    "nodes": [
+        {
+            "id": "1",
+            "type": "block",
+            "statements": [
+                "import asyncio",
+                "import random",
+                "from datetime import datetime",
+                "import prisma.enums",
+                "from faker import Faker",
+                "from prisma import Prisma",
+                "faker = Faker()",
+                "NUM_USERS = 100",
+                "NUM_AGENT_BLOCKS = 100",
+                "MIN_GRAPHS_PER_USER = 1",
+                "MAX_GRAPHS_PER_USER = 5",
+                "MIN_NODES_PER_GRAPH = 2",
+                "MAX_NODES_PER_GRAPH = 5",
+                "MIN_PRESETS_PER_USER = 1",
+                "MAX_PRESETS_PER_USER = 5",
+                "MIN_AGENTS_PER_USER = 1",
+                "MAX_AGENTS_PER_USER = 10",
+                "MIN_EXECUTIONS_PER_GRAPH = 1",
+                "MAX_EXECUTIONS_PER_GRAPH = 20",
+                "MIN_REVIEWS_PER_VERSION = 1",
+                "MAX_REVIEWS_PER_VERSION = 5",
+                "def get_image():\n    url = faker.image_url()\n    while 'placekitten.com' in url:\n        url = faker.image_url()\n    return url",
+                "url = faker.image_url()"
+            ]
+        },
+        {
+            "id": "2",
+            "type": "block",
+            "statements": [
+                "'placekitten.com' In url"
+            ]
+        },
+        {
+            "id": "3",
+            "type": "block",
+            "statements": [
+                "url = faker.image_url()"
+            ]
+        },
+        {
+            "id": "4",
+            "type": "block",
+            "statements": [
+                "return url"
+            ]
+        },
+        {
+            "id": "5",
+            "type": "block",
+            "statements": [
+                "async def main():\n    db = Prisma()\n    await db.connect()\n    print(f'Inserting {NUM_USERS} users')\n    users = []\n    for _ in range(NUM_USERS):\n        user = await db.user.create(data={'id': str(faker.uuid4()), 'email': faker.unique.email(), 'name': faker.name(), 'metadata': prisma.Json({}), 'integrations': ''})\n        users.append(user)\n    agent_blocks = []\n    print(f'Inserting {NUM_AGENT_BLOCKS} agent blocks')\n    for _ in range(NUM_AGENT_BLOCKS):\n        block = await db.agentblock.create(data={'name': f'{faker.word()}_{str(faker.uuid4())[:8]}', 'inputSchema': '{}', 'outputSchema': '{}'})\n        agent_blocks.append(block)\n    agent_graphs = []\n    print(f'Inserting {NUM_USERS * MAX_GRAPHS_PER_USER} agent graphs')\n    for user in users:\n        for _ in range(random.randint(MIN_GRAPHS_PER_USER, MAX_GRAPHS_PER_USER)):\n            graph = await db.agentgraph.create(data={'name': faker.sentence(nb_words=3), 'description': faker.text(max_nb_chars=200), 'userId': user.id, 'isActive': True, 'isTemplate': False})\n            agent_graphs.append(graph)\n    agent_nodes = []\n    print(f'Inserting {NUM_USERS * MAX_GRAPHS_PER_USER * MAX_NODES_PER_GRAPH} agent nodes')\n    for graph in agent_graphs:\n        num_nodes = random.randint(MIN_NODES_PER_GRAPH, MAX_NODES_PER_GRAPH)\n        for _ in range(num_nodes):\n            block = random.choice(agent_blocks)\n            node = await db.agentnode.create(data={'agentBlockId': block.id, 'agentGraphId': graph.id, 'agentGraphVersion': graph.version, 'constantInput': '{}', 'metadata': '{}'})\n            agent_nodes.append(node)\n    agent_presets = []\n    print(f'Inserting {NUM_USERS * MAX_PRESETS_PER_USER} agent presets')\n    for user in users:\n        num_presets = random.randint(MIN_PRESETS_PER_USER, MAX_PRESETS_PER_USER)\n        for _ in range(num_presets):\n            graph = random.choice(agent_graphs)\n            preset = await db.agentpreset.create(data={'name': faker.sentence(nb_words=3), 'description': faker.text(max_nb_chars=200), 'userId': user.id, 'agentId': graph.id, 'agentVersion': graph.version, 'isActive': True})\n            agent_presets.append(preset)\n    user_agents = []\n    print(f'Inserting {NUM_USERS * MAX_AGENTS_PER_USER} user agents')\n    for user in users:\n        num_agents = random.randint(MIN_AGENTS_PER_USER, MAX_AGENTS_PER_USER)\n        for _ in range(num_agents):\n            graph = random.choice(agent_graphs)\n            preset = random.choice(agent_presets)\n            user_agent = await db.useragent.create(data={'userId': user.id, 'agentId': graph.id, 'agentVersion': graph.version, 'agentPresetId': preset.id, 'isFavorite': random.choice([True, False]), 'isCreatedByUser': random.choice([True, False]), 'isArchived': random.choice([True, False]), 'isDeleted': random.choice([True, False])})\n            user_agents.append(user_agent)\n    agent_graph_executions = []\n    print(f'Inserting {NUM_USERS * MAX_GRAPHS_PER_USER * MAX_EXECUTIONS_PER_GRAPH} agent graph executions')\n    graph_execution_data = []\n    for graph in agent_graphs:\n        user = random.choice(users)\n        num_executions = random.randint(MIN_EXECUTIONS_PER_GRAPH, MAX_EXECUTIONS_PER_GRAPH)\n        for _ in range(num_executions):\n            matching_presets = [p for p in agent_presets if p.agentId == graph.id]\n            preset = random.choice(matching_presets) if matching_presets and random.random() < 0.5 else None\n            graph_execution_data.append({'agentGraphId': graph.id, 'agentGraphVersion': graph.version, 'userId': user.id, 'executionStatus': prisma.enums.AgentExecutionStatus.COMPLETED, 'startedAt': faker.date_time_this_year(), 'agentPresetId': preset.id if preset else None})\n    agent_graph_executions = await db.agentgraphexecution.create_many(data=graph_execution_data)\n    agent_graph_executions = await db.agentgraphexecution.find_many()\n    print(f'Inserting {NUM_USERS * MAX_GRAPHS_PER_USER * MAX_EXECUTIONS_PER_GRAPH} agent node executions')\n    node_execution_data = []\n    for execution in agent_graph_executions:\n        nodes = [node for node in agent_nodes if node.agentGraphId == execution.agentGraphId]\n        for node in nodes:\n            node_execution_data.append({'agentGraphExecutionId': execution.id, 'agentNodeId': node.id, 'executionStatus': prisma.enums.AgentExecutionStatus.COMPLETED, 'addedTime': datetime.now()})\n    agent_node_executions = await db.agentnodeexecution.create_many(data=node_execution_data)\n    agent_node_executions = await db.agentnodeexecution.find_many()\n    print(f'Inserting {NUM_USERS * MAX_GRAPHS_PER_USER * MAX_EXECUTIONS_PER_GRAPH} agent node execution input/outputs')\n    input_output_data = []\n    for node_execution in agent_node_executions:\n        input_output_data.append({'name': 'input1', 'data': '{}', 'time': datetime.now(), 'referencedByInputExecId': node_execution.id})\n        input_output_data.append({'name': 'output1', 'data': '{}', 'time': datetime.now(), 'referencedByOutputExecId': node_execution.id})\n    await db.agentnodeexecutioninputoutput.create_many(data=input_output_data)\n    print(f'Inserting {NUM_USERS * MAX_GRAPHS_PER_USER} agent node links')\n    for graph in agent_graphs:\n        nodes = [node for node in agent_nodes if node.agentGraphId == graph.id]\n        if len(nodes) >= 2:\n            source_node = nodes[0]\n            sink_node = nodes[1]\n            await db.agentnodelink.create(data={'agentNodeSourceId': source_node.id, 'sourceName': 'output1', 'agentNodeSinkId': sink_node.id, 'sinkName': 'input1', 'isStatic': False})\n    print(f'Inserting {NUM_USERS} analytics details')\n    for user in users:\n        for _ in range(1):\n            await db.analyticsdetails.create(data={'userId': user.id, 'type': faker.word(), 'data': prisma.Json({}), 'dataIndex': faker.word()})\n    print(f'Inserting {NUM_USERS} analytics metrics')\n    for user in users:\n        for _ in range(1):\n            await db.analyticsmetrics.create(data={'userId': user.id, 'analyticMetric': faker.word(), 'value': random.uniform(0, 100), 'dataString': faker.word()})\n    print(f'Inserting {NUM_USERS} credit transactions')\n    for user in users:\n        for _ in range(1):\n            block = random.choice(agent_blocks)\n            await db.credittransaction.create(data={'transactionKey': str(faker.uuid4()), 'userId': user.id, 'blockId': block.id, 'amount': random.randint(1, 100), 'type': prisma.enums.CreditTransactionType.TOP_UP if random.random() < 0.5 else prisma.enums.CreditTransactionType.USAGE, 'metadata': prisma.Json({})})\n    profiles = []\n    print(f'Inserting {NUM_USERS} profiles')\n    for user in users:\n        profile = await db.profile.create(data={'userId': user.id, 'name': user.name or faker.name(), 'username': faker.unique.user_name(), 'description': faker.text(), 'links': [faker.url() for _ in range(3)], 'avatarUrl': get_image()})\n        profiles.append(profile)\n    store_listings = []\n    print(f'Inserting {NUM_USERS} store listings')\n    for graph in agent_graphs:\n        user = random.choice(users)\n        listing = await db.storelisting.create(data={'agentId': graph.id, 'agentVersion': graph.version, 'owningUserId': user.id, 'isApproved': random.choice([True, False])})\n        store_listings.append(listing)\n    store_listing_versions = []\n    print(f'Inserting {NUM_USERS} store listing versions')\n    for listing in store_listings:\n        graph = [g for g in agent_graphs if g.id == listing.agentId][0]\n        version = await db.storelistingversion.create(data={'agentId': graph.id, 'agentVersion': graph.version, 'slug': faker.slug(), 'name': graph.name or faker.sentence(nb_words=3), 'subHeading': faker.sentence(), 'videoUrl': faker.url(), 'imageUrls': [get_image() for _ in range(3)], 'description': faker.text(), 'categories': [faker.word() for _ in range(3)], 'isFeatured': random.choice([True, False]), 'isAvailable': True, 'isApproved': random.choice([True, False]), 'storeListingId': listing.id})\n        store_listing_versions.append(version)\n    print(f'Inserting {NUM_USERS * MAX_REVIEWS_PER_VERSION} store listing reviews')\n    for version in store_listing_versions:\n        available_reviewers = users.copy()\n        random.shuffle(available_reviewers)\n        num_reviews = min(random.randint(MIN_REVIEWS_PER_VERSION, MAX_REVIEWS_PER_VERSION), len(available_reviewers))\n        for reviewer in available_reviewers[:num_reviews]:\n            await db.storelistingreview.create(data={'storeListingVersionId': version.id, 'reviewByUserId': reviewer.id, 'score': random.randint(1, 5), 'comments': faker.text()})\n    print(f'Inserting {NUM_USERS} store listing submissions')\n    for listing in store_listings:\n        version = random.choice(store_listing_versions)\n        reviewer = random.choice(users)\n        status: prisma.enums.SubmissionStatus = random.choice([prisma.enums.SubmissionStatus.PENDING, prisma.enums.SubmissionStatus.APPROVED, prisma.enums.SubmissionStatus.REJECTED])\n        await db.storelistingsubmission.create(data={'storeListingId': listing.id, 'storeListingVersionId': version.id, 'reviewerId': reviewer.id, 'Status': status, 'reviewComments': faker.text()})\n    print(f'Inserting {NUM_USERS} api keys')\n    for user in users:\n        await db.apikey.create(data={'name': faker.word(), 'prefix': str(faker.uuid4())[:8], 'postfix': str(faker.uuid4())[-8:], 'key': str(faker.sha256()), 'status': prisma.enums.APIKeyStatus.ACTIVE, 'permissions': [prisma.enums.APIKeyPermission.EXECUTE_GRAPH, prisma.enums.APIKeyPermission.READ_GRAPH], 'description': faker.text(), 'userId': user.id})\n    await db.disconnect()",
+                "db = Prisma()",
+                "await db.connect()",
+                "print(f'Inserting {NUM_USERS} users')",
+                "users = []"
+            ]
+        },
+        {
+            "id": "6",
+            "type": "block",
+            "statements": [
+                "_",
+                "range(NUM_USERS)"
+            ]
+        },
+        {
+            "id": "7",
+            "type": "block",
+            "statements": [
+                "user = await db.user.create(data={'id': str(faker.uuid4()), 'email': faker.unique.email(), 'name': faker.name(), 'metadata': prisma.Json({}), 'integrations': ''})",
+                "users.append(user)"
+            ]
+        },
+        {
+            "id": "8",
+            "type": "block",
+            "statements": [
+                "agent_blocks = []",
+                "print(f'Inserting {NUM_AGENT_BLOCKS} agent blocks')"
+            ]
+        },
+        {
+            "id": "9",
+            "type": "block",
+            "statements": [
+                "_",
+                "range(NUM_AGENT_BLOCKS)"
+            ]
+        },
+        {
+            "id": "10",
+            "type": "block",
+            "statements": [
+                "block = await db.agentblock.create(data={'name': f'{faker.word()}_{str(faker.uuid4())[:8]}', 'inputSchema': '{}', 'outputSchema': '{}'})",
+                "agent_blocks.append(block)"
+            ]
+        },
+        {
+            "id": "11",
+            "type": "block",
+            "statements": [
+                "agent_graphs = []",
+                "print(f'Inserting {NUM_USERS * MAX_GRAPHS_PER_USER} agent graphs')"
+            ]
+        },
+        {
+            "id": "12",
+            "type": "block",
+            "statements": [
+                "user",
+                "users"
+            ]
+        },
+        {
+            "id": "13",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "14",
+            "type": "block",
+            "statements": [
+                "agent_nodes = []",
+                "print(f'Inserting {NUM_USERS * MAX_GRAPHS_PER_USER * MAX_NODES_PER_GRAPH} agent nodes')"
+            ]
+        },
+        {
+            "id": "15",
+            "type": "block",
+            "statements": [
+                "_",
+                "range(random.randint(MIN_GRAPHS_PER_USER, MAX_GRAPHS_PER_USER))"
+            ]
+        },
+        {
+            "id": "16",
+            "type": "block",
+            "statements": [
+                "graph = await db.agentgraph.create(data={'name': faker.sentence(nb_words=3), 'description': faker.text(max_nb_chars=200), 'userId': user.id, 'isActive': True, 'isTemplate': False})",
+                "agent_graphs.append(graph)"
+            ]
+        },
+        {
+            "id": "17",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "18",
+            "type": "block",
+            "statements": [
+                "graph",
+                "agent_graphs"
+            ]
+        },
+        {
+            "id": "19",
+            "type": "block",
+            "statements": [
+                "num_nodes = random.randint(MIN_NODES_PER_GRAPH, MAX_NODES_PER_GRAPH)"
+            ]
+        },
+        {
+            "id": "20",
+            "type": "block",
+            "statements": [
+                "agent_presets = []",
+                "print(f'Inserting {NUM_USERS * MAX_PRESETS_PER_USER} agent presets')"
+            ]
+        },
+        {
+            "id": "21",
+            "type": "block",
+            "statements": [
+                "_",
+                "range(num_nodes)"
+            ]
+        },
+        {
+            "id": "22",
+            "type": "block",
+            "statements": [
+                "block = random.choice(agent_blocks)",
+                "node = await db.agentnode.create(data={'agentBlockId': block.id, 'agentGraphId': graph.id, 'agentGraphVersion': graph.version, 'constantInput': '{}', 'metadata': '{}'})",
+                "agent_nodes.append(node)"
+            ]
+        },
+        {
+            "id": "23",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "24",
+            "type": "block",
+            "statements": [
+                "user",
+                "users"
+            ]
+        },
+        {
+            "id": "25",
+            "type": "block",
+            "statements": [
+                "num_presets = random.randint(MIN_PRESETS_PER_USER, MAX_PRESETS_PER_USER)"
+            ]
+        },
+        {
+            "id": "26",
+            "type": "block",
+            "statements": [
+                "user_agents = []",
+                "print(f'Inserting {NUM_USERS * MAX_AGENTS_PER_USER} user agents')"
+            ]
+        },
+        {
+            "id": "27",
+            "type": "block",
+            "statements": [
+                "_",
+                "range(num_presets)"
+            ]
+        },
+        {
+            "id": "28",
+            "type": "block",
+            "statements": [
+                "graph = random.choice(agent_graphs)",
+                "preset = await db.agentpreset.create(data={'name': faker.sentence(nb_words=3), 'description': faker.text(max_nb_chars=200), 'userId': user.id, 'agentId': graph.id, 'agentVersion': graph.version, 'isActive': True})",
+                "agent_presets.append(preset)"
+            ]
+        },
+        {
+            "id": "29",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "30",
+            "type": "block",
+            "statements": [
+                "user",
+                "users"
+            ]
+        },
+        {
+            "id": "31",
+            "type": "block",
+            "statements": [
+                "num_agents = random.randint(MIN_AGENTS_PER_USER, MAX_AGENTS_PER_USER)"
+            ]
+        },
+        {
+            "id": "32",
+            "type": "block",
+            "statements": [
+                "agent_graph_executions = []",
+                "print(f'Inserting {NUM_USERS * MAX_GRAPHS_PER_USER * MAX_EXECUTIONS_PER_GRAPH} agent graph executions')",
+                "graph_execution_data = []"
+            ]
+        },
+        {
+            "id": "33",
+            "type": "block",
+            "statements": [
+                "_",
+                "range(num_agents)"
+            ]
+        },
+        {
+            "id": "34",
+            "type": "block",
+            "statements": [
+                "graph = random.choice(agent_graphs)",
+                "preset = random.choice(agent_presets)",
+                "user_agent = await db.useragent.create(data={'userId': user.id, 'agentId': graph.id, 'agentVersion': graph.version, 'agentPresetId': preset.id, 'isFavorite': random.choice([True, False]), 'isCreatedByUser': random.choice([True, False]), 'isArchived': random.choice([True, False]), 'isDeleted': random.choice([True, False])})",
+                "user_agents.append(user_agent)"
+            ]
+        },
+        {
+            "id": "35",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "36",
+            "type": "block",
+            "statements": [
+                "graph",
+                "agent_graphs"
+            ]
+        },
+        {
+            "id": "37",
+            "type": "block",
+            "statements": [
+                "user = random.choice(users)",
+                "num_executions = random.randint(MIN_EXECUTIONS_PER_GRAPH, MAX_EXECUTIONS_PER_GRAPH)"
+            ]
+        },
+        {
+            "id": "38",
+            "type": "block",
+            "statements": [
+                "agent_graph_executions = await db.agentgraphexecution.create_many(data=graph_execution_data)",
+                "agent_graph_executions = await db.agentgraphexecution.find_many()",
+                "print(f'Inserting {NUM_USERS * MAX_GRAPHS_PER_USER * MAX_EXECUTIONS_PER_GRAPH} agent node executions')",
+                "node_execution_data = []"
+            ]
+        },
+        {
+            "id": "39",
+            "type": "block",
+            "statements": [
+                "_",
+                "range(num_executions)"
+            ]
+        },
+        {
+            "id": "40",
+            "type": "block",
+            "statements": [
+                "matching_presets = [p for p in agent_presets if p.agentId == graph.id]",
+                "preset = random.choice(matching_presets) if matching_presets and random.random() < 0.5 else None",
+                "graph_execution_data.append({'agentGraphId': graph.id, 'agentGraphVersion': graph.version, 'userId': user.id, 'executionStatus': prisma.enums.AgentExecutionStatus.COMPLETED, 'startedAt': faker.date_time_this_year(), 'agentPresetId': preset.id if preset else None})"
+            ]
+        },
+        {
+            "id": "41",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "42",
+            "type": "block",
+            "statements": [
+                "execution",
+                "agent_graph_executions"
+            ]
+        },
+        {
+            "id": "43",
+            "type": "block",
+            "statements": [
+                "nodes = [node for node in agent_nodes if node.agentGraphId == execution.agentGraphId]"
+            ]
+        },
+        {
+            "id": "44",
+            "type": "block",
+            "statements": [
+                "agent_node_executions = await db.agentnodeexecution.create_many(data=node_execution_data)",
+                "agent_node_executions = await db.agentnodeexecution.find_many()",
+                "print(f'Inserting {NUM_USERS * MAX_GRAPHS_PER_USER * MAX_EXECUTIONS_PER_GRAPH} agent node execution input/outputs')",
+                "input_output_data = []"
+            ]
+        },
+        {
+            "id": "45",
+            "type": "block",
+            "statements": [
+                "node",
+                "nodes"
+            ]
+        },
+        {
+            "id": "46",
+            "type": "block",
+            "statements": [
+                "node_execution_data.append({'agentGraphExecutionId': execution.id, 'agentNodeId': node.id, 'executionStatus': prisma.enums.AgentExecutionStatus.COMPLETED, 'addedTime': datetime.now()})"
+            ]
+        },
+        {
+            "id": "47",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "48",
+            "type": "block",
+            "statements": [
+                "node_execution",
+                "agent_node_executions"
+            ]
+        },
+        {
+            "id": "49",
+            "type": "block",
+            "statements": [
+                "input_output_data.append({'name': 'input1', 'data': '{}', 'time': datetime.now(), 'referencedByInputExecId': node_execution.id})",
+                "input_output_data.append({'name': 'output1', 'data': '{}', 'time': datetime.now(), 'referencedByOutputExecId': node_execution.id})"
+            ]
+        },
+        {
+            "id": "50",
+            "type": "block",
+            "statements": [
+                "await db.agentnodeexecutioninputoutput.create_many(data=input_output_data)",
+                "print(f'Inserting {NUM_USERS * MAX_GRAPHS_PER_USER} agent node links')"
+            ]
+        },
+        {
+            "id": "51",
+            "type": "block",
+            "statements": [
+                "graph",
+                "agent_graphs"
+            ]
+        },
+        {
+            "id": "52",
+            "type": "block",
+            "statements": [
+                "nodes = [node for node in agent_nodes if node.agentGraphId == graph.id]",
+                "len(nodes) GtE 2"
+            ]
+        },
+        {
+            "id": "53",
+            "type": "block",
+            "statements": [
+                "print(f'Inserting {NUM_USERS} analytics details')"
+            ]
+        },
+        {
+            "id": "54",
+            "type": "block",
+            "statements": [
+                "source_node = nodes[0]",
+                "sink_node = nodes[1]",
+                "await db.agentnodelink.create(data={'agentNodeSourceId': source_node.id, 'sourceName': 'output1', 'agentNodeSinkId': sink_node.id, 'sinkName': 'input1', 'isStatic': False})"
+            ]
+        },
+        {
+            "id": "55",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "56",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "57",
+            "type": "block",
+            "statements": [
+                "user",
+                "users"
+            ]
+        },
+        {
+            "id": "58",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "59",
+            "type": "block",
+            "statements": [
+                "print(f'Inserting {NUM_USERS} analytics metrics')"
+            ]
+        },
+        {
+            "id": "60",
+            "type": "block",
+            "statements": [
+                "_",
+                "range(1)"
+            ]
+        },
+        {
+            "id": "61",
+            "type": "block",
+            "statements": [
+                "await db.analyticsdetails.create(data={'userId': user.id, 'type': faker.word(), 'data': prisma.Json({}), 'dataIndex': faker.word()})"
+            ]
+        },
+        {
+            "id": "62",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "63",
+            "type": "block",
+            "statements": [
+                "user",
+                "users"
+            ]
+        },
+        {
+            "id": "64",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "65",
+            "type": "block",
+            "statements": [
+                "print(f'Inserting {NUM_USERS} credit transactions')"
+            ]
+        },
+        {
+            "id": "66",
+            "type": "block",
+            "statements": [
+                "_",
+                "range(1)"
+            ]
+        },
+        {
+            "id": "67",
+            "type": "block",
+            "statements": [
+                "await db.analyticsmetrics.create(data={'userId': user.id, 'analyticMetric': faker.word(), 'value': random.uniform(0, 100), 'dataString': faker.word()})"
+            ]
+        },
+        {
+            "id": "68",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "69",
+            "type": "block",
+            "statements": [
+                "user",
+                "users"
+            ]
+        },
+        {
+            "id": "70",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "71",
+            "type": "block",
+            "statements": [
+                "profiles = []",
+                "print(f'Inserting {NUM_USERS} profiles')"
+            ]
+        },
+        {
+            "id": "72",
+            "type": "block",
+            "statements": [
+                "_",
+                "range(1)"
+            ]
+        },
+        {
+            "id": "73",
+            "type": "block",
+            "statements": [
+                "block = random.choice(agent_blocks)",
+                "await db.credittransaction.create(data={'transactionKey': str(faker.uuid4()), 'userId': user.id, 'blockId': block.id, 'amount': random.randint(1, 100), 'type': prisma.enums.CreditTransactionType.TOP_UP if random.random() < 0.5 else prisma.enums.CreditTransactionType.USAGE, 'metadata': prisma.Json({})})"
+            ]
+        },
+        {
+            "id": "74",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "75",
+            "type": "block",
+            "statements": [
+                "user",
+                "users"
+            ]
+        },
+        {
+            "id": "76",
+            "type": "block",
+            "statements": [
+                "profile = await db.profile.create(data={'userId': user.id, 'name': user.name or faker.name(), 'username': faker.unique.user_name(), 'description': faker.text(), 'links': [faker.url() for _ in range(3)], 'avatarUrl': get_image()})",
+                "profiles.append(profile)"
+            ]
+        },
+        {
+            "id": "77",
+            "type": "block",
+            "statements": [
+                "store_listings = []",
+                "print(f'Inserting {NUM_USERS} store listings')"
+            ]
+        },
+        {
+            "id": "78",
+            "type": "block",
+            "statements": [
+                "graph",
+                "agent_graphs"
+            ]
+        },
+        {
+            "id": "79",
+            "type": "block",
+            "statements": [
+                "user = random.choice(users)",
+                "listing = await db.storelisting.create(data={'agentId': graph.id, 'agentVersion': graph.version, 'owningUserId': user.id, 'isApproved': random.choice([True, False])})",
+                "store_listings.append(listing)"
+            ]
+        },
+        {
+            "id": "80",
+            "type": "block",
+            "statements": [
+                "store_listing_versions = []",
+                "print(f'Inserting {NUM_USERS} store listing versions')"
+            ]
+        },
+        {
+            "id": "81",
+            "type": "block",
+            "statements": [
+                "listing",
+                "store_listings"
+            ]
+        },
+        {
+            "id": "82",
+            "type": "block",
+            "statements": [
+                "graph = [g for g in agent_graphs if g.id == listing.agentId][0]",
+                "version = await db.storelistingversion.create(data={'agentId': graph.id, 'agentVersion': graph.version, 'slug': faker.slug(), 'name': graph.name or faker.sentence(nb_words=3), 'subHeading': faker.sentence(), 'videoUrl': faker.url(), 'imageUrls': [get_image() for _ in range(3)], 'description': faker.text(), 'categories': [faker.word() for _ in range(3)], 'isFeatured': random.choice([True, False]), 'isAvailable': True, 'isApproved': random.choice([True, False]), 'storeListingId': listing.id})",
+                "store_listing_versions.append(version)"
+            ]
+        },
+        {
+            "id": "83",
+            "type": "block",
+            "statements": [
+                "print(f'Inserting {NUM_USERS * MAX_REVIEWS_PER_VERSION} store listing reviews')"
+            ]
+        },
+        {
+            "id": "84",
+            "type": "block",
+            "statements": [
+                "version",
+                "store_listing_versions"
+            ]
+        },
+        {
+            "id": "85",
+            "type": "block",
+            "statements": [
+                "available_reviewers = users.copy()",
+                "random.shuffle(available_reviewers)",
+                "num_reviews = min(random.randint(MIN_REVIEWS_PER_VERSION, MAX_REVIEWS_PER_VERSION), len(available_reviewers))"
+            ]
+        },
+        {
+            "id": "86",
+            "type": "block",
+            "statements": [
+                "print(f'Inserting {NUM_USERS} store listing submissions')"
+            ]
+        },
+        {
+            "id": "87",
+            "type": "block",
+            "statements": [
+                "reviewer",
+                "available_reviewers[:num_reviews]"
+            ]
+        },
+        {
+            "id": "88",
+            "type": "block",
+            "statements": [
+                "await db.storelistingreview.create(data={'storeListingVersionId': version.id, 'reviewByUserId': reviewer.id, 'score': random.randint(1, 5), 'comments': faker.text()})"
+            ]
+        },
+        {
+            "id": "89",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "90",
+            "type": "block",
+            "statements": [
+                "listing",
+                "store_listings"
+            ]
+        },
+        {
+            "id": "91",
+            "type": "block",
+            "statements": [
+                "version = random.choice(store_listing_versions)",
+                "reviewer = random.choice(users)",
+                "status: prisma.enums.SubmissionStatus = random.choice([prisma.enums.SubmissionStatus.PENDING, prisma.enums.SubmissionStatus.APPROVED, prisma.enums.SubmissionStatus.REJECTED])",
+                "await db.storelistingsubmission.create(data={'storeListingId': listing.id, 'storeListingVersionId': version.id, 'reviewerId': reviewer.id, 'Status': status, 'reviewComments': faker.text()})"
+            ]
+        },
+        {
+            "id": "92",
+            "type": "block",
+            "statements": [
+                "print(f'Inserting {NUM_USERS} api keys')"
+            ]
+        },
+        {
+            "id": "93",
+            "type": "block",
+            "statements": [
+                "user",
+                "users"
+            ]
+        },
+        {
+            "id": "94",
+            "type": "block",
+            "statements": [
+                "await db.apikey.create(data={'name': faker.word(), 'prefix': str(faker.uuid4())[:8], 'postfix': str(faker.uuid4())[-8:], 'key': str(faker.sha256()), 'status': prisma.enums.APIKeyStatus.ACTIVE, 'permissions': [prisma.enums.APIKeyPermission.EXECUTE_GRAPH, prisma.enums.APIKeyPermission.READ_GRAPH], 'description': faker.text(), 'userId': user.id})"
+            ]
+        },
+        {
+            "id": "95",
+            "type": "block",
+            "statements": [
+                "await db.disconnect()",
+                "__name__ Eq '__main__'"
+            ]
+        },
+        {
+            "id": "96",
+            "type": "block",
+            "statements": [
+                "asyncio.run(main())"
+            ]
+        },
+        {
+            "id": "97",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "98",
+            "type": "block",
+            "statements": []
+        }
+    ],
+    "edges": [
+        {
+            "source": "1",
+            "target": "2",
+            "type": "next"
+        },
+        {
+            "source": "2",
+            "target": "3",
+            "type": "true"
+        },
+        {
+            "source": "2",
+            "target": "4",
+            "type": "false"
+        },
+        {
+            "source": "3",
+            "target": "2",
+            "type": "next"
+        },
+        {
+            "source": "5",
+            "target": "6",
+            "type": "next"
+        },
+        {
+            "source": "6",
+            "target": "7",
+            "type": "true"
+        },
+        {
+            "source": "6",
+            "target": "8",
+            "type": "false"
+        },
+        {
+            "source": "7",
+            "target": "6",
+            "type": "next"
+        },
+        {
+            "source": "8",
+            "target": "9",
+            "type": "next"
+        },
+        {
+            "source": "9",
+            "target": "10",
+            "type": "true"
+        },
+        {
+            "source": "9",
+            "target": "11",
+            "type": "false"
+        },
+        {
+            "source": "10",
+            "target": "9",
+            "type": "next"
+        },
+        {
+            "source": "11",
+            "target": "12",
+            "type": "next"
+        },
+        {
+            "source": "12",
+            "target": "13",
+            "type": "true"
+        },
+        {
+            "source": "12",
+            "target": "14",
+            "type": "false"
+        },
+        {
+            "source": "13",
+            "target": "15",
+            "type": "next"
+        },
+        {
+            "source": "14",
+            "target": "18",
+            "type": "next"
+        },
+        {
+            "source": "15",
+            "target": "16",
+            "type": "true"
+        },
+        {
+            "source": "15",
+            "target": "17",
+            "type": "false"
+        },
+        {
+            "source": "16",
+            "target": "15",
+            "type": "next"
+        },
+        {
+            "source": "17",
+            "target": "12",
+            "type": "next"
+        },
+        {
+            "source": "18",
+            "target": "19",
+            "type": "true"
+        },
+        {
+            "source": "18",
+            "target": "20",
+            "type": "false"
+        },
+        {
+            "source": "19",
+            "target": "21",
+            "type": "next"
+        },
+        {
+            "source": "20",
+            "target": "24",
+            "type": "next"
+        },
+        {
+            "source": "21",
+            "target": "22",
+            "type": "true"
+        },
+        {
+            "source": "21",
+            "target": "23",
+            "type": "false"
+        },
+        {
+            "source": "22",
+            "target": "21",
+            "type": "next"
+        },
+        {
+            "source": "23",
+            "target": "18",
+            "type": "next"
+        },
+        {
+            "source": "24",
+            "target": "25",
+            "type": "true"
+        },
+        {
+            "source": "24",
+            "target": "26",
+            "type": "false"
+        },
+        {
+            "source": "25",
+            "target": "27",
+            "type": "next"
+        },
+        {
+            "source": "26",
+            "target": "30",
+            "type": "next"
+        },
+        {
+            "source": "27",
+            "target": "28",
+            "type": "true"
+        },
+        {
+            "source": "27",
+            "target": "29",
+            "type": "false"
+        },
+        {
+            "source": "28",
+            "target": "27",
+            "type": "next"
+        },
+        {
+            "source": "29",
+            "target": "24",
+            "type": "next"
+        },
+        {
+            "source": "30",
+            "target": "31",
+            "type": "true"
+        },
+        {
+            "source": "30",
+            "target": "32",
+            "type": "false"
+        },
+        {
+            "source": "31",
+            "target": "33",
+            "type": "next"
+        },
+        {
+            "source": "32",
+            "target": "36",
+            "type": "next"
+        },
+        {
+            "source": "33",
+            "target": "34",
+            "type": "true"
+        },
+        {
+            "source": "33",
+            "target": "35",
+            "type": "false"
+        },
+        {
+            "source": "34",
+            "target": "33",
+            "type": "next"
+        },
+        {
+            "source": "35",
+            "target": "30",
+            "type": "next"
+        },
+        {
+            "source": "36",
+            "target": "37",
+            "type": "true"
+        },
+        {
+            "source": "36",
+            "target": "38",
+            "type": "false"
+        },
+        {
+            "source": "37",
+            "target": "39",
+            "type": "next"
+        },
+        {
+            "source": "38",
+            "target": "42",
+            "type": "next"
+        },
+        {
+            "source": "39",
+            "target": "40",
+            "type": "true"
+        },
+        {
+            "source": "39",
+            "target": "41",
+            "type": "false"
+        },
+        {
+            "source": "40",
+            "target": "39",
+            "type": "next"
+        },
+        {
+            "source": "41",
+            "target": "36",
+            "type": "next"
+        },
+        {
+            "source": "42",
+            "target": "43",
+            "type": "true"
+        },
+        {
+            "source": "42",
+            "target": "44",
+            "type": "false"
+        },
+        {
+            "source": "43",
+            "target": "45",
+            "type": "next"
+        },
+        {
+            "source": "44",
+            "target": "48",
+            "type": "next"
+        },
+        {
+            "source": "45",
+            "target": "46",
+            "type": "true"
+        },
+        {
+            "source": "45",
+            "target": "47",
+            "type": "false"
+        },
+        {
+            "source": "46",
+            "target": "45",
+            "type": "next"
+        },
+        {
+            "source": "47",
+            "target": "42",
+            "type": "next"
+        },
+        {
+            "source": "48",
+            "target": "49",
+            "type": "true"
+        },
+        {
+            "source": "48",
+            "target": "50",
+            "type": "false"
+        },
+        {
+            "source": "49",
+            "target": "48",
+            "type": "next"
+        },
+        {
+            "source": "50",
+            "target": "51",
+            "type": "next"
+        },
+        {
+            "source": "51",
+            "target": "52",
+            "type": "true"
+        },
+        {
+            "source": "51",
+            "target": "53",
+            "type": "false"
+        },
+        {
+            "source": "52",
+            "target": "54",
+            "type": "true"
+        },
+        {
+            "source": "52",
+            "target": "55",
+            "type": "false"
+        },
+        {
+            "source": "53",
+            "target": "57",
+            "type": "next"
+        },
+        {
+            "source": "54",
+            "target": "56",
+            "type": "next"
+        },
+        {
+            "source": "55",
+            "target": "56",
+            "type": "next"
+        },
+        {
+            "source": "56",
+            "target": "51",
+            "type": "next"
+        },
+        {
+            "source": "57",
+            "target": "58",
+            "type": "true"
+        },
+        {
+            "source": "57",
+            "target": "59",
+            "type": "false"
+        },
+        {
+            "source": "58",
+            "target": "60",
+            "type": "next"
+        },
+        {
+            "source": "59",
+            "target": "63",
+            "type": "next"
+        },
+        {
+            "source": "60",
+            "target": "61",
+            "type": "true"
+        },
+        {
+            "source": "60",
+            "target": "62",
+            "type": "false"
+        },
+        {
+            "source": "61",
+            "target": "60",
+            "type": "next"
+        },
+        {
+            "source": "62",
+            "target": "57",
+            "type": "next"
+        },
+        {
+            "source": "63",
+            "target": "64",
+            "type": "true"
+        },
+        {
+            "source": "63",
+            "target": "65",
+            "type": "false"
+        },
+        {
+            "source": "64",
+            "target": "66",
+            "type": "next"
+        },
+        {
+            "source": "65",
+            "target": "69",
+            "type": "next"
+        },
+        {
+            "source": "66",
+            "target": "67",
+            "type": "true"
+        },
+        {
+            "source": "66",
+            "target": "68",
+            "type": "false"
+        },
+        {
+            "source": "67",
+            "target": "66",
+            "type": "next"
+        },
+        {
+            "source": "68",
+            "target": "63",
+            "type": "next"
+        },
+        {
+            "source": "69",
+            "target": "70",
+            "type": "true"
+        },
+        {
+            "source": "69",
+            "target": "71",
+            "type": "false"
+        },
+        {
+            "source": "70",
+            "target": "72",
+            "type": "next"
+        },
+        {
+            "source": "71",
+            "target": "75",
+            "type": "next"
+        },
+        {
+            "source": "72",
+            "target": "73",
+            "type": "true"
+        },
+        {
+            "source": "72",
+            "target": "74",
+            "type": "false"
+        },
+        {
+            "source": "73",
+            "target": "72",
+            "type": "next"
+        },
+        {
+            "source": "74",
+            "target": "69",
+            "type": "next"
+        },
+        {
+            "source": "75",
+            "target": "76",
+            "type": "true"
+        },
+        {
+            "source": "75",
+            "target": "77",
+            "type": "false"
+        },
+        {
+            "source": "76",
+            "target": "75",
+            "type": "next"
+        },
+        {
+            "source": "77",
+            "target": "78",
+            "type": "next"
+        },
+        {
+            "source": "78",
+            "target": "79",
+            "type": "true"
+        },
+        {
+            "source": "78",
+            "target": "80",
+            "type": "false"
+        },
+        {
+            "source": "79",
+            "target": "78",
+            "type": "next"
+        },
+        {
+            "source": "80",
+            "target": "81",
+            "type": "next"
+        },
+        {
+            "source": "81",
+            "target": "82",
+            "type": "true"
+        },
+        {
+            "source": "81",
+            "target": "83",
+            "type": "false"
+        },
+        {
+            "source": "82",
+            "target": "81",
+            "type": "next"
+        },
+        {
+            "source": "83",
+            "target": "84",
+            "type": "next"
+        },
+        {
+            "source": "84",
+            "target": "85",
+            "type": "true"
+        },
+        {
+            "source": "84",
+            "target": "86",
+            "type": "false"
+        },
+        {
+            "source": "85",
+            "target": "87",
+            "type": "next"
+        },
+        {
+            "source": "86",
+            "target": "90",
+            "type": "next"
+        },
+        {
+            "source": "87",
+            "target": "88",
+            "type": "true"
+        },
+        {
+            "source": "87",
+            "target": "89",
+            "type": "false"
+        },
+        {
+            "source": "88",
+            "target": "87",
+            "type": "next"
+        },
+        {
+            "source": "89",
+            "target": "84",
+            "type": "next"
+        },
+        {
+            "source": "90",
+            "target": "91",
+            "type": "true"
+        },
+        {
+            "source": "90",
+            "target": "92",
+            "type": "false"
+        },
+        {
+            "source": "91",
+            "target": "90",
+            "type": "next"
+        },
+        {
+            "source": "92",
+            "target": "93",
+            "type": "next"
+        },
+        {
+            "source": "93",
+            "target": "94",
+            "type": "true"
+        },
+        {
+            "source": "93",
+            "target": "95",
+            "type": "false"
+        },
+        {
+            "source": "94",
+            "target": "93",
+            "type": "next"
+        },
+        {
+            "source": "95",
+            "target": "96",
+            "type": "true"
+        },
+        {
+            "source": "95",
+            "target": "97",
+            "type": "false"
+        },
+        {
+            "source": "96",
+            "target": "98",
+            "type": "next"
+        },
+        {
+            "source": "97",
+            "target": "98",
+            "type": "next"
+        }
+    ]
+}

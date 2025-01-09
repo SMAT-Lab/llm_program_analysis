@@ -1,0 +1,298 @@
+{
+    "nodes": [
+        {
+            "id": "chunk_0_GlobalBlock_1",
+            "code": "import io\nimport unittest.mock\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_2",
+            "code": "import fastapi\nimport pytest\nimport starlette.datastructures\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_3",
+            "code": "import backend.server.v2.store.exceptions\nimport backend.server.v2.store.media\nfrom backend.util.settings import Settings\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_4",
+            "code": "\n"
+        },
+        {
+            "id": "chunk_1_mock_settings_1",
+            "code": "@pytest.fixture\ndef mock_settings(monkeypatch):\n"
+        },
+        {
+            "id": "chunk_1_mock_settings_2",
+            "code": "    settings = Settings()\n    settings.config.media_gcs_bucket_name = \"test-bucket\"\n    settings.config.google_application_credentials = \"test-credentials\"\n    monkeypatch.setattr(\"backend.server.v2.store.media.Settings\", lambda: settings)\n    return settings\n"
+        },
+        {
+            "id": "chunk_2_mock_storage_client_1",
+            "code": "@pytest.fixture\ndef mock_storage_client(mocker):\n"
+        },
+        {
+            "id": "chunk_2_mock_storage_client_2",
+            "code": "    mock_client = unittest.mock.MagicMock()\n    mock_bucket = unittest.mock.MagicMock()\n    mock_blob = unittest.mock.MagicMock()\n"
+        },
+        {
+            "id": "chunk_2_mock_storage_client_3",
+            "code": "    mock_client.bucket.return_value = mock_bucket\n    mock_bucket.blob.return_value = mock_blob\n    mock_blob.public_url = \"http://test-url/media/laptop.jpeg\"\n"
+        },
+        {
+            "id": "chunk_2_mock_storage_client_4",
+            "code": "    mocker.patch(\"google.cloud.storage.Client\", return_value=mock_client)\n"
+        },
+        {
+            "id": "chunk_2_mock_storage_client_5",
+            "code": "    return mock_client\n"
+        },
+        {
+            "id": "chunk_3_test_upload_media_success_1",
+            "code": "async def test_upload_media_success(mock_settings, mock_storage_client):\n"
+        },
+        {
+            "id": "chunk_3_test_upload_media_success_2",
+            "code": "    # Create test JPEG data with valid signature\n    test_data = b\"\\xFF\\xD8\\xFF\" + b\"test data\"\n"
+        },
+        {
+            "id": "chunk_3_test_upload_media_success_3",
+            "code": "    test_file = fastapi.UploadFile(\n        filename=\"laptop.jpeg\",\n        file=io.BytesIO(test_data),\n        headers=starlette.datastructures.Headers({\"content-type\": \"image/jpeg\"}),\n    )\n"
+        },
+        {
+            "id": "chunk_3_test_upload_media_success_4",
+            "code": "    result = await backend.server.v2.store.media.upload_media(\"test-user\", test_file)\n"
+        },
+        {
+            "id": "chunk_3_test_upload_media_success_5",
+            "code": "    assert result == \"http://test-url/media/laptop.jpeg\"\n"
+        },
+        {
+            "id": "chunk_4_test_upload_media_invalid_type_1",
+            "code": "async def test_upload_media_invalid_type(mock_settings, mock_storage_client):\n    test_file = fastapi.UploadFile(\n        filename=\"test.txt\",\n        file=io.BytesIO(b\"test data\"),\n        headers=starlette.datastructures.Headers({\"content-type\": \"text/plain\"}),\n    )\n"
+        },
+        {
+            "id": "chunk_4_test_upload_media_invalid_type_2",
+            "code": "    with pytest.raises(backend.server.v2.store.exceptions.InvalidFileTypeError):\n        await backend.server.v2.store.media.upload_media(\"test-user\", test_file)\n"
+        },
+        {
+            "id": "chunk_4_test_upload_media_invalid_type_3",
+            "code": "    mock_bucket = mock_storage_client.bucket.return_value\n    mock_blob = mock_bucket.blob.return_value\n    mock_blob.upload_from_string.assert_not_called()\n"
+        },
+        {
+            "id": "chunk_5_test_upload_media_missing_credentials_1",
+            "code": "async def test_upload_media_missing_credentials(monkeypatch):\n    settings = Settings()\n    settings.config.media_gcs_bucket_name = \"\"\n    settings.config.google_application_credentials = \"\"\n    monkeypatch.setattr(\"backend.server.v2.store.media.Settings\", lambda: settings)\n"
+        },
+        {
+            "id": "chunk_5_test_upload_media_missing_credentials_2",
+            "code": "    test_file = fastapi.UploadFile(\n        filename=\"laptop.jpeg\",\n        file=io.BytesIO(b\"\\xFF\\xD8\\xFF\" + b\"test data\"),  # Valid JPEG signature\n        headers=starlette.datastructures.Headers({\"content-type\": \"image/jpeg\"}),\n    )\n"
+        },
+        {
+            "id": "chunk_5_test_upload_media_missing_credentials_3",
+            "code": "    with pytest.raises(backend.server.v2.store.exceptions.StorageConfigError):\n        await backend.server.v2.store.media.upload_media(\"test-user\", test_file)\n"
+        },
+        {
+            "id": "chunk_6_test_upload_media_video_type_1",
+            "code": "async def test_upload_media_video_type(mock_settings, mock_storage_client):\n    test_file = fastapi.UploadFile(\n        filename=\"test.mp4\",\n        file=io.BytesIO(b\"\\x00\\x00\\x00\\x18ftypmp42\"),  # Valid MP4 signature\n        headers=starlette.datastructures.Headers({\"content-type\": \"video/mp4\"}),\n    )\n"
+        },
+        {
+            "id": "chunk_6_test_upload_media_video_type_2",
+            "code": "    result = await backend.server.v2.store.media.upload_media(\"test-user\", test_file)\n"
+        },
+        {
+            "id": "chunk_6_test_upload_media_video_type_3",
+            "code": "    assert result == \"http://test-url/media/laptop.jpeg\"\n"
+        },
+        {
+            "id": "chunk_6_test_upload_media_video_type_4",
+            "code": "    mock_bucket = mock_storage_client.bucket.return_value\n    mock_blob = mock_bucket.blob.return_value\n"
+        },
+        {
+            "id": "chunk_6_test_upload_media_video_type_5",
+            "code": "    mock_blob.upload_from_string.assert_called_once()\n"
+        },
+        {
+            "id": "chunk_7_test_upload_media_file_too_large_1",
+            "code": "async def test_upload_media_file_too_large(mock_settings, mock_storage_client):\n    large_data = b\"\\xFF\\xD8\\xFF\" + b\"x\" * (\n        50 * 1024 * 1024 + 1\n    )  # 50MB + 1 byte with valid JPEG signature\n    test_file = fastapi.UploadFile(\n        filename=\"laptop.jpeg\",\n        file=io.BytesIO(large_data),\n        headers=starlette.datastructures.Headers({\"content-type\": \"image/jpeg\"}),\n    )\n"
+        },
+        {
+            "id": "chunk_7_test_upload_media_file_too_large_2",
+            "code": "    with pytest.raises(backend.server.v2.store.exceptions.FileSizeTooLargeError):\n        await backend.server.v2.store.media.upload_media(\"test-user\", test_file)\n"
+        },
+        {
+            "id": "chunk_8_test_upload_media_file_read_error_1",
+            "code": "async def test_upload_media_file_read_error(mock_settings, mock_storage_client):\n    test_file = fastapi.UploadFile(\n        filename=\"laptop.jpeg\",\n        file=io.BytesIO(b\"\"),  # Empty file that will raise error on read\n        headers=starlette.datastructures.Headers({\"content-type\": \"image/jpeg\"}),\n    )\n"
+        },
+        {
+            "id": "chunk_8_test_upload_media_file_read_error_2",
+            "code": "    test_file.read = unittest.mock.AsyncMock(side_effect=Exception(\"Read error\"))\n"
+        },
+        {
+            "id": "chunk_8_test_upload_media_file_read_error_3",
+            "code": "    with pytest.raises(backend.server.v2.store.exceptions.FileReadError):\n        await backend.server.v2.store.media.upload_media(\"test-user\", test_file)\n"
+        },
+        {
+            "id": "chunk_9_test_upload_media_png_success_1",
+            "code": "async def test_upload_media_png_success(mock_settings, mock_storage_client):\n    test_file = fastapi.UploadFile(\n        filename=\"test.png\",\n        file=io.BytesIO(b\"\\x89PNG\\r\\n\\x1a\\n\"),  # Valid PNG signature\n        headers=starlette.datastructures.Headers({\"content-type\": \"image/png\"}),\n    )\n"
+        },
+        {
+            "id": "chunk_9_test_upload_media_png_success_2",
+            "code": "    result = await backend.server.v2.store.media.upload_media(\"test-user\", test_file)\n    assert result == \"http://test-url/media/laptop.jpeg\"\n"
+        },
+        {
+            "id": "chunk_10_test_upload_media_gif_success_1",
+            "code": "async def test_upload_media_gif_success(mock_settings, mock_storage_client):\n    test_file = fastapi.UploadFile(\n        filename=\"test.gif\",\n        file=io.BytesIO(b\"GIF89a\"),  # Valid GIF signature\n        headers=starlette.datastructures.Headers({\"content-type\": \"image/gif\"}),\n    )\n"
+        },
+        {
+            "id": "chunk_10_test_upload_media_gif_success_2",
+            "code": "    result = await backend.server.v2.store.media.upload_media(\"test-user\", test_file)\n    assert result == \"http://test-url/media/laptop.jpeg\"\n"
+        },
+        {
+            "id": "chunk_11_test_upload_media_webp_success_1",
+            "code": "async def test_upload_media_webp_success(mock_settings, mock_storage_client):\n    test_file = fastapi.UploadFile(\n        filename=\"test.webp\",\n        file=io.BytesIO(b\"RIFF\\x00\\x00\\x00\\x00WEBP\"),  # Valid WebP signature\n        headers=starlette.datastructures.Headers({\"content-type\": \"image/webp\"}),\n    )\n"
+        },
+        {
+            "id": "chunk_11_test_upload_media_webp_success_2",
+            "code": "    result = await backend.server.v2.store.media.upload_media(\"test-user\", test_file)\n    assert result == \"http://test-url/media/laptop.jpeg\"\n"
+        },
+        {
+            "id": "chunk_12_test_upload_media_webm_success_1",
+            "code": "async def test_upload_media_webm_success(mock_settings, mock_storage_client):\n    test_file = fastapi.UploadFile(\n        filename=\"test.webm\",\n        file=io.BytesIO(b\"\\x1a\\x45\\xdf\\xa3\"),  # Valid WebM signature\n        headers=starlette.datastructures.Headers({\"content-type\": \"video/webm\"}),\n    )\n"
+        },
+        {
+            "id": "chunk_12_test_upload_media_webm_success_2",
+            "code": "    result = await backend.server.v2.store.media.upload_media(\"test-user\", test_file)\n    assert result == \"http://test-url/media/laptop.jpeg\"\n"
+        },
+        {
+            "id": "chunk_13_test_upload_media_mismatched_signature_1",
+            "code": "async def test_upload_media_mismatched_signature(mock_settings, mock_storage_client):\n    test_file = fastapi.UploadFile(\n        filename=\"test.jpeg\",\n        file=io.BytesIO(b\"\\x89PNG\\r\\n\\x1a\\n\"),  # PNG signature with JPEG content type\n        headers=starlette.datastructures.Headers({\"content-type\": \"image/jpeg\"}),\n    )\n"
+        },
+        {
+            "id": "chunk_13_test_upload_media_mismatched_signature_2",
+            "code": "    with pytest.raises(backend.server.v2.store.exceptions.InvalidFileTypeError):\n        await backend.server.v2.store.media.upload_media(\"test-user\", test_file)\n"
+        },
+        {
+            "id": "chunk_14_test_upload_media_invalid_signature_1",
+            "code": "async def test_upload_media_invalid_signature(mock_settings, mock_storage_client):\n    test_file = fastapi.UploadFile(\n        filename=\"test.jpeg\",\n        file=io.BytesIO(b\"invalid signature\"),\n        headers=starlette.datastructures.Headers({\"content-type\": \"image/jpeg\"}),\n    )\n"
+        },
+        {
+            "id": "chunk_14_test_upload_media_invalid_signature_2",
+            "code": "    with pytest.raises(backend.server.v2.store.exceptions.InvalidFileTypeError):\n        await backend.server.v2.store.media.upload_media(\"test-user\", test_file)\n"
+        }
+    ],
+    "edges": [
+        {
+            "from": "chunk_0_GlobalBlock_1",
+            "to": "chunk_0_GlobalBlock_2"
+        },
+        {
+            "from": "chunk_0_GlobalBlock_2",
+            "to": "chunk_0_GlobalBlock_3"
+        },
+        {
+            "from": "chunk_0_GlobalBlock_3",
+            "to": "chunk_0_GlobalBlock_4"
+        },
+        {
+            "from": "chunk_1_mock_settings_1",
+            "to": "chunk_1_mock_settings_2"
+        },
+        {
+            "from": "chunk_2_mock_storage_client_1",
+            "to": "chunk_2_mock_storage_client_2"
+        },
+        {
+            "from": "chunk_2_mock_storage_client_2",
+            "to": "chunk_2_mock_storage_client_3"
+        },
+        {
+            "from": "chunk_2_mock_storage_client_3",
+            "to": "chunk_2_mock_storage_client_4"
+        },
+        {
+            "from": "chunk_2_mock_storage_client_4",
+            "to": "chunk_2_mock_storage_client_5"
+        },
+        {
+            "from": "chunk_3_test_upload_media_success_1",
+            "to": "chunk_3_test_upload_media_success_2"
+        },
+        {
+            "from": "chunk_3_test_upload_media_success_2",
+            "to": "chunk_3_test_upload_media_success_3"
+        },
+        {
+            "from": "chunk_3_test_upload_media_success_3",
+            "to": "chunk_3_test_upload_media_success_4"
+        },
+        {
+            "from": "chunk_3_test_upload_media_success_4",
+            "to": "chunk_3_test_upload_media_success_5"
+        },
+        {
+            "from": "chunk_4_test_upload_media_invalid_type_1",
+            "to": "chunk_4_test_upload_media_invalid_type_2"
+        },
+        {
+            "from": "chunk_4_test_upload_media_invalid_type_2",
+            "to": "chunk_4_test_upload_media_invalid_type_3"
+        },
+        {
+            "from": "chunk_5_test_upload_media_missing_credentials_1",
+            "to": "chunk_5_test_upload_media_missing_credentials_2"
+        },
+        {
+            "from": "chunk_5_test_upload_media_missing_credentials_2",
+            "to": "chunk_5_test_upload_media_missing_credentials_3"
+        },
+        {
+            "from": "chunk_6_test_upload_media_video_type_1",
+            "to": "chunk_6_test_upload_media_video_type_2"
+        },
+        {
+            "from": "chunk_6_test_upload_media_video_type_2",
+            "to": "chunk_6_test_upload_media_video_type_3"
+        },
+        {
+            "from": "chunk_6_test_upload_media_video_type_3",
+            "to": "chunk_6_test_upload_media_video_type_4"
+        },
+        {
+            "from": "chunk_6_test_upload_media_video_type_4",
+            "to": "chunk_6_test_upload_media_video_type_5"
+        },
+        {
+            "from": "chunk_7_test_upload_media_file_too_large_1",
+            "to": "chunk_7_test_upload_media_file_too_large_2"
+        },
+        {
+            "from": "chunk_8_test_upload_media_file_read_error_1",
+            "to": "chunk_8_test_upload_media_file_read_error_2"
+        },
+        {
+            "from": "chunk_8_test_upload_media_file_read_error_2",
+            "to": "chunk_8_test_upload_media_file_read_error_3"
+        },
+        {
+            "from": "chunk_9_test_upload_media_png_success_1",
+            "to": "chunk_9_test_upload_media_png_success_2"
+        },
+        {
+            "from": "chunk_10_test_upload_media_gif_success_1",
+            "to": "chunk_10_test_upload_media_gif_success_2"
+        },
+        {
+            "from": "chunk_11_test_upload_media_webp_success_1",
+            "to": "chunk_11_test_upload_media_webp_success_2"
+        },
+        {
+            "from": "chunk_12_test_upload_media_webm_success_1",
+            "to": "chunk_12_test_upload_media_webm_success_2"
+        },
+        {
+            "from": "chunk_13_test_upload_media_mismatched_signature_1",
+            "to": "chunk_13_test_upload_media_mismatched_signature_2"
+        },
+        {
+            "from": "chunk_14_test_upload_media_invalid_signature_1",
+            "to": "chunk_14_test_upload_media_invalid_signature_2"
+        }
+    ]
+}

@@ -1,0 +1,699 @@
+{
+    "nodes": [
+        {
+            "id": "1",
+            "type": "block",
+            "statements": [
+                "import hashlib",
+                "import hmac",
+                "import logging",
+                "import requests",
+                "from fastapi import HTTPException, Request",
+                "from strenum import StrEnum",
+                "from backend.data import integrations",
+                "from backend.data.model import Credentials",
+                "from backend.integrations.providers import ProviderName",
+                "from ._base import BaseWebhooksManager",
+                "logger = logging.getLogger(__name__)",
+                "class GithubWebhookType(StrEnum):\n    REPO = 'repo'",
+                "REPO = 'repo'",
+                "class GithubWebhooksManager(BaseWebhooksManager):\n    PROVIDER_NAME = ProviderName.GITHUB\n    WebhookType = GithubWebhookType\n    GITHUB_API_URL = 'https://api.github.com'\n    GITHUB_API_DEFAULT_HEADERS = {'Accept': 'application/vnd.github.v3+json'}\n\n    @classmethod\n    async def validate_payload(cls, webhook: integrations.Webhook, request: Request) -> tuple[dict, str]:\n        if not (event_type := request.headers.get('X-GitHub-Event')):\n            raise HTTPException(status_code=400, detail='X-GitHub-Event header is missing!')\n        if not (signature_header := request.headers.get('X-Hub-Signature-256')):\n            raise HTTPException(status_code=403, detail='X-Hub-Signature-256 header is missing!')\n        payload_body = await request.body()\n        hash_object = hmac.new(webhook.secret.encode('utf-8'), msg=payload_body, digestmod=hashlib.sha256)\n        expected_signature = 'sha256=' + hash_object.hexdigest()\n        if not hmac.compare_digest(expected_signature, signature_header):\n            raise HTTPException(status_code=403, detail=\"Request signatures didn't match!\")\n        payload = await request.json()\n        if (action := payload.get('action')):\n            event_type += f'.{action}'\n        return (payload, event_type)\n\n    async def trigger_ping(self, webhook: integrations.Webhook, credentials: Credentials | None) -> None:\n        if not credentials:\n            raise ValueError('Credentials are required but were not passed')\n        headers = {**self.GITHUB_API_DEFAULT_HEADERS, 'Authorization': credentials.bearer()}\n        (repo, github_hook_id) = (webhook.resource, webhook.provider_webhook_id)\n        ping_url = f'{self.GITHUB_API_URL}/repos/{repo}/hooks/{github_hook_id}/pings'\n        response = requests.post(ping_url, headers=headers)\n        if response.status_code != 204:\n            error_msg = extract_github_error_msg(response)\n            raise ValueError(f'Failed to ping GitHub webhook: {error_msg}')\n\n    async def _register_webhook(self, credentials: Credentials, webhook_type: GithubWebhookType, resource: str, events: list[str], ingress_url: str, secret: str) -> tuple[str, dict]:\n        if webhook_type == self.WebhookType.REPO and resource.count('/') > 1:\n            raise ValueError(\"Invalid repo format: expected 'owner/repo'\")\n        github_events = list({event.split('.')[0] for event in events})\n        headers = {**self.GITHUB_API_DEFAULT_HEADERS, 'Authorization': credentials.bearer()}\n        webhook_data = {'name': 'web', 'active': True, 'events': github_events, 'config': {'url': ingress_url, 'content_type': 'json', 'insecure_ssl': '0', 'secret': secret}}\n        response = requests.post(f'{self.GITHUB_API_URL}/repos/{resource}/hooks', headers=headers, json=webhook_data)\n        if response.status_code != 201:\n            error_msg = extract_github_error_msg(response)\n            if 'not found' in error_msg.lower():\n                error_msg = f\"{error_msg} (Make sure the GitHub account or API key has 'repo' or webhook create permissions to '{resource}')\"\n            raise ValueError(f'Failed to create GitHub webhook: {error_msg}')\n        webhook_id = response.json()['id']\n        config = response.json()['config']\n        return (str(webhook_id), config)\n\n    async def _deregister_webhook(self, webhook: integrations.Webhook, credentials: Credentials) -> None:\n        webhook_type = self.WebhookType(webhook.webhook_type)\n        if webhook.credentials_id != credentials.id:\n            raise ValueError(f'Webhook #{webhook.id} does not belong to credentials {credentials.id}')\n        headers = {**self.GITHUB_API_DEFAULT_HEADERS, 'Authorization': credentials.bearer()}\n        if webhook_type == self.WebhookType.REPO:\n            repo = webhook.resource\n            delete_url = f'{self.GITHUB_API_URL}/repos/{repo}/hooks/{webhook.provider_webhook_id}'\n        else:\n            raise NotImplementedError(f\"Unsupported webhook type '{webhook.webhook_type}'\")\n        response = requests.delete(delete_url, headers=headers)\n        if response.status_code not in [204, 404]:\n            error_msg = extract_github_error_msg(response)\n            raise ValueError(f'Failed to delete GitHub webhook: {error_msg}')",
+                "PROVIDER_NAME = ProviderName.GITHUB",
+                "WebhookType = GithubWebhookType",
+                "GITHUB_API_URL = 'https://api.github.com'",
+                "GITHUB_API_DEFAULT_HEADERS = {'Accept': 'application/vnd.github.v3+json'}",
+                "@classmethod\nasync def validate_payload(cls, webhook: integrations.Webhook, request: Request) -> tuple[dict, str]:\n    if not (event_type := request.headers.get('X-GitHub-Event')):\n        raise HTTPException(status_code=400, detail='X-GitHub-Event header is missing!')\n    if not (signature_header := request.headers.get('X-Hub-Signature-256')):\n        raise HTTPException(status_code=403, detail='X-Hub-Signature-256 header is missing!')\n    payload_body = await request.body()\n    hash_object = hmac.new(webhook.secret.encode('utf-8'), msg=payload_body, digestmod=hashlib.sha256)\n    expected_signature = 'sha256=' + hash_object.hexdigest()\n    if not hmac.compare_digest(expected_signature, signature_header):\n        raise HTTPException(status_code=403, detail=\"Request signatures didn't match!\")\n    payload = await request.json()\n    if (action := payload.get('action')):\n        event_type += f'.{action}'\n    return (payload, event_type)",
+                "not (event_type := request.headers.get('X-GitHub-Event'))"
+            ]
+        },
+        {
+            "id": "2",
+            "type": "block",
+            "statements": [
+                "raise HTTPException(status_code=400, detail='X-GitHub-Event header is missing!')"
+            ]
+        },
+        {
+            "id": "3",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "4",
+            "type": "block",
+            "statements": [
+                "not (signature_header := request.headers.get('X-Hub-Signature-256'))"
+            ]
+        },
+        {
+            "id": "5",
+            "type": "block",
+            "statements": [
+                "raise HTTPException(status_code=403, detail='X-Hub-Signature-256 header is missing!')"
+            ]
+        },
+        {
+            "id": "6",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "7",
+            "type": "block",
+            "statements": [
+                "payload_body = await request.body()",
+                "hash_object = hmac.new(webhook.secret.encode('utf-8'), msg=payload_body, digestmod=hashlib.sha256)",
+                "expected_signature = 'sha256=' + hash_object.hexdigest()",
+                "not hmac.compare_digest(expected_signature, signature_header)"
+            ]
+        },
+        {
+            "id": "8",
+            "type": "block",
+            "statements": [
+                "raise HTTPException(status_code=403, detail=\"Request signatures didn't match!\")"
+            ]
+        },
+        {
+            "id": "9",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "10",
+            "type": "block",
+            "statements": [
+                "payload = await request.json()",
+                "(action := payload.get('action'))"
+            ]
+        },
+        {
+            "id": "11",
+            "type": "block",
+            "statements": [
+                "event_type += f'.{action}'"
+            ]
+        },
+        {
+            "id": "12",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "13",
+            "type": "block",
+            "statements": [
+                "return (payload, event_type)"
+            ]
+        },
+        {
+            "id": "14",
+            "type": "block",
+            "statements": [
+                "async def trigger_ping(self, webhook: integrations.Webhook, credentials: Credentials | None) -> None:\n    if not credentials:\n        raise ValueError('Credentials are required but were not passed')\n    headers = {**self.GITHUB_API_DEFAULT_HEADERS, 'Authorization': credentials.bearer()}\n    (repo, github_hook_id) = (webhook.resource, webhook.provider_webhook_id)\n    ping_url = f'{self.GITHUB_API_URL}/repos/{repo}/hooks/{github_hook_id}/pings'\n    response = requests.post(ping_url, headers=headers)\n    if response.status_code != 204:\n        error_msg = extract_github_error_msg(response)\n        raise ValueError(f'Failed to ping GitHub webhook: {error_msg}')",
+                "not credentials"
+            ]
+        },
+        {
+            "id": "15",
+            "type": "block",
+            "statements": [
+                "raise ValueError('Credentials are required but were not passed')"
+            ]
+        },
+        {
+            "id": "16",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "17",
+            "type": "block",
+            "statements": [
+                "headers = {**self.GITHUB_API_DEFAULT_HEADERS, 'Authorization': credentials.bearer()}",
+                "(repo, github_hook_id) = (webhook.resource, webhook.provider_webhook_id)",
+                "ping_url = f'{self.GITHUB_API_URL}/repos/{repo}/hooks/{github_hook_id}/pings'",
+                "response = requests.post(ping_url, headers=headers)",
+                "response.status_code NotEq 204"
+            ]
+        },
+        {
+            "id": "18",
+            "type": "block",
+            "statements": [
+                "error_msg = extract_github_error_msg(response)",
+                "raise ValueError(f'Failed to ping GitHub webhook: {error_msg}')"
+            ]
+        },
+        {
+            "id": "19",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "20",
+            "type": "block",
+            "statements": [
+                "async def _register_webhook(self, credentials: Credentials, webhook_type: GithubWebhookType, resource: str, events: list[str], ingress_url: str, secret: str) -> tuple[str, dict]:\n    if webhook_type == self.WebhookType.REPO and resource.count('/') > 1:\n        raise ValueError(\"Invalid repo format: expected 'owner/repo'\")\n    github_events = list({event.split('.')[0] for event in events})\n    headers = {**self.GITHUB_API_DEFAULT_HEADERS, 'Authorization': credentials.bearer()}\n    webhook_data = {'name': 'web', 'active': True, 'events': github_events, 'config': {'url': ingress_url, 'content_type': 'json', 'insecure_ssl': '0', 'secret': secret}}\n    response = requests.post(f'{self.GITHUB_API_URL}/repos/{resource}/hooks', headers=headers, json=webhook_data)\n    if response.status_code != 201:\n        error_msg = extract_github_error_msg(response)\n        if 'not found' in error_msg.lower():\n            error_msg = f\"{error_msg} (Make sure the GitHub account or API key has 'repo' or webhook create permissions to '{resource}')\"\n        raise ValueError(f'Failed to create GitHub webhook: {error_msg}')\n    webhook_id = response.json()['id']\n    config = response.json()['config']\n    return (str(webhook_id), config)",
+                "webhook_type == self.WebhookType.REPO and resource.count('/') > 1"
+            ]
+        },
+        {
+            "id": "21",
+            "type": "block",
+            "statements": [
+                "raise ValueError(\"Invalid repo format: expected 'owner/repo'\")"
+            ]
+        },
+        {
+            "id": "22",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "23",
+            "type": "block",
+            "statements": [
+                "github_events = list({event.split('.')[0] for event in events})",
+                "headers = {**self.GITHUB_API_DEFAULT_HEADERS, 'Authorization': credentials.bearer()}",
+                "webhook_data = {'name': 'web', 'active': True, 'events': github_events, 'config': {'url': ingress_url, 'content_type': 'json', 'insecure_ssl': '0', 'secret': secret}}",
+                "response = requests.post(f'{self.GITHUB_API_URL}/repos/{resource}/hooks', headers=headers, json=webhook_data)",
+                "response.status_code NotEq 201"
+            ]
+        },
+        {
+            "id": "24",
+            "type": "block",
+            "statements": [
+                "error_msg = extract_github_error_msg(response)",
+                "'not found' In error_msg.lower()"
+            ]
+        },
+        {
+            "id": "25",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "26",
+            "type": "block",
+            "statements": [
+                "webhook_id = response.json()['id']",
+                "config = response.json()['config']",
+                "return (str(webhook_id), config)"
+            ]
+        },
+        {
+            "id": "27",
+            "type": "block",
+            "statements": [
+                "error_msg = f\"{error_msg} (Make sure the GitHub account or API key has 'repo' or webhook create permissions to '{resource}')\""
+            ]
+        },
+        {
+            "id": "28",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "29",
+            "type": "block",
+            "statements": [
+                "raise ValueError(f'Failed to create GitHub webhook: {error_msg}')"
+            ]
+        },
+        {
+            "id": "30",
+            "type": "block",
+            "statements": [
+                "async def _deregister_webhook(self, webhook: integrations.Webhook, credentials: Credentials) -> None:\n    webhook_type = self.WebhookType(webhook.webhook_type)\n    if webhook.credentials_id != credentials.id:\n        raise ValueError(f'Webhook #{webhook.id} does not belong to credentials {credentials.id}')\n    headers = {**self.GITHUB_API_DEFAULT_HEADERS, 'Authorization': credentials.bearer()}\n    if webhook_type == self.WebhookType.REPO:\n        repo = webhook.resource\n        delete_url = f'{self.GITHUB_API_URL}/repos/{repo}/hooks/{webhook.provider_webhook_id}'\n    else:\n        raise NotImplementedError(f\"Unsupported webhook type '{webhook.webhook_type}'\")\n    response = requests.delete(delete_url, headers=headers)\n    if response.status_code not in [204, 404]:\n        error_msg = extract_github_error_msg(response)\n        raise ValueError(f'Failed to delete GitHub webhook: {error_msg}')",
+                "webhook_type = self.WebhookType(webhook.webhook_type)",
+                "webhook.credentials_id NotEq credentials.id"
+            ]
+        },
+        {
+            "id": "31",
+            "type": "block",
+            "statements": [
+                "raise ValueError(f'Webhook #{webhook.id} does not belong to credentials {credentials.id}')"
+            ]
+        },
+        {
+            "id": "32",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "33",
+            "type": "block",
+            "statements": [
+                "headers = {**self.GITHUB_API_DEFAULT_HEADERS, 'Authorization': credentials.bearer()}",
+                "webhook_type Eq self.WebhookType.REPO"
+            ]
+        },
+        {
+            "id": "34",
+            "type": "block",
+            "statements": [
+                "repo = webhook.resource",
+                "delete_url = f'{self.GITHUB_API_URL}/repos/{repo}/hooks/{webhook.provider_webhook_id}'"
+            ]
+        },
+        {
+            "id": "35",
+            "type": "block",
+            "statements": [
+                "raise NotImplementedError(f\"Unsupported webhook type '{webhook.webhook_type}'\")"
+            ]
+        },
+        {
+            "id": "36",
+            "type": "block",
+            "statements": [
+                "response = requests.delete(delete_url, headers=headers)",
+                "response.status_code NotIn [204, 404]"
+            ]
+        },
+        {
+            "id": "37",
+            "type": "block",
+            "statements": [
+                "error_msg = extract_github_error_msg(response)",
+                "raise ValueError(f'Failed to delete GitHub webhook: {error_msg}')"
+            ]
+        },
+        {
+            "id": "38",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "39",
+            "type": "block",
+            "statements": [
+                "def extract_github_error_msg(response: requests.Response) -> str:\n    error_msgs = []\n    resp = response.json()\n    if resp.get('message'):\n        error_msgs.append(resp['message'])\n    if resp.get('errors'):\n        error_msgs.extend((f\"* {err.get('message', err)}\" for err in resp['errors']))\n    if resp.get('error'):\n        if isinstance(resp['error'], dict):\n            error_msgs.append(resp['error'].get('message', resp['error']))\n        else:\n            error_msgs.append(resp['error'])\n    return '\\n'.join(error_msgs)",
+                "error_msgs = []",
+                "resp = response.json()",
+                "resp.get('message')"
+            ]
+        },
+        {
+            "id": "40",
+            "type": "block",
+            "statements": [
+                "error_msgs.append(resp['message'])"
+            ]
+        },
+        {
+            "id": "41",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "42",
+            "type": "block",
+            "statements": [
+                "resp.get('errors')"
+            ]
+        },
+        {
+            "id": "43",
+            "type": "block",
+            "statements": [
+                "error_msgs.extend((f\"* {err.get('message', err)}\" for err in resp['errors']))"
+            ]
+        },
+        {
+            "id": "44",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "45",
+            "type": "block",
+            "statements": [
+                "resp.get('error')"
+            ]
+        },
+        {
+            "id": "46",
+            "type": "block",
+            "statements": [
+                "isinstance(resp['error'], dict)"
+            ]
+        },
+        {
+            "id": "47",
+            "type": "block",
+            "statements": []
+        },
+        {
+            "id": "48",
+            "type": "block",
+            "statements": [
+                "return '\\n'.join(error_msgs)"
+            ]
+        },
+        {
+            "id": "49",
+            "type": "block",
+            "statements": [
+                "error_msgs.append(resp['error'].get('message', resp['error']))"
+            ]
+        },
+        {
+            "id": "50",
+            "type": "block",
+            "statements": [
+                "error_msgs.append(resp['error'])"
+            ]
+        },
+        {
+            "id": "51",
+            "type": "block",
+            "statements": []
+        }
+    ],
+    "edges": [
+        {
+            "source": "1",
+            "target": "2",
+            "type": "true"
+        },
+        {
+            "source": "1",
+            "target": "3",
+            "type": "false"
+        },
+        {
+            "source": "2",
+            "target": "4",
+            "type": "next"
+        },
+        {
+            "source": "3",
+            "target": "4",
+            "type": "next"
+        },
+        {
+            "source": "4",
+            "target": "5",
+            "type": "true"
+        },
+        {
+            "source": "4",
+            "target": "6",
+            "type": "false"
+        },
+        {
+            "source": "5",
+            "target": "7",
+            "type": "next"
+        },
+        {
+            "source": "6",
+            "target": "7",
+            "type": "next"
+        },
+        {
+            "source": "7",
+            "target": "8",
+            "type": "true"
+        },
+        {
+            "source": "7",
+            "target": "9",
+            "type": "false"
+        },
+        {
+            "source": "8",
+            "target": "10",
+            "type": "next"
+        },
+        {
+            "source": "9",
+            "target": "10",
+            "type": "next"
+        },
+        {
+            "source": "10",
+            "target": "11",
+            "type": "true"
+        },
+        {
+            "source": "10",
+            "target": "12",
+            "type": "false"
+        },
+        {
+            "source": "11",
+            "target": "13",
+            "type": "next"
+        },
+        {
+            "source": "12",
+            "target": "13",
+            "type": "next"
+        },
+        {
+            "source": "14",
+            "target": "15",
+            "type": "true"
+        },
+        {
+            "source": "14",
+            "target": "16",
+            "type": "false"
+        },
+        {
+            "source": "15",
+            "target": "17",
+            "type": "next"
+        },
+        {
+            "source": "16",
+            "target": "17",
+            "type": "next"
+        },
+        {
+            "source": "17",
+            "target": "18",
+            "type": "true"
+        },
+        {
+            "source": "17",
+            "target": "19",
+            "type": "false"
+        },
+        {
+            "source": "18",
+            "target": "20",
+            "type": "next"
+        },
+        {
+            "source": "19",
+            "target": "20",
+            "type": "next"
+        },
+        {
+            "source": "20",
+            "target": "21",
+            "type": "true"
+        },
+        {
+            "source": "20",
+            "target": "22",
+            "type": "false"
+        },
+        {
+            "source": "21",
+            "target": "23",
+            "type": "next"
+        },
+        {
+            "source": "22",
+            "target": "23",
+            "type": "next"
+        },
+        {
+            "source": "23",
+            "target": "24",
+            "type": "true"
+        },
+        {
+            "source": "23",
+            "target": "25",
+            "type": "false"
+        },
+        {
+            "source": "24",
+            "target": "27",
+            "type": "true"
+        },
+        {
+            "source": "24",
+            "target": "28",
+            "type": "false"
+        },
+        {
+            "source": "25",
+            "target": "26",
+            "type": "next"
+        },
+        {
+            "source": "27",
+            "target": "29",
+            "type": "next"
+        },
+        {
+            "source": "28",
+            "target": "29",
+            "type": "next"
+        },
+        {
+            "source": "29",
+            "target": "26",
+            "type": "next"
+        },
+        {
+            "source": "30",
+            "target": "31",
+            "type": "true"
+        },
+        {
+            "source": "30",
+            "target": "32",
+            "type": "false"
+        },
+        {
+            "source": "31",
+            "target": "33",
+            "type": "next"
+        },
+        {
+            "source": "32",
+            "target": "33",
+            "type": "next"
+        },
+        {
+            "source": "33",
+            "target": "34",
+            "type": "true"
+        },
+        {
+            "source": "33",
+            "target": "35",
+            "type": "false"
+        },
+        {
+            "source": "34",
+            "target": "36",
+            "type": "next"
+        },
+        {
+            "source": "35",
+            "target": "36",
+            "type": "next"
+        },
+        {
+            "source": "36",
+            "target": "37",
+            "type": "true"
+        },
+        {
+            "source": "36",
+            "target": "38",
+            "type": "false"
+        },
+        {
+            "source": "37",
+            "target": "39",
+            "type": "next"
+        },
+        {
+            "source": "38",
+            "target": "39",
+            "type": "next"
+        },
+        {
+            "source": "39",
+            "target": "40",
+            "type": "true"
+        },
+        {
+            "source": "39",
+            "target": "41",
+            "type": "false"
+        },
+        {
+            "source": "40",
+            "target": "42",
+            "type": "next"
+        },
+        {
+            "source": "41",
+            "target": "42",
+            "type": "next"
+        },
+        {
+            "source": "42",
+            "target": "43",
+            "type": "true"
+        },
+        {
+            "source": "42",
+            "target": "44",
+            "type": "false"
+        },
+        {
+            "source": "43",
+            "target": "45",
+            "type": "next"
+        },
+        {
+            "source": "44",
+            "target": "45",
+            "type": "next"
+        },
+        {
+            "source": "45",
+            "target": "46",
+            "type": "true"
+        },
+        {
+            "source": "45",
+            "target": "47",
+            "type": "false"
+        },
+        {
+            "source": "46",
+            "target": "49",
+            "type": "true"
+        },
+        {
+            "source": "46",
+            "target": "50",
+            "type": "false"
+        },
+        {
+            "source": "47",
+            "target": "48",
+            "type": "next"
+        },
+        {
+            "source": "49",
+            "target": "51",
+            "type": "next"
+        },
+        {
+            "source": "50",
+            "target": "51",
+            "type": "next"
+        },
+        {
+            "source": "51",
+            "target": "48",
+            "type": "next"
+        }
+    ]
+}

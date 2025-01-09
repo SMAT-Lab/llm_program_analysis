@@ -1,0 +1,110 @@
+{
+    "nodes": [
+        {
+            "id": "chunk_0_GlobalBlock_1",
+            "code": "import asyncio\nimport logging\nimport os\nimport threading\nfrom functools import wraps\nfrom uuid import uuid4\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_2",
+            "code": "from tenacity import retry, stop_after_attempt, wait_exponential\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_3",
+            "code": "from backend.util.process import get_service_name\n"
+        },
+        {
+            "id": "chunk_0_GlobalBlock_4",
+            "code": "logger = logging.getLogger(__name__)\n"
+        },
+        {
+            "id": "chunk_1__log_prefix_1",
+            "code": "def _log_prefix(resource_name: str, conn_id: str):\n    \"\"\"\n    Returns a prefix string for logging purposes.\n    This needs to be called on the fly to get the current process ID & service name,\n    not the parent process ID & service name.\n    \"\"\"\n    return f\"[PID-{os.getpid()}|THREAD-{threading.get_native_id()}|{get_service_name()}|{resource_name}-{conn_id}]\"\n"
+        },
+        {
+            "id": "chunk_2_conn_retry_1",
+            "code": "def conn_retry(\n    resource_name: str,\n    action_name: str,\n    max_retry: int = 5,\n    multiplier: int = 1,\n    min_wait: float = 1,\n    max_wait: float = 30,\n):\n"
+        },
+        {
+            "id": "chunk_2_conn_retry_2",
+            "code": "    conn_id = str(uuid4())\n"
+        },
+        {
+            "id": "chunk_2_conn_retry_3",
+            "code": "    def on_retry(retry_state):\n        prefix = _log_prefix(resource_name, conn_id)\n        exception = retry_state.outcome.exception()\n        logger.error(f\"{prefix} {action_name} failed: {exception}. Retrying now...\")\n"
+        },
+        {
+            "id": "chunk_2_conn_retry_4",
+            "code": "    def decorator(func):\n        is_coroutine = asyncio.iscoroutinefunction(func)\n        retry_decorator = retry(\n            stop=stop_after_attempt(max_retry + 1),\n            wait=wait_exponential(multiplier=multiplier, min=min_wait, max=max_wait),\n            before_sleep=on_retry,\n            reraise=True,\n        )\n"
+        },
+        {
+            "id": "chunk_2_conn_retry_5",
+            "code": "        wrapped_func = retry_decorator(func)\n"
+        },
+        {
+            "id": "chunk_2_conn_retry_6",
+            "code": "        @wraps(func)\n        def sync_wrapper(*args, **kwargs):\n            prefix = _log_prefix(resource_name, conn_id)\n            logger.info(f\"{prefix} {action_name} started...\")\n            try:\n                result = wrapped_func(*args, **kwargs)\n                logger.info(f\"{prefix} {action_name} completed successfully.\")\n                return result\n            except Exception as e:\n                logger.error(f\"{prefix} {action_name} failed after retries: {e}\")\n                raise\n"
+        },
+        {
+            "id": "chunk_2_conn_retry_7",
+            "code": "        @wraps(func)\n        async def async_wrapper(*args, **kwargs):\n            prefix = _log_prefix(resource_name, conn_id)\n            logger.info(f\"{prefix} {action_name} started...\")\n            try:\n                result = await wrapped_func(*args, **kwargs)\n                logger.info(f\"{prefix} {action_name} completed successfully.\")\n                return result\n            except Exception as e:\n                logger.error(f\"{prefix} {action_name} failed after retries: {e}\")\n                raise\n"
+        },
+        {
+            "id": "chunk_2_conn_retry_8",
+            "code": "        return async_wrapper if is_coroutine else sync_wrapper\n"
+        },
+        {
+            "id": "chunk_2_conn_retry_9",
+            "code": "    return decorator\n"
+        }
+    ],
+    "edges": [
+        {
+            "from": "chunk_0_GlobalBlock_1",
+            "to": "chunk_0_GlobalBlock_2"
+        },
+        {
+            "from": "chunk_0_GlobalBlock_2",
+            "to": "chunk_0_GlobalBlock_3"
+        },
+        {
+            "from": "chunk_0_GlobalBlock_3",
+            "to": "chunk_0_GlobalBlock_4"
+        },
+        {
+            "from": "chunk_2_conn_retry_1",
+            "to": "chunk_2_conn_retry_2"
+        },
+        {
+            "from": "chunk_2_conn_retry_2",
+            "to": "chunk_2_conn_retry_3"
+        },
+        {
+            "from": "chunk_2_conn_retry_3",
+            "to": "chunk_2_conn_retry_4"
+        },
+        {
+            "from": "chunk_2_conn_retry_4",
+            "to": "chunk_2_conn_retry_5"
+        },
+        {
+            "from": "chunk_2_conn_retry_5",
+            "to": "chunk_2_conn_retry_6"
+        },
+        {
+            "from": "chunk_2_conn_retry_5",
+            "to": "chunk_2_conn_retry_7"
+        },
+        {
+            "from": "chunk_2_conn_retry_6",
+            "to": "chunk_2_conn_retry_8"
+        },
+        {
+            "from": "chunk_2_conn_retry_7",
+            "to": "chunk_2_conn_retry_8"
+        },
+        {
+            "from": "chunk_2_conn_retry_8",
+            "to": "chunk_2_conn_retry_9"
+        }
+    ]
+}
