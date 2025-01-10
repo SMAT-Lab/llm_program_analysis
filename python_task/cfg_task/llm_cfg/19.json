@@ -1,0 +1,480 @@
+[
+  {
+    "decl_name": "GlobalBlock",
+    "start_line": 0,
+    "end_line": 24,
+    "children": [],
+    "code": "import asyncio\nimport json\nimport logging\nfrom abc import ABC, abstractmethod\nfrom datetime import datetime\nfrom typing import Any, AsyncGenerator, Generator, Generic, Optional, TypeVar\n\nfrom pydantic import BaseModel\nfrom redis.asyncio.client import PubSub as AsyncPubSub\nfrom redis.client import PubSub\n\nfrom backend.data import redis\n\nlogger = logging.getLogger(__name__)\n\n\nclass DateTimeEncoder(json.JSONEncoder):\n    def default(self, o):\n        if isinstance(o, datetime):\n            return o.isoformat()\n        return super().default(o)\n\n\nM = TypeVar(\"M\", bound=BaseModel)\n\n",
+    "cfg": {
+      "nodes": [
+        {
+          "id": "GlobalBlock_1",
+          "code": "import asyncio\nimport json\nimport logging\nfrom abc import ABC, abstractmethod\nfrom datetime import datetime\nfrom typing import Any, AsyncGenerator, Generator, Generic, Optional, TypeVar\n"
+        },
+        {
+          "id": "GlobalBlock_2",
+          "code": "from pydantic import BaseModel\nfrom redis.asyncio.client import PubSub as AsyncPubSub\nfrom redis.client import PubSub\n"
+        },
+        {
+          "id": "GlobalBlock_3",
+          "code": "from backend.data import redis\n"
+        },
+        {
+          "id": "GlobalBlock_4",
+          "code": "logger = logging.getLogger(__name__)\n"
+        },
+        {
+          "id": "GlobalBlock_5",
+          "code": "class DateTimeEncoder(json.JSONEncoder):\n    def default(self, o):\n        if isinstance(o, datetime):\n            return o.isoformat()\n        return super().default(o)\n"
+        },
+        {
+          "id": "GlobalBlock_6",
+          "code": "M = TypeVar(\"M\", bound=BaseModel)\n"
+        }
+      ],
+      "edges": [
+        {
+          "from": "GlobalBlock_1",
+          "to": "GlobalBlock_2"
+        },
+        {
+          "from": "GlobalBlock_2",
+          "to": "GlobalBlock_3"
+        },
+        {
+          "from": "GlobalBlock_3",
+          "to": "GlobalBlock_4"
+        },
+        {
+          "from": "GlobalBlock_4",
+          "to": "GlobalBlock_5"
+        },
+        {
+          "from": "GlobalBlock_5",
+          "to": "GlobalBlock_6"
+        }
+      ]
+    }
+  },
+  {
+    "decl_name": "DateTimeEncoder",
+    "start_line": 16,
+    "end_line": 20,
+    "children": [
+      {
+        "decl_name": "DateTimeEncoder.default",
+        "start_line": 17,
+        "end_line": 20,
+        "children": [],
+        "code": "    def default(self, o):\n        if isinstance(o, datetime):\n            return o.isoformat()\n        return super().default(o)\n",
+        "cfg": {
+          "nodes": [
+            {
+              "id": "DateTimeEncoder.default_1",
+              "code": "def default(self, o):\n"
+            },
+            {
+              "id": "DateTimeEncoder.default_2",
+              "code": "        if isinstance(o, datetime):\n            return o.isoformat()\n"
+            },
+            {
+              "id": "DateTimeEncoder.default_3",
+              "code": "        return super().default(o)\n"
+            }
+          ],
+          "edges": [
+            {
+              "from": "DateTimeEncoder.default_1",
+              "to": "DateTimeEncoder.default_2"
+            },
+            {
+              "from": "DateTimeEncoder.default_2",
+              "to": "DateTimeEncoder.default_3"
+            }
+          ]
+        }
+      }
+    ],
+    "code": "class DateTimeEncoder(json.JSONEncoder):\n",
+    "cfg": {
+      "nodes": [
+        {
+          "id": "DateTimeEncoder_1",
+          "code": "class DateTimeEncoder(json.JSONEncoder):\n"
+        }
+      ],
+      "edges": []
+    }
+  },
+  {
+    "decl_name": "BaseRedisEventBus",
+    "start_line": 26,
+    "end_line": 56,
+    "children": [
+      {
+        "decl_name": "BaseRedisEventBus.event_bus_name",
+        "start_line": 31,
+        "end_line": 32,
+        "children": [],
+        "code": "    def event_bus_name(self) -> str:\n        pass\n",
+        "cfg": {
+          "nodes": [
+            {
+              "id": "BaseRedisEventBus.event_bus_name_1",
+              "code": "def event_bus_name(self) -> str:\n        pass\n"
+            }
+          ],
+          "edges": []
+        }
+      },
+      {
+        "decl_name": "BaseRedisEventBus._serialize_message",
+        "start_line": 34,
+        "end_line": 38,
+        "children": [],
+        "code": "    def _serialize_message(self, item: M, channel_key: str) -> tuple[str, str]:\n        message = json.dumps(item.model_dump(), cls=DateTimeEncoder)\n        channel_name = f\"{self.event_bus_name}/{channel_key}\"\n        logger.info(f\"[{channel_name}] Publishing an event to Redis {message}\")\n        return message, channel_name\n",
+        "cfg": {
+          "nodes": [
+            {
+              "id": "BaseRedisEventBus._serialize_message_1",
+              "code": "def _serialize_message(self, item: M, channel_key: str) -> tuple[str, str]:\n        message = json.dumps(item.model_dump(), cls=DateTimeEncoder)\n        channel_name = f\"{self.event_bus_name}/{channel_key}\"\n        logger.info(f\"[{channel_name}] Publishing an event to Redis {message}\")\n        return message, channel_name\n"
+            }
+          ],
+          "edges": []
+        }
+      },
+      {
+        "decl_name": "BaseRedisEventBus._deserialize_message",
+        "start_line": 40,
+        "end_line": 49,
+        "children": [],
+        "code": "    def _deserialize_message(self, msg: Any, channel_key: str) -> M | None:\n        message_type = \"pmessage\" if \"*\" in channel_key else \"message\"\n        if msg[\"type\"] != message_type:\n            return None\n        try:\n            data = json.loads(msg[\"data\"])\n            logger.info(f\"Consuming an event from Redis {data}\")\n            return self.Model(**data)\n        except Exception as e:\n            logger.error(f\"Failed to parse event result from Redis {msg} {e}\")\n",
+        "cfg": {
+          "nodes": [
+            {
+              "id": "BaseRedisEventBus._deserialize_message_1",
+              "code": "def _deserialize_message(self, msg: Any, channel_key: str) -> M | None:\n        message_type = \"pmessage\" if \"*\" in channel_key else \"message\"\n"
+            },
+            {
+              "id": "BaseRedisEventBus._deserialize_message_2",
+              "code": "        if msg[\"type\"] != message_type:\n            return None\n"
+            },
+            {
+              "id": "BaseRedisEventBus._deserialize_message_3",
+              "code": "        try:\n            data = json.loads(msg[\"data\"])\n            logger.info(f\"Consuming an event from Redis {data}\")\n            return self.Model(**data)\n"
+            },
+            {
+              "id": "BaseRedisEventBus._deserialize_message_4",
+              "code": "        except Exception as e:\n            logger.error(f\"Failed to parse event result from Redis {msg} {e}\")\n"
+            }
+          ],
+          "edges": [
+            {
+              "from": "BaseRedisEventBus._deserialize_message_1",
+              "to": "BaseRedisEventBus._deserialize_message_2"
+            },
+            {
+              "from": "BaseRedisEventBus._deserialize_message_2",
+              "to": "BaseRedisEventBus._deserialize_message_3"
+            }
+          ]
+        }
+      },
+      {
+        "decl_name": "BaseRedisEventBus._get_pubsub_channel",
+        "start_line": 51,
+        "end_line": 56,
+        "children": [],
+        "code": "    def _get_pubsub_channel(\n        self, connection: redis.Redis | redis.AsyncRedis, channel_key: str\n    ) -> tuple[PubSub | AsyncPubSub, str]:\n        full_channel_name = f\"{self.event_bus_name}/{channel_key}\"\n        pubsub = connection.pubsub()\n        return pubsub, full_channel_name\n",
+        "cfg": {
+          "nodes": [
+            {
+              "id": "BaseRedisEventBus._get_pubsub_channel_1",
+              "code": "def _get_pubsub_channel(\n        self, connection: redis.Redis | redis.AsyncRedis, channel_key: str\n    ) -> tuple[PubSub | AsyncPubSub, str]:\n"
+            },
+            {
+              "id": "BaseRedisEventBus._get_pubsub_channel_2",
+              "code": "        full_channel_name = f\"{self.event_bus_name}/{channel_key}\"\n        pubsub = connection.pubsub()\n        return pubsub, full_channel_name\n"
+            }
+          ],
+          "edges": [
+            {
+              "from": "BaseRedisEventBus._get_pubsub_channel_1",
+              "to": "BaseRedisEventBus._get_pubsub_channel_2"
+            }
+          ]
+        }
+      }
+    ],
+    "code": "class BaseRedisEventBus(Generic[M], ABC):\n    Model: type[M]\n\n    @property\n    @abstractmethod\n\n\n\n",
+    "cfg": {
+      "nodes": [
+        {
+          "id": "BaseRedisEventBus_1",
+          "code": "class BaseRedisEventBus(Generic[M], ABC):\n    Model: type[M]\n"
+        },
+        {
+          "id": "BaseRedisEventBus_2",
+          "code": "    @property\n    @abstractmethod\n"
+        }
+      ],
+      "edges": [
+        {
+          "from": "BaseRedisEventBus_1",
+          "to": "BaseRedisEventBus_2"
+        }
+      ]
+    }
+  },
+  {
+    "decl_name": "RedisEventBus",
+    "start_line": 59,
+    "end_line": 84,
+    "children": [
+      {
+        "decl_name": "RedisEventBus.connection",
+        "start_line": 63,
+        "end_line": 64,
+        "children": [],
+        "code": "    def connection(self) -> redis.Redis:\n        return redis.get_redis()\n",
+        "cfg": {
+          "nodes": [
+            {
+              "id": "RedisEventBus.connection_1",
+              "code": "def connection(self) -> redis.Redis:\n        return redis.get_redis()\n"
+            }
+          ],
+          "edges": []
+        }
+      },
+      {
+        "decl_name": "RedisEventBus.publish_event",
+        "start_line": 66,
+        "end_line": 68,
+        "children": [],
+        "code": "    def publish_event(self, event: M, channel_key: str):\n        message, full_channel_name = self._serialize_message(event, channel_key)\n        self.connection.publish(full_channel_name, message)\n",
+        "cfg": {
+          "nodes": [
+            {
+              "id": "RedisEventBus.publish_event_1",
+              "code": "def publish_event(self, event: M, channel_key: str):\n        message, full_channel_name = self._serialize_message(event, channel_key)\n        self.connection.publish(full_channel_name, message)\n"
+            }
+          ],
+          "edges": []
+        }
+      },
+      {
+        "decl_name": "RedisEventBus.listen_events",
+        "start_line": 70,
+        "end_line": 83,
+        "children": [],
+        "code": "    def listen_events(self, channel_key: str) -> Generator[M, None, None]:\n        pubsub, full_channel_name = self._get_pubsub_channel(\n            self.connection, channel_key\n        )\n        assert isinstance(pubsub, PubSub)\n\n        if \"*\" in channel_key:\n            pubsub.psubscribe(full_channel_name)\n        else:\n            pubsub.subscribe(full_channel_name)\n\n        for message in pubsub.listen():\n            if event := self._deserialize_message(message, channel_key):\n                yield event\n",
+        "cfg": {
+          "nodes": [
+            {
+              "id": "RedisEventBus.listen_events_1",
+              "code": "def listen_events(self, channel_key: str) -> Generator[M, None, None]:\n        pubsub, full_channel_name = self._get_pubsub_channel(\n            self.connection, channel_key\n        )\n"
+            },
+            {
+              "id": "RedisEventBus.listen_events_2",
+              "code": "        assert isinstance(pubsub, PubSub)\n"
+            },
+            {
+              "id": "RedisEventBus.listen_events_3",
+              "code": "        if \"*\" in channel_key:\n            pubsub.psubscribe(full_channel_name)\n        else:\n            pubsub.subscribe(full_channel_name)\n"
+            },
+            {
+              "id": "RedisEventBus.listen_events_4",
+              "code": "        for message in pubsub.listen():\n            if event := self._deserialize_message(message, channel_key):\n                yield event\n"
+            }
+          ],
+          "edges": [
+            {
+              "from": "RedisEventBus.listen_events_1",
+              "to": "RedisEventBus.listen_events_2"
+            },
+            {
+              "from": "RedisEventBus.listen_events_2",
+              "to": "RedisEventBus.listen_events_3"
+            },
+            {
+              "from": "RedisEventBus.listen_events_3",
+              "to": "RedisEventBus.listen_events_4"
+            }
+          ]
+        }
+      }
+    ],
+    "code": "class RedisEventBus(BaseRedisEventBus[M], ABC):\n    Model: type[M]\n\n    @property\n\n\n\n",
+    "cfg": {
+      "nodes": [
+        {
+          "id": "RedisEventBus_1",
+          "code": "class RedisEventBus(BaseRedisEventBus[M], ABC):\n    Model: type[M]\n"
+        },
+        {
+          "id": "RedisEventBus_2",
+          "code": "    @property\n"
+        }
+      ],
+      "edges": []
+    }
+  },
+  {
+    "decl_name": "AsyncRedisEventBus",
+    "start_line": 86,
+    "end_line": 121,
+    "children": [
+      {
+        "decl_name": "AsyncRedisEventBus.connection",
+        "start_line": 90,
+        "end_line": 91,
+        "children": [],
+        "code": "    async def connection(self) -> redis.AsyncRedis:\n        return await redis.get_redis_async()\n",
+        "cfg": {
+          "nodes": [
+            {
+              "id": "AsyncRedisEventBus.connection_1",
+              "code": "async def connection(self) -> redis.AsyncRedis:\n        return await redis.get_redis_async()\n"
+            }
+          ],
+          "edges": []
+        }
+      },
+      {
+        "decl_name": "AsyncRedisEventBus.publish_event",
+        "start_line": 93,
+        "end_line": 96,
+        "children": [],
+        "code": "    async def publish_event(self, event: M, channel_key: str):\n        message, full_channel_name = self._serialize_message(event, channel_key)\n        connection = await self.connection\n        await connection.publish(full_channel_name, message)\n",
+        "cfg": {
+          "nodes": [
+            {
+              "id": "AsyncRedisEventBus.publish_event_1",
+              "code": "async def publish_event(self, event: M, channel_key: str):\n"
+            },
+            {
+              "id": "AsyncRedisEventBus.publish_event_2",
+              "code": "        message, full_channel_name = self._serialize_message(event, channel_key)\n"
+            },
+            {
+              "id": "AsyncRedisEventBus.publish_event_3",
+              "code": "        connection = await self.connection\n"
+            },
+            {
+              "id": "AsyncRedisEventBus.publish_event_4",
+              "code": "        await connection.publish(full_channel_name, message)\n"
+            }
+          ],
+          "edges": [
+            {
+              "from": "AsyncRedisEventBus.publish_event_1",
+              "to": "AsyncRedisEventBus.publish_event_2"
+            },
+            {
+              "from": "AsyncRedisEventBus.publish_event_2",
+              "to": "AsyncRedisEventBus.publish_event_3"
+            },
+            {
+              "from": "AsyncRedisEventBus.publish_event_3",
+              "to": "AsyncRedisEventBus.publish_event_4"
+            }
+          ]
+        }
+      },
+      {
+        "decl_name": "AsyncRedisEventBus.listen_events",
+        "start_line": 98,
+        "end_line": 111,
+        "children": [],
+        "code": "    async def listen_events(self, channel_key: str) -> AsyncGenerator[M, None]:\n        pubsub, full_channel_name = self._get_pubsub_channel(\n            await self.connection, channel_key\n        )\n        assert isinstance(pubsub, AsyncPubSub)\n\n        if \"*\" in channel_key:\n            await pubsub.psubscribe(full_channel_name)\n        else:\n            await pubsub.subscribe(full_channel_name)\n\n        async for message in pubsub.listen():\n            if event := self._deserialize_message(message, channel_key):\n                yield event\n",
+        "cfg": {
+          "nodes": [
+            {
+              "id": "AsyncRedisEventBus.listen_events_1",
+              "code": "async def listen_events(self, channel_key: str) -> AsyncGenerator[M, None]:\n        pubsub, full_channel_name = self._get_pubsub_channel(\n            await self.connection, channel_key\n        )\n"
+            },
+            {
+              "id": "AsyncRedisEventBus.listen_events_2",
+              "code": "        assert isinstance(pubsub, AsyncPubSub)\n"
+            },
+            {
+              "id": "AsyncRedisEventBus.listen_events_3",
+              "code": "        if \"*\" in channel_key:\n            await pubsub.psubscribe(full_channel_name)\n        else:\n            await pubsub.subscribe(full_channel_name)\n"
+            },
+            {
+              "id": "AsyncRedisEventBus.listen_events_4",
+              "code": "        async for message in pubsub.listen():\n            if event := self._deserialize_message(message, channel_key):\n                yield event\n"
+            }
+          ],
+          "edges": [
+            {
+              "from": "AsyncRedisEventBus.listen_events_1",
+              "to": "AsyncRedisEventBus.listen_events_2"
+            },
+            {
+              "from": "AsyncRedisEventBus.listen_events_2",
+              "to": "AsyncRedisEventBus.listen_events_3"
+            },
+            {
+              "from": "AsyncRedisEventBus.listen_events_3",
+              "to": "AsyncRedisEventBus.listen_events_4"
+            }
+          ]
+        }
+      },
+      {
+        "decl_name": "AsyncRedisEventBus.wait_for_event",
+        "start_line": 113,
+        "end_line": 121,
+        "children": [],
+        "code": "    async def wait_for_event(\n        self, channel_key: str, timeout: Optional[float] = None\n    ) -> M | None:\n        try:\n            return await asyncio.wait_for(\n                anext(aiter(self.listen_events(channel_key))), timeout\n            )\n        except TimeoutError:\n            return None\n",
+        "cfg": {
+          "nodes": [
+            {
+              "id": "AsyncRedisEventBus.wait_for_event_1",
+              "code": "async def wait_for_event(\n        self, channel_key: str, timeout: Optional[float] = None\n    ) -> M | None:\n"
+            },
+            {
+              "id": "AsyncRedisEventBus.wait_for_event_2",
+              "code": "        try:\n            return await asyncio.wait_for(\n                anext(aiter(self.listen_events(channel_key))), timeout\n            )\n"
+            },
+            {
+              "id": "AsyncRedisEventBus.wait_for_event_3",
+              "code": "        except TimeoutError:\n            return None\n"
+            }
+          ],
+          "edges": [
+            {
+              "from": "AsyncRedisEventBus.wait_for_event_1",
+              "to": "AsyncRedisEventBus.wait_for_event_2"
+            },
+            {
+              "from": "AsyncRedisEventBus.wait_for_event_2",
+              "to": "AsyncRedisEventBus.wait_for_event_3"
+            }
+          ]
+        }
+      }
+    ],
+    "code": "class AsyncRedisEventBus(BaseRedisEventBus[M], ABC):\n    Model: type[M]\n\n    @property\n\n\n\n",
+    "cfg": {
+      "nodes": [
+        {
+          "id": "AsyncRedisEventBus_1",
+          "code": "class AsyncRedisEventBus(BaseRedisEventBus[M], ABC):\n    Model: type[M]\n"
+        },
+        {
+          "id": "AsyncRedisEventBus_2",
+          "code": "    @property\n"
+        }
+      ],
+      "edges": [
+        {
+          "from": "AsyncRedisEventBus_1",
+          "to": "AsyncRedisEventBus_2"
+        }
+      ]
+    }
+  }
+]

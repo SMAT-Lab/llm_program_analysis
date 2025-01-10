@@ -1,0 +1,418 @@
+[
+  {
+    "decl_name": "GlobalBlock",
+    "start_line": 0,
+    "end_line": 17,
+    "children": [],
+    "code": "import logging\n\nfrom google.auth.external_account_authorized_user import (\n    Credentials as ExternalAccountCredentials,\n)\nfrom google.auth.transport.requests import AuthorizedSession, Request\nfrom google.oauth2.credentials import Credentials\nfrom google_auth_oauthlib.flow import Flow\nfrom pydantic import SecretStr\n\nfrom backend.data.model import OAuth2Credentials\nfrom backend.integrations.providers import ProviderName\n\nfrom .base import BaseOAuthHandler\n\nlogger = logging.getLogger(__name__)\n\n\n",
+    "cfg": {
+      "nodes": [
+        {
+          "id": "GlobalBlock_1",
+          "code": "import logging\n"
+        },
+        {
+          "id": "GlobalBlock_2",
+          "code": "from google.auth.external_account_authorized_user import (\n    Credentials as ExternalAccountCredentials,\n)\n"
+        },
+        {
+          "id": "GlobalBlock_3",
+          "code": "from google.auth.transport.requests import AuthorizedSession, Request\nfrom google.oauth2.credentials import Credentials\nfrom google_auth_oauthlib.flow import Flow\nfrom pydantic import SecretStr\n"
+        },
+        {
+          "id": "GlobalBlock_4",
+          "code": "from backend.data.model import OAuth2Credentials\nfrom backend.integrations.providers import ProviderName\n"
+        },
+        {
+          "id": "GlobalBlock_5",
+          "code": "from .base import BaseOAuthHandler\n"
+        },
+        {
+          "id": "GlobalBlock_6",
+          "code": "logger = logging.getLogger(__name__)\n"
+        }
+      ],
+      "edges": [
+        {
+          "from": "GlobalBlock_1",
+          "to": "GlobalBlock_2"
+        },
+        {
+          "from": "GlobalBlock_2",
+          "to": "GlobalBlock_3"
+        },
+        {
+          "from": "GlobalBlock_3",
+          "to": "GlobalBlock_4"
+        },
+        {
+          "from": "GlobalBlock_4",
+          "to": "GlobalBlock_5"
+        },
+        {
+          "from": "GlobalBlock_5",
+          "to": "GlobalBlock_6"
+        }
+      ]
+    }
+  },
+  {
+    "decl_name": "GoogleOAuthHandler",
+    "start_line": 19,
+    "end_line": 168,
+    "children": [
+      {
+        "decl_name": "GoogleOAuthHandler.__init__",
+        "start_line": 33,
+        "end_line": 38,
+        "children": [],
+        "code": "    def __init__(self, client_id: str, client_secret: str, redirect_uri: str):\n        self.client_id = client_id\n        self.client_secret = client_secret\n        self.redirect_uri = redirect_uri\n        self.token_uri = \"https://oauth2.googleapis.com/token\"\n        self.revoke_uri = \"https://oauth2.googleapis.com/revoke\"\n",
+        "cfg": {
+          "nodes": [
+            {
+              "id": "GoogleOAuthHandler.__init___1",
+              "code": "def __init__(self, client_id: str, client_secret: str, redirect_uri: str):\n        self.client_id = client_id\n        self.client_secret = client_secret\n        self.redirect_uri = redirect_uri\n        self.token_uri = \"https://oauth2.googleapis.com/token\"\n        self.revoke_uri = \"https://oauth2.googleapis.com/revoke\"\n"
+            }
+          ],
+          "edges": []
+        }
+      },
+      {
+        "decl_name": "GoogleOAuthHandler.get_login_url",
+        "start_line": 40,
+        "end_line": 51,
+        "children": [],
+        "code": "    def get_login_url(self, scopes: list[str], state: str) -> str:\n        all_scopes = list(set(scopes + self.DEFAULT_SCOPES))\n        logger.debug(f\"Setting up OAuth flow with scopes: {all_scopes}\")\n        flow = self._setup_oauth_flow(all_scopes)\n        flow.redirect_uri = self.redirect_uri\n        authorization_url, _ = flow.authorization_url(\n            access_type=\"offline\",\n            include_granted_scopes=\"true\",\n            state=state,\n            prompt=\"consent\",\n        )\n        return authorization_url\n",
+        "cfg": {
+          "nodes": [
+            {
+              "id": "GoogleOAuthHandler.get_login_url_1",
+              "code": "def get_login_url(self, scopes: list[str], state: str) -> str:\n        all_scopes = list(set(scopes + self.DEFAULT_SCOPES))\n"
+            },
+            {
+              "id": "GoogleOAuthHandler.get_login_url_2",
+              "code": "        logger.debug(f\"Setting up OAuth flow with scopes: {all_scopes}\")\n        flow = self._setup_oauth_flow(all_scopes)\n"
+            },
+            {
+              "id": "GoogleOAuthHandler.get_login_url_3",
+              "code": "        flow.redirect_uri = self.redirect_uri\n"
+            },
+            {
+              "id": "GoogleOAuthHandler.get_login_url_4",
+              "code": "        authorization_url, _ = flow.authorization_url(\n            access_type=\"offline\",\n            include_granted_scopes=\"true\",\n            state=state,\n            prompt=\"consent\",\n        )\n"
+            },
+            {
+              "id": "GoogleOAuthHandler.get_login_url_5",
+              "code": "        return authorization_url\n"
+            }
+          ],
+          "edges": [
+            {
+              "from": "GoogleOAuthHandler.get_login_url_1",
+              "to": "GoogleOAuthHandler.get_login_url_2"
+            },
+            {
+              "from": "GoogleOAuthHandler.get_login_url_2",
+              "to": "GoogleOAuthHandler.get_login_url_3"
+            },
+            {
+              "from": "GoogleOAuthHandler.get_login_url_3",
+              "to": "GoogleOAuthHandler.get_login_url_4"
+            },
+            {
+              "from": "GoogleOAuthHandler.get_login_url_4",
+              "to": "GoogleOAuthHandler.get_login_url_5"
+            }
+          ]
+        }
+      },
+      {
+        "decl_name": "GoogleOAuthHandler.exchange_code_for_tokens",
+        "start_line": 53,
+        "end_line": 103,
+        "children": [],
+        "code": "    def exchange_code_for_tokens(\n        self, code: str, scopes: list[str]\n    ) -> OAuth2Credentials:\n        logger.debug(f\"Exchanging code for tokens with scopes: {scopes}\")\n\n        # Use the scopes from the initial request\n        flow = self._setup_oauth_flow(scopes)\n        flow.redirect_uri = self.redirect_uri\n\n        logger.debug(\"Fetching token from Google\")\n\n        # Disable scope check in fetch_token\n        flow.oauth2session.scope = None\n        token = flow.fetch_token(code=code)\n        logger.debug(\"Token fetched successfully\")\n\n        # Get the actual scopes granted by Google\n        granted_scopes: list[str] = token.get(\"scope\", [])\n\n        logger.debug(f\"Scopes granted by Google: {granted_scopes}\")\n\n        google_creds = flow.credentials\n        logger.debug(f\"Received credentials: {google_creds}\")\n\n        logger.debug(\"Requesting user email\")\n        username = self._request_email(google_creds)\n        logger.debug(f\"User email retrieved: {username}\")\n\n        assert google_creds.token\n        assert google_creds.refresh_token\n        assert google_creds.expiry\n        assert granted_scopes\n\n        # Create OAuth2Credentials with the granted scopes\n        credentials = OAuth2Credentials(\n            provider=self.PROVIDER_NAME,\n            title=None,\n            username=username,\n            access_token=SecretStr(google_creds.token),\n            refresh_token=(SecretStr(google_creds.refresh_token)),\n            access_token_expires_at=(\n                int(google_creds.expiry.timestamp()) if google_creds.expiry else None\n            ),\n            refresh_token_expires_at=None,\n            scopes=granted_scopes,\n        )\n        logger.debug(\n            f\"OAuth2Credentials object created successfully with scopes: {credentials.scopes}\"\n        )\n\n        return credentials\n",
+        "cfg": {
+          "nodes": [
+            {
+              "id": "GoogleOAuthHandler.exchange_code_for_tokens_1",
+              "code": "def exchange_code_for_tokens(\n        self, code: str, scopes: list[str]\n    ) -> OAuth2Credentials:\n"
+            },
+            {
+              "id": "GoogleOAuthHandler.exchange_code_for_tokens_2",
+              "code": "        logger.debug(f\"Exchanging code for tokens with scopes: {scopes}\")\n"
+            },
+            {
+              "id": "GoogleOAuthHandler.exchange_code_for_tokens_3",
+              "code": "        # Use the scopes from the initial request\n        flow = self._setup_oauth_flow(scopes)\n        flow.redirect_uri = self.redirect_uri\n"
+            },
+            {
+              "id": "GoogleOAuthHandler.exchange_code_for_tokens_4",
+              "code": "        logger.debug(\"Fetching token from Google\")\n"
+            },
+            {
+              "id": "GoogleOAuthHandler.exchange_code_for_tokens_5",
+              "code": "        # Disable scope check in fetch_token\n        flow.oauth2session.scope = None\n        token = flow.fetch_token(code=code)\n"
+            },
+            {
+              "id": "GoogleOAuthHandler.exchange_code_for_tokens_6",
+              "code": "        logger.debug(\"Token fetched successfully\")\n"
+            },
+            {
+              "id": "GoogleOAuthHandler.exchange_code_for_tokens_7",
+              "code": "        # Get the actual scopes granted by Google\n        granted_scopes: list[str] = token.get(\"scope\", [])\n"
+            },
+            {
+              "id": "GoogleOAuthHandler.exchange_code_for_tokens_8",
+              "code": "        logger.debug(f\"Scopes granted by Google: {granted_scopes}\")\n"
+            },
+            {
+              "id": "GoogleOAuthHandler.exchange_code_for_tokens_9",
+              "code": "        google_creds = flow.credentials\n        logger.debug(f\"Received credentials: {google_creds}\")\n"
+            },
+            {
+              "id": "GoogleOAuthHandler.exchange_code_for_tokens_10",
+              "code": "        logger.debug(\"Requesting user email\")\n        username = self._request_email(google_creds)\n        logger.debug(f\"User email retrieved: {username}\")\n"
+            },
+            {
+              "id": "GoogleOAuthHandler.exchange_code_for_tokens_11",
+              "code": "        assert google_creds.token\n        assert google_creds.refresh_token\n        assert google_creds.expiry\n        assert granted_scopes\n"
+            },
+            {
+              "id": "GoogleOAuthHandler.exchange_code_for_tokens_12",
+              "code": "        # Create OAuth2Credentials with the granted scopes\n        credentials = OAuth2Credentials(\n            provider=self.PROVIDER_NAME,\n            title=None,\n            username=username,\n            access_token=SecretStr(google_creds.token),\n            refresh_token=(SecretStr(google_creds.refresh_token)),\n            access_token_expires_at=(\n                int(google_creds.expiry.timestamp()) if google_creds.expiry else None\n            ),\n            refresh_token_expires_at=None,\n            scopes=granted_scopes,\n        )\n"
+            },
+            {
+              "id": "GoogleOAuthHandler.exchange_code_for_tokens_13",
+              "code": "        logger.debug(\n            f\"OAuth2Credentials object created successfully with scopes: {credentials.scopes}\"\n        )\n"
+            },
+            {
+              "id": "GoogleOAuthHandler.exchange_code_for_tokens_14",
+              "code": "        return credentials\n"
+            }
+          ],
+          "edges": [
+            {
+              "from": "GoogleOAuthHandler.exchange_code_for_tokens_1",
+              "to": "GoogleOAuthHandler.exchange_code_for_tokens_2"
+            },
+            {
+              "from": "GoogleOAuthHandler.exchange_code_for_tokens_2",
+              "to": "GoogleOAuthHandler.exchange_code_for_tokens_3"
+            },
+            {
+              "from": "GoogleOAuthHandler.exchange_code_for_tokens_3",
+              "to": "GoogleOAuthHandler.exchange_code_for_tokens_4"
+            },
+            {
+              "from": "GoogleOAuthHandler.exchange_code_for_tokens_4",
+              "to": "GoogleOAuthHandler.exchange_code_for_tokens_5"
+            },
+            {
+              "from": "GoogleOAuthHandler.exchange_code_for_tokens_5",
+              "to": "GoogleOAuthHandler.exchange_code_for_tokens_6"
+            },
+            {
+              "from": "GoogleOAuthHandler.exchange_code_for_tokens_6",
+              "to": "GoogleOAuthHandler.exchange_code_for_tokens_7"
+            },
+            {
+              "from": "GoogleOAuthHandler.exchange_code_for_tokens_7",
+              "to": "GoogleOAuthHandler.exchange_code_for_tokens_8"
+            },
+            {
+              "from": "GoogleOAuthHandler.exchange_code_for_tokens_8",
+              "to": "GoogleOAuthHandler.exchange_code_for_tokens_9"
+            },
+            {
+              "from": "GoogleOAuthHandler.exchange_code_for_tokens_9",
+              "to": "GoogleOAuthHandler.exchange_code_for_tokens_10"
+            },
+            {
+              "from": "GoogleOAuthHandler.exchange_code_for_tokens_10",
+              "to": "GoogleOAuthHandler.exchange_code_for_tokens_11"
+            },
+            {
+              "from": "GoogleOAuthHandler.exchange_code_for_tokens_11",
+              "to": "GoogleOAuthHandler.exchange_code_for_tokens_12"
+            },
+            {
+              "from": "GoogleOAuthHandler.exchange_code_for_tokens_12",
+              "to": "GoogleOAuthHandler.exchange_code_for_tokens_13"
+            },
+            {
+              "from": "GoogleOAuthHandler.exchange_code_for_tokens_13",
+              "to": "GoogleOAuthHandler.exchange_code_for_tokens_14"
+            }
+          ]
+        }
+      },
+      {
+        "decl_name": "GoogleOAuthHandler.revoke_tokens",
+        "start_line": 105,
+        "end_line": 112,
+        "children": [],
+        "code": "    def revoke_tokens(self, credentials: OAuth2Credentials) -> bool:\n        session = AuthorizedSession(credentials)\n        session.post(\n            self.revoke_uri,\n            params={\"token\": credentials.access_token.get_secret_value()},\n            headers={\"content-type\": \"application/x-www-form-urlencoded\"},\n        )\n        return True\n",
+        "cfg": {
+          "nodes": [
+            {
+              "id": "GoogleOAuthHandler.revoke_tokens_1",
+              "code": "def revoke_tokens(self, credentials: OAuth2Credentials) -> bool:\n        session = AuthorizedSession(credentials)\n"
+            },
+            {
+              "id": "GoogleOAuthHandler.revoke_tokens_2",
+              "code": "        session.post(\n            self.revoke_uri,\n            params={\"token\": credentials.access_token.get_secret_value()},\n            headers={\"content-type\": \"application/x-www-form-urlencoded\"},\n        )\n"
+            },
+            {
+              "id": "GoogleOAuthHandler.revoke_tokens_3",
+              "code": "        return True\n"
+            }
+          ],
+          "edges": [
+            {
+              "from": "GoogleOAuthHandler.revoke_tokens_1",
+              "to": "GoogleOAuthHandler.revoke_tokens_2"
+            },
+            {
+              "from": "GoogleOAuthHandler.revoke_tokens_2",
+              "to": "GoogleOAuthHandler.revoke_tokens_3"
+            }
+          ]
+        }
+      },
+      {
+        "decl_name": "GoogleOAuthHandler._request_email",
+        "start_line": 114,
+        "end_line": 124,
+        "children": [],
+        "code": "    def _request_email(\n        self, creds: Credentials | ExternalAccountCredentials\n    ) -> str | None:\n        session = AuthorizedSession(creds)\n        response = session.get(self.EMAIL_ENDPOINT)\n        if not response.ok:\n            logger.error(\n                f\"Failed to get user email. Status code: {response.status_code}\"\n            )\n            return None\n        return response.json()[\"email\"]\n",
+        "cfg": {
+          "nodes": [
+            {
+              "id": "GoogleOAuthHandler._request_email_1",
+              "code": "def _request_email(\n        self, creds: Credentials | ExternalAccountCredentials\n    ) -> str | None:\n"
+            },
+            {
+              "id": "GoogleOAuthHandler._request_email_2",
+              "code": "        session = AuthorizedSession(creds)\n        response = session.get(self.EMAIL_ENDPOINT)\n"
+            },
+            {
+              "id": "GoogleOAuthHandler._request_email_3",
+              "code": "        if not response.ok:\n            logger.error(\n                f\"Failed to get user email. Status code: {response.status_code}\"\n            )\n            return None\n"
+            },
+            {
+              "id": "GoogleOAuthHandler._request_email_4",
+              "code": "        return response.json()[\"email\"]\n"
+            }
+          ],
+          "edges": [
+            {
+              "from": "GoogleOAuthHandler._request_email_1",
+              "to": "GoogleOAuthHandler._request_email_2"
+            },
+            {
+              "from": "GoogleOAuthHandler._request_email_2",
+              "to": "GoogleOAuthHandler._request_email_3"
+            },
+            {
+              "from": "GoogleOAuthHandler._request_email_2",
+              "to": "GoogleOAuthHandler._request_email_4"
+            }
+          ]
+        }
+      },
+      {
+        "decl_name": "GoogleOAuthHandler._refresh_tokens",
+        "start_line": 126,
+        "end_line": 155,
+        "children": [],
+        "code": "    def _refresh_tokens(self, credentials: OAuth2Credentials) -> OAuth2Credentials:\n        # Google credentials should ALWAYS have a refresh token\n        assert credentials.refresh_token\n\n        google_creds = Credentials(\n            token=credentials.access_token.get_secret_value(),\n            refresh_token=credentials.refresh_token.get_secret_value(),\n            token_uri=self.token_uri,\n            client_id=self.client_id,\n            client_secret=self.client_secret,\n            scopes=credentials.scopes,\n        )\n        # Google's OAuth library is poorly typed so we need some of these:\n        assert google_creds.refresh_token\n        assert google_creds.scopes\n\n        google_creds.refresh(Request())\n        assert google_creds.expiry\n\n        return OAuth2Credentials(\n            provider=self.PROVIDER_NAME,\n            id=credentials.id,\n            title=credentials.title,\n            username=credentials.username,\n            access_token=SecretStr(google_creds.token),\n            refresh_token=SecretStr(google_creds.refresh_token),\n            access_token_expires_at=int(google_creds.expiry.timestamp()),\n            refresh_token_expires_at=None,\n            scopes=google_creds.scopes,\n        )\n",
+        "cfg": {
+          "nodes": [
+            {
+              "id": "GoogleOAuthHandler._refresh_tokens_1",
+              "code": "def _refresh_tokens(self, credentials: OAuth2Credentials) -> OAuth2Credentials:\n        # Google credentials should ALWAYS have a refresh token\n        assert credentials.refresh_token\n"
+            },
+            {
+              "id": "GoogleOAuthHandler._refresh_tokens_2",
+              "code": "        google_creds = Credentials(\n            token=credentials.access_token.get_secret_value(),\n            refresh_token=credentials.refresh_token.get_secret_value(),\n            token_uri=self.token_uri,\n            client_id=self.client_id,\n            client_secret=self.client_secret,\n            scopes=credentials.scopes,\n        )\n"
+            },
+            {
+              "id": "GoogleOAuthHandler._refresh_tokens_3",
+              "code": "        # Google's OAuth library is poorly typed so we need some of these:\n        assert google_creds.refresh_token\n        assert google_creds.scopes\n"
+            },
+            {
+              "id": "GoogleOAuthHandler._refresh_tokens_4",
+              "code": "        google_creds.refresh(Request())\n        assert google_creds.expiry\n"
+            },
+            {
+              "id": "GoogleOAuthHandler._refresh_tokens_5",
+              "code": "        return OAuth2Credentials(\n            provider=self.PROVIDER_NAME,\n            id=credentials.id,\n            title=credentials.title,\n            username=credentials.username,\n            access_token=SecretStr(google_creds.token),\n            refresh_token=SecretStr(google_creds.refresh_token),\n            access_token_expires_at=int(google_creds.expiry.timestamp()),\n            refresh_token_expires_at=None,\n            scopes=google_creds.scopes,\n        )\n"
+            }
+          ],
+          "edges": [
+            {
+              "from": "GoogleOAuthHandler._refresh_tokens_1",
+              "to": "GoogleOAuthHandler._refresh_tokens_2"
+            },
+            {
+              "from": "GoogleOAuthHandler._refresh_tokens_2",
+              "to": "GoogleOAuthHandler._refresh_tokens_3"
+            },
+            {
+              "from": "GoogleOAuthHandler._refresh_tokens_3",
+              "to": "GoogleOAuthHandler._refresh_tokens_4"
+            },
+            {
+              "from": "GoogleOAuthHandler._refresh_tokens_4",
+              "to": "GoogleOAuthHandler._refresh_tokens_5"
+            }
+          ]
+        }
+      },
+      {
+        "decl_name": "GoogleOAuthHandler._setup_oauth_flow",
+        "start_line": 157,
+        "end_line": 168,
+        "children": [],
+        "code": "    def _setup_oauth_flow(self, scopes: list[str]) -> Flow:\n        return Flow.from_client_config(\n            {\n                \"web\": {\n                    \"client_id\": self.client_id,\n                    \"client_secret\": self.client_secret,\n                    \"auth_uri\": \"https://accounts.google.com/o/oauth2/auth\",\n                    \"token_uri\": self.token_uri,\n                }\n            },\n            scopes=scopes,\n        )\n",
+        "cfg": {
+          "nodes": [
+            {
+              "id": "GoogleOAuthHandler._setup_oauth_flow_1",
+              "code": "def _setup_oauth_flow(self, scopes: list[str]) -> Flow:\n        return Flow.from_client_config(\n            {\n                \"web\": {\n                    \"client_id\": self.client_id,\n                    \"client_secret\": self.client_secret,\n                    \"auth_uri\": \"https://accounts.google.com/o/oauth2/auth\",\n                    \"token_uri\": self.token_uri,\n                }\n            },\n            scopes=scopes,\n        )\n"
+            }
+          ],
+          "edges": []
+        }
+      }
+    ],
+    "code": "class GoogleOAuthHandler(BaseOAuthHandler):\n    \"\"\"\n    Based on the documentation at https://developers.google.com/identity/protocols/oauth2/web-server\n    \"\"\"  # noqa\n\n    PROVIDER_NAME = ProviderName.GOOGLE\n    EMAIL_ENDPOINT = \"https://www.googleapis.com/oauth2/v2/userinfo\"\n    DEFAULT_SCOPES = [\n        \"https://www.googleapis.com/auth/userinfo.email\",\n        \"https://www.googleapis.com/auth/userinfo.profile\",\n        \"openid\",\n    ]\n    # --8<-- [end:GoogleOAuthHandlerExample]\n\n\n\n\n\n\n\n",
+    "cfg": {
+      "nodes": [
+        {
+          "id": "GoogleOAuthHandler_1",
+          "code": "class GoogleOAuthHandler(BaseOAuthHandler):\n    \"\"\"\n    Based on the documentation at https://developers.google.com/identity/protocols/oauth2/web-server\n    \"\"\"  # noqa\n"
+        },
+        {
+          "id": "GoogleOAuthHandler_2",
+          "code": "    PROVIDER_NAME = ProviderName.GOOGLE\n    EMAIL_ENDPOINT = \"https://www.googleapis.com/oauth2/v2/userinfo\"\n    DEFAULT_SCOPES = [\n        \"https://www.googleapis.com/auth/userinfo.email\",\n        \"https://www.googleapis.com/auth/userinfo.profile\",\n        \"openid\",\n    ]\n"
+        },
+        {
+          "id": "GoogleOAuthHandler_3",
+          "code": "    # --8<-- [end:GoogleOAuthHandlerExample]\n"
+        }
+      ],
+      "edges": [
+        {
+          "from": "GoogleOAuthHandler_1",
+          "to": "GoogleOAuthHandler_2"
+        },
+        {
+          "from": "GoogleOAuthHandler_2",
+          "to": "GoogleOAuthHandler_3"
+        }
+      ]
+    }
+  }
+]
