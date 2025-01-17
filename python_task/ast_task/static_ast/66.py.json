@@ -1,0 +1,2537 @@
+{
+    "type": "module",
+    "label": "import logging\nimport os\nimport signal\nimport sys\nfrom abc import ABC, abstractmethod\nfrom multiprocessing import Process, set_start_method\nfrom typing import Optional\n\nfrom backend.util.logging import configure_logging\nfrom backend.util.metrics import sentry_init\n\nlogger = logging.getLogger(__name__)\n_SERVICE_NAME = \"MainProcess\"\n\n\ndef get_service_name():\n    return _SERVICE_NAME\n\n\ndef set_service_name(name: str):\n    global _SERVICE_NAME\n    _SERVICE_NAME = name\n\n\nclass AppProcess(ABC):\n    \"\"\"\n    A class to represent an object that can be executed in a background process.\n    \"\"\"\n\n    process: Optional[Process] = None\n\n    set_start_method(\"spawn\", force=True)\n    configure_logging()\n    sentry_init()\n\n    # Methods that are executed INSIDE the process #\n\n    @abstractmethod\n    def run(self):\n        \"\"\"\n        The method that will be executed in the process.\n        \"\"\"\n        pass\n\n    @classmethod\n    @property\n    def service_name(cls) -> str:\n        return cls.__name__\n\n    def cleanup(self):\n        \"\"\"\n        Implement this method on a subclass to do post-execution cleanup,\n        e.g. disconnecting from a database or terminating child processes.\n        \"\"\"\n        pass\n\n    def health_check(self):\n        \"\"\"\n        A method to check the health of the process.\n        \"\"\"\n        pass\n\n    def execute_run_command(self, silent):\n        signal.signal(signal.SIGTERM, self._self_terminate)\n\n        try:\n            if silent:\n                sys.stdout = open(os.devnull, \"w\")\n                sys.stderr = open(os.devnull, \"w\")\n\n            set_service_name(self.service_name)\n            logger.info(f\"[{self.service_name}] Starting...\")\n            self.run()\n        except (KeyboardInterrupt, SystemExit) as e:\n            logger.warning(f\"[{self.service_name}] Terminated: {e}; quitting...\")\n\n    def _self_terminate(self, signum: int, frame):\n        self.cleanup()\n        sys.exit(0)\n\n    # Methods that are executed OUTSIDE the process #\n\n    def __enter__(self):\n        self.start(background=True)\n        return self\n\n    def __exit__(self, *args, **kwargs):\n        self.stop()\n\n    def start(self, background: bool = False, silent: bool = False, **proc_args) -> int:\n        \"\"\"\n        Start the background process.\n        Args:\n            background: Whether to run the process in the background.\n            silent: Whether to disable stdout and stderr.\n            proc_args: Additional arguments to pass to the process.\n        Returns:\n            the process id or 0 if the process is not running in the background.\n        \"\"\"\n        if not background:\n            self.execute_run_command(silent)\n            return 0\n\n        self.process = Process(\n            name=self.__class__.__name__,\n            target=self.execute_run_command,\n            args=(silent,),\n            **proc_args,\n        )\n        self.process.start()\n        self.health_check()\n        return self.process.pid or 0\n\n    def stop(self):\n        \"\"\"\n        Stop the background process.\n        \"\"\"\n        if not self.process:\n            return\n\n        self.process.terminate()\n        self.process.join()\n        self.process = None\n",
+    "children": [
+        {
+            "type": "import_statement",
+            "label": "import logging",
+            "children": [
+                {
+                    "type": "dotted_name",
+                    "label": "logging",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "label": "logging",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "import_statement",
+            "label": "import os",
+            "children": [
+                {
+                    "type": "dotted_name",
+                    "label": "os",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "label": "os",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "import_statement",
+            "label": "import signal",
+            "children": [
+                {
+                    "type": "dotted_name",
+                    "label": "signal",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "label": "signal",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "import_statement",
+            "label": "import sys",
+            "children": [
+                {
+                    "type": "dotted_name",
+                    "label": "sys",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "label": "sys",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "import_from_statement",
+            "label": "from abc import ABC, abstractmethod",
+            "children": [
+                {
+                    "type": "dotted_name",
+                    "label": "abc",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "label": "abc",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "dotted_name",
+                    "label": "ABC",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "label": "ABC",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "dotted_name",
+                    "label": "abstractmethod",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "label": "abstractmethod",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "import_from_statement",
+            "label": "from multiprocessing import Process, set_start_method",
+            "children": [
+                {
+                    "type": "dotted_name",
+                    "label": "multiprocessing",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "label": "multiprocessing",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "dotted_name",
+                    "label": "Process",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "label": "Process",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "dotted_name",
+                    "label": "set_start_method",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "label": "set_start_method",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "import_from_statement",
+            "label": "from typing import Optional",
+            "children": [
+                {
+                    "type": "dotted_name",
+                    "label": "typing",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "label": "typing",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "dotted_name",
+                    "label": "Optional",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "label": "Optional",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "import_from_statement",
+            "label": "from backend.util.logging import configure_logging",
+            "children": [
+                {
+                    "type": "dotted_name",
+                    "label": "backend.util.logging",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "label": "backend",
+                            "children": []
+                        },
+                        {
+                            "type": "identifier",
+                            "label": "util",
+                            "children": []
+                        },
+                        {
+                            "type": "identifier",
+                            "label": "logging",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "dotted_name",
+                    "label": "configure_logging",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "label": "configure_logging",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "import_from_statement",
+            "label": "from backend.util.metrics import sentry_init",
+            "children": [
+                {
+                    "type": "dotted_name",
+                    "label": "backend.util.metrics",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "label": "backend",
+                            "children": []
+                        },
+                        {
+                            "type": "identifier",
+                            "label": "util",
+                            "children": []
+                        },
+                        {
+                            "type": "identifier",
+                            "label": "metrics",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "dotted_name",
+                    "label": "sentry_init",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "label": "sentry_init",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "expression_statement",
+            "label": "logger = logging.getLogger(__name__)",
+            "children": [
+                {
+                    "type": "assignment",
+                    "label": "logger = logging.getLogger(__name__)",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "label": "logger",
+                            "children": []
+                        },
+                        {
+                            "type": "call",
+                            "label": "logging.getLogger(__name__)",
+                            "children": [
+                                {
+                                    "type": "attribute",
+                                    "label": "logging.getLogger",
+                                    "children": [
+                                        {
+                                            "type": "identifier",
+                                            "label": "logging",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "identifier",
+                                            "label": "getLogger",
+                                            "children": []
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "argument_list",
+                                    "label": "(__name__)",
+                                    "children": [
+                                        {
+                                            "type": "identifier",
+                                            "label": "__name__",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "expression_statement",
+            "label": "_SERVICE_NAME = \"MainProcess\"",
+            "children": [
+                {
+                    "type": "assignment",
+                    "label": "_SERVICE_NAME = \"MainProcess\"",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "label": "_SERVICE_NAME",
+                            "children": []
+                        },
+                        {
+                            "type": "string",
+                            "label": "\"MainProcess\"",
+                            "children": [
+                                {
+                                    "type": "string_start",
+                                    "label": "\"",
+                                    "children": []
+                                },
+                                {
+                                    "type": "string_content",
+                                    "label": "MainProcess",
+                                    "children": []
+                                },
+                                {
+                                    "type": "string_end",
+                                    "label": "\"",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "label": "def get_service_name():\n    return _SERVICE_NAME",
+            "children": [
+                {
+                    "type": "identifier",
+                    "label": "get_service_name",
+                    "children": []
+                },
+                {
+                    "type": "parameters",
+                    "label": "()",
+                    "children": []
+                },
+                {
+                    "type": "block",
+                    "label": "return _SERVICE_NAME",
+                    "children": [
+                        {
+                            "type": "return_statement",
+                            "label": "return _SERVICE_NAME",
+                            "children": [
+                                {
+                                    "type": "identifier",
+                                    "label": "_SERVICE_NAME",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "label": "def set_service_name(name: str):\n    global _SERVICE_NAME\n    _SERVICE_NAME = name",
+            "children": [
+                {
+                    "type": "identifier",
+                    "label": "set_service_name",
+                    "children": []
+                },
+                {
+                    "type": "parameters",
+                    "label": "(name: str)",
+                    "children": [
+                        {
+                            "type": "typed_parameter",
+                            "label": "name: str",
+                            "children": [
+                                {
+                                    "type": "identifier",
+                                    "label": "name",
+                                    "children": []
+                                },
+                                {
+                                    "type": "type",
+                                    "label": "str",
+                                    "children": [
+                                        {
+                                            "type": "identifier",
+                                            "label": "str",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "type": "block",
+                    "label": "global _SERVICE_NAME\n    _SERVICE_NAME = name",
+                    "children": [
+                        {
+                            "type": "global_statement",
+                            "label": "global _SERVICE_NAME",
+                            "children": [
+                                {
+                                    "type": "identifier",
+                                    "label": "_SERVICE_NAME",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "expression_statement",
+                            "label": "_SERVICE_NAME = name",
+                            "children": [
+                                {
+                                    "type": "assignment",
+                                    "label": "_SERVICE_NAME = name",
+                                    "children": [
+                                        {
+                                            "type": "identifier",
+                                            "label": "_SERVICE_NAME",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "identifier",
+                                            "label": "name",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "class_definition",
+            "label": "class AppProcess(ABC):\n    \"\"\"\n    A class to represent an object that can be executed in a background process.\n    \"\"\"\n\n    process: Optional[Process] = None\n\n    set_start_method(\"spawn\", force=True)\n    configure_logging()\n    sentry_init()\n\n    # Methods that are executed INSIDE the process #\n\n    @abstractmethod\n    def run(self):\n        \"\"\"\n        The method that will be executed in the process.\n        \"\"\"\n        pass\n\n    @classmethod\n    @property\n    def service_name(cls) -> str:\n        return cls.__name__\n\n    def cleanup(self):\n        \"\"\"\n        Implement this method on a subclass to do post-execution cleanup,\n        e.g. disconnecting from a database or terminating child processes.\n        \"\"\"\n        pass\n\n    def health_check(self):\n        \"\"\"\n        A method to check the health of the process.\n        \"\"\"\n        pass\n\n    def execute_run_command(self, silent):\n        signal.signal(signal.SIGTERM, self._self_terminate)\n\n        try:\n            if silent:\n                sys.stdout = open(os.devnull, \"w\")\n                sys.stderr = open(os.devnull, \"w\")\n\n            set_service_name(self.service_name)\n            logger.info(f\"[{self.service_name}] Starting...\")\n            self.run()\n        except (KeyboardInterrupt, SystemExit) as e:\n            logger.warning(f\"[{self.service_name}] Terminated: {e}; quitting...\")\n\n    def _self_terminate(self, signum: int, frame):\n        self.cleanup()\n        sys.exit(0)\n\n    # Methods that are executed OUTSIDE the process #\n\n    def __enter__(self):\n        self.start(background=True)\n        return self\n\n    def __exit__(self, *args, **kwargs):\n        self.stop()\n\n    def start(self, background: bool = False, silent: bool = False, **proc_args) -> int:\n        \"\"\"\n        Start the background process.\n        Args:\n            background: Whether to run the process in the background.\n            silent: Whether to disable stdout and stderr.\n            proc_args: Additional arguments to pass to the process.\n        Returns:\n            the process id or 0 if the process is not running in the background.\n        \"\"\"\n        if not background:\n            self.execute_run_command(silent)\n            return 0\n\n        self.process = Process(\n            name=self.__class__.__name__,\n            target=self.execute_run_command,\n            args=(silent,),\n            **proc_args,\n        )\n        self.process.start()\n        self.health_check()\n        return self.process.pid or 0\n\n    def stop(self):\n        \"\"\"\n        Stop the background process.\n        \"\"\"\n        if not self.process:\n            return\n\n        self.process.terminate()\n        self.process.join()\n        self.process = None",
+            "children": [
+                {
+                    "type": "identifier",
+                    "label": "AppProcess",
+                    "children": []
+                },
+                {
+                    "type": "argument_list",
+                    "label": "(ABC)",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "label": "ABC",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "block",
+                    "label": "\"\"\"\n    A class to represent an object that can be executed in a background process.\n    \"\"\"\n\n    process: Optional[Process] = None\n\n    set_start_method(\"spawn\", force=True)\n    configure_logging()\n    sentry_init()\n\n    # Methods that are executed INSIDE the process #\n\n    @abstractmethod\n    def run(self):\n        \"\"\"\n        The method that will be executed in the process.\n        \"\"\"\n        pass\n\n    @classmethod\n    @property\n    def service_name(cls) -> str:\n        return cls.__name__\n\n    def cleanup(self):\n        \"\"\"\n        Implement this method on a subclass to do post-execution cleanup,\n        e.g. disconnecting from a database or terminating child processes.\n        \"\"\"\n        pass\n\n    def health_check(self):\n        \"\"\"\n        A method to check the health of the process.\n        \"\"\"\n        pass\n\n    def execute_run_command(self, silent):\n        signal.signal(signal.SIGTERM, self._self_terminate)\n\n        try:\n            if silent:\n                sys.stdout = open(os.devnull, \"w\")\n                sys.stderr = open(os.devnull, \"w\")\n\n            set_service_name(self.service_name)\n            logger.info(f\"[{self.service_name}] Starting...\")\n            self.run()\n        except (KeyboardInterrupt, SystemExit) as e:\n            logger.warning(f\"[{self.service_name}] Terminated: {e}; quitting...\")\n\n    def _self_terminate(self, signum: int, frame):\n        self.cleanup()\n        sys.exit(0)\n\n    # Methods that are executed OUTSIDE the process #\n\n    def __enter__(self):\n        self.start(background=True)\n        return self\n\n    def __exit__(self, *args, **kwargs):\n        self.stop()\n\n    def start(self, background: bool = False, silent: bool = False, **proc_args) -> int:\n        \"\"\"\n        Start the background process.\n        Args:\n            background: Whether to run the process in the background.\n            silent: Whether to disable stdout and stderr.\n            proc_args: Additional arguments to pass to the process.\n        Returns:\n            the process id or 0 if the process is not running in the background.\n        \"\"\"\n        if not background:\n            self.execute_run_command(silent)\n            return 0\n\n        self.process = Process(\n            name=self.__class__.__name__,\n            target=self.execute_run_command,\n            args=(silent,),\n            **proc_args,\n        )\n        self.process.start()\n        self.health_check()\n        return self.process.pid or 0\n\n    def stop(self):\n        \"\"\"\n        Stop the background process.\n        \"\"\"\n        if not self.process:\n            return\n\n        self.process.terminate()\n        self.process.join()\n        self.process = None",
+                    "children": [
+                        {
+                            "type": "expression_statement",
+                            "label": "\"\"\"\n    A class to represent an object that can be executed in a background process.\n    \"\"\"",
+                            "children": [
+                                {
+                                    "type": "string",
+                                    "label": "\"\"\"\n    A class to represent an object that can be executed in a background process.\n    \"\"\"",
+                                    "children": [
+                                        {
+                                            "type": "string_start",
+                                            "label": "\"\"\"",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "string_content",
+                                            "label": "\n    A class to represent an object that can be executed in a background process.\n    ",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "string_end",
+                                            "label": "\"\"\"",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "expression_statement",
+                            "label": "process: Optional[Process] = None",
+                            "children": [
+                                {
+                                    "type": "assignment",
+                                    "label": "process: Optional[Process] = None",
+                                    "children": [
+                                        {
+                                            "type": "identifier",
+                                            "label": "process",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "type",
+                                            "label": "Optional[Process]",
+                                            "children": [
+                                                {
+                                                    "type": "generic_type",
+                                                    "label": "Optional[Process]",
+                                                    "children": [
+                                                        {
+                                                            "type": "identifier",
+                                                            "label": "Optional",
+                                                            "children": []
+                                                        },
+                                                        {
+                                                            "type": "type_parameter",
+                                                            "label": "[Process]",
+                                                            "children": [
+                                                                {
+                                                                    "type": "type",
+                                                                    "label": "Process",
+                                                                    "children": [
+                                                                        {
+                                                                            "type": "identifier",
+                                                                            "label": "Process",
+                                                                            "children": []
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "none",
+                                            "label": "None",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "expression_statement",
+                            "label": "set_start_method(\"spawn\", force=True)",
+                            "children": [
+                                {
+                                    "type": "call",
+                                    "label": "set_start_method(\"spawn\", force=True)",
+                                    "children": [
+                                        {
+                                            "type": "identifier",
+                                            "label": "set_start_method",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "argument_list",
+                                            "label": "(\"spawn\", force=True)",
+                                            "children": [
+                                                {
+                                                    "type": "string",
+                                                    "label": "\"spawn\"",
+                                                    "children": [
+                                                        {
+                                                            "type": "string_start",
+                                                            "label": "\"",
+                                                            "children": []
+                                                        },
+                                                        {
+                                                            "type": "string_content",
+                                                            "label": "spawn",
+                                                            "children": []
+                                                        },
+                                                        {
+                                                            "type": "string_end",
+                                                            "label": "\"",
+                                                            "children": []
+                                                        }
+                                                    ]
+                                                },
+                                                {
+                                                    "type": "keyword_argument",
+                                                    "label": "force=True",
+                                                    "children": [
+                                                        {
+                                                            "type": "identifier",
+                                                            "label": "force",
+                                                            "children": []
+                                                        },
+                                                        {
+                                                            "type": "true",
+                                                            "label": "True",
+                                                            "children": []
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "expression_statement",
+                            "label": "configure_logging()",
+                            "children": [
+                                {
+                                    "type": "call",
+                                    "label": "configure_logging()",
+                                    "children": [
+                                        {
+                                            "type": "identifier",
+                                            "label": "configure_logging",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "argument_list",
+                                            "label": "()",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "expression_statement",
+                            "label": "sentry_init()",
+                            "children": [
+                                {
+                                    "type": "call",
+                                    "label": "sentry_init()",
+                                    "children": [
+                                        {
+                                            "type": "identifier",
+                                            "label": "sentry_init",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "argument_list",
+                                            "label": "()",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "comment",
+                            "label": "# Methods that are executed INSIDE the process #",
+                            "children": []
+                        },
+                        {
+                            "type": "decorated_definition",
+                            "label": "@abstractmethod\n    def run(self):\n        \"\"\"\n        The method that will be executed in the process.\n        \"\"\"\n        pass",
+                            "children": [
+                                {
+                                    "type": "decorator",
+                                    "label": "@abstractmethod",
+                                    "children": [
+                                        {
+                                            "type": "identifier",
+                                            "label": "abstractmethod",
+                                            "children": []
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "function_definition",
+                                    "label": "def run(self):\n        \"\"\"\n        The method that will be executed in the process.\n        \"\"\"\n        pass",
+                                    "children": [
+                                        {
+                                            "type": "identifier",
+                                            "label": "run",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "parameters",
+                                            "label": "(self)",
+                                            "children": [
+                                                {
+                                                    "type": "identifier",
+                                                    "label": "self",
+                                                    "children": []
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "block",
+                                            "label": "\"\"\"\n        The method that will be executed in the process.\n        \"\"\"\n        pass",
+                                            "children": [
+                                                {
+                                                    "type": "expression_statement",
+                                                    "label": "\"\"\"\n        The method that will be executed in the process.\n        \"\"\"",
+                                                    "children": [
+                                                        {
+                                                            "type": "string",
+                                                            "label": "\"\"\"\n        The method that will be executed in the process.\n        \"\"\"",
+                                                            "children": [
+                                                                {
+                                                                    "type": "string_start",
+                                                                    "label": "\"\"\"",
+                                                                    "children": []
+                                                                },
+                                                                {
+                                                                    "type": "string_content",
+                                                                    "label": "\n        The method that will be executed in the process.\n        ",
+                                                                    "children": []
+                                                                },
+                                                                {
+                                                                    "type": "string_end",
+                                                                    "label": "\"\"\"",
+                                                                    "children": []
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                },
+                                                {
+                                                    "type": "pass_statement",
+                                                    "label": "pass",
+                                                    "children": []
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "decorated_definition",
+                            "label": "@classmethod\n    @property\n    def service_name(cls) -> str:\n        return cls.__name__",
+                            "children": [
+                                {
+                                    "type": "decorator",
+                                    "label": "@classmethod",
+                                    "children": [
+                                        {
+                                            "type": "identifier",
+                                            "label": "classmethod",
+                                            "children": []
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "decorator",
+                                    "label": "@property",
+                                    "children": [
+                                        {
+                                            "type": "identifier",
+                                            "label": "property",
+                                            "children": []
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "function_definition",
+                                    "label": "def service_name(cls) -> str:\n        return cls.__name__",
+                                    "children": [
+                                        {
+                                            "type": "identifier",
+                                            "label": "service_name",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "parameters",
+                                            "label": "(cls)",
+                                            "children": [
+                                                {
+                                                    "type": "identifier",
+                                                    "label": "cls",
+                                                    "children": []
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "type",
+                                            "label": "str",
+                                            "children": [
+                                                {
+                                                    "type": "identifier",
+                                                    "label": "str",
+                                                    "children": []
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "block",
+                                            "label": "return cls.__name__",
+                                            "children": [
+                                                {
+                                                    "type": "return_statement",
+                                                    "label": "return cls.__name__",
+                                                    "children": [
+                                                        {
+                                                            "type": "attribute",
+                                                            "label": "cls.__name__",
+                                                            "children": [
+                                                                {
+                                                                    "type": "identifier",
+                                                                    "label": "cls",
+                                                                    "children": []
+                                                                },
+                                                                {
+                                                                    "type": "identifier",
+                                                                    "label": "__name__",
+                                                                    "children": []
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "function_definition",
+                            "label": "def cleanup(self):\n        \"\"\"\n        Implement this method on a subclass to do post-execution cleanup,\n        e.g. disconnecting from a database or terminating child processes.\n        \"\"\"\n        pass",
+                            "children": [
+                                {
+                                    "type": "identifier",
+                                    "label": "cleanup",
+                                    "children": []
+                                },
+                                {
+                                    "type": "parameters",
+                                    "label": "(self)",
+                                    "children": [
+                                        {
+                                            "type": "identifier",
+                                            "label": "self",
+                                            "children": []
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "block",
+                                    "label": "\"\"\"\n        Implement this method on a subclass to do post-execution cleanup,\n        e.g. disconnecting from a database or terminating child processes.\n        \"\"\"\n        pass",
+                                    "children": [
+                                        {
+                                            "type": "expression_statement",
+                                            "label": "\"\"\"\n        Implement this method on a subclass to do post-execution cleanup,\n        e.g. disconnecting from a database or terminating child processes.\n        \"\"\"",
+                                            "children": [
+                                                {
+                                                    "type": "string",
+                                                    "label": "\"\"\"\n        Implement this method on a subclass to do post-execution cleanup,\n        e.g. disconnecting from a database or terminating child processes.\n        \"\"\"",
+                                                    "children": [
+                                                        {
+                                                            "type": "string_start",
+                                                            "label": "\"\"\"",
+                                                            "children": []
+                                                        },
+                                                        {
+                                                            "type": "string_content",
+                                                            "label": "\n        Implement this method on a subclass to do post-execution cleanup,\n        e.g. disconnecting from a database or terminating child processes.\n        ",
+                                                            "children": []
+                                                        },
+                                                        {
+                                                            "type": "string_end",
+                                                            "label": "\"\"\"",
+                                                            "children": []
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "pass_statement",
+                                            "label": "pass",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "function_definition",
+                            "label": "def health_check(self):\n        \"\"\"\n        A method to check the health of the process.\n        \"\"\"\n        pass",
+                            "children": [
+                                {
+                                    "type": "identifier",
+                                    "label": "health_check",
+                                    "children": []
+                                },
+                                {
+                                    "type": "parameters",
+                                    "label": "(self)",
+                                    "children": [
+                                        {
+                                            "type": "identifier",
+                                            "label": "self",
+                                            "children": []
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "block",
+                                    "label": "\"\"\"\n        A method to check the health of the process.\n        \"\"\"\n        pass",
+                                    "children": [
+                                        {
+                                            "type": "expression_statement",
+                                            "label": "\"\"\"\n        A method to check the health of the process.\n        \"\"\"",
+                                            "children": [
+                                                {
+                                                    "type": "string",
+                                                    "label": "\"\"\"\n        A method to check the health of the process.\n        \"\"\"",
+                                                    "children": [
+                                                        {
+                                                            "type": "string_start",
+                                                            "label": "\"\"\"",
+                                                            "children": []
+                                                        },
+                                                        {
+                                                            "type": "string_content",
+                                                            "label": "\n        A method to check the health of the process.\n        ",
+                                                            "children": []
+                                                        },
+                                                        {
+                                                            "type": "string_end",
+                                                            "label": "\"\"\"",
+                                                            "children": []
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "pass_statement",
+                                            "label": "pass",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "function_definition",
+                            "label": "def execute_run_command(self, silent):\n        signal.signal(signal.SIGTERM, self._self_terminate)\n\n        try:\n            if silent:\n                sys.stdout = open(os.devnull, \"w\")\n                sys.stderr = open(os.devnull, \"w\")\n\n            set_service_name(self.service_name)\n            logger.info(f\"[{self.service_name}] Starting...\")\n            self.run()\n        except (KeyboardInterrupt, SystemExit) as e:\n            logger.warning(f\"[{self.service_name}] Terminated: {e}; quitting...\")",
+                            "children": [
+                                {
+                                    "type": "identifier",
+                                    "label": "execute_run_command",
+                                    "children": []
+                                },
+                                {
+                                    "type": "parameters",
+                                    "label": "(self, silent)",
+                                    "children": [
+                                        {
+                                            "type": "identifier",
+                                            "label": "self",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "identifier",
+                                            "label": "silent",
+                                            "children": []
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "block",
+                                    "label": "signal.signal(signal.SIGTERM, self._self_terminate)\n\n        try:\n            if silent:\n                sys.stdout = open(os.devnull, \"w\")\n                sys.stderr = open(os.devnull, \"w\")\n\n            set_service_name(self.service_name)\n            logger.info(f\"[{self.service_name}] Starting...\")\n            self.run()\n        except (KeyboardInterrupt, SystemExit) as e:\n            logger.warning(f\"[{self.service_name}] Terminated: {e}; quitting...\")",
+                                    "children": [
+                                        {
+                                            "type": "expression_statement",
+                                            "label": "signal.signal(signal.SIGTERM, self._self_terminate)",
+                                            "children": [
+                                                {
+                                                    "type": "call",
+                                                    "label": "signal.signal(signal.SIGTERM, self._self_terminate)",
+                                                    "children": [
+                                                        {
+                                                            "type": "attribute",
+                                                            "label": "signal.signal",
+                                                            "children": [
+                                                                {
+                                                                    "type": "identifier",
+                                                                    "label": "signal",
+                                                                    "children": []
+                                                                },
+                                                                {
+                                                                    "type": "identifier",
+                                                                    "label": "signal",
+                                                                    "children": []
+                                                                }
+                                                            ]
+                                                        },
+                                                        {
+                                                            "type": "argument_list",
+                                                            "label": "(signal.SIGTERM, self._self_terminate)",
+                                                            "children": [
+                                                                {
+                                                                    "type": "attribute",
+                                                                    "label": "signal.SIGTERM",
+                                                                    "children": [
+                                                                        {
+                                                                            "type": "identifier",
+                                                                            "label": "signal",
+                                                                            "children": []
+                                                                        },
+                                                                        {
+                                                                            "type": "identifier",
+                                                                            "label": "SIGTERM",
+                                                                            "children": []
+                                                                        }
+                                                                    ]
+                                                                },
+                                                                {
+                                                                    "type": "attribute",
+                                                                    "label": "self._self_terminate",
+                                                                    "children": [
+                                                                        {
+                                                                            "type": "identifier",
+                                                                            "label": "self",
+                                                                            "children": []
+                                                                        },
+                                                                        {
+                                                                            "type": "identifier",
+                                                                            "label": "_self_terminate",
+                                                                            "children": []
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "try_statement",
+                                            "label": "try:\n            if silent:\n                sys.stdout = open(os.devnull, \"w\")\n                sys.stderr = open(os.devnull, \"w\")\n\n            set_service_name(self.service_name)\n            logger.info(f\"[{self.service_name}] Starting...\")\n            self.run()\n        except (KeyboardInterrupt, SystemExit) as e:\n            logger.warning(f\"[{self.service_name}] Terminated: {e}; quitting...\")",
+                                            "children": [
+                                                {
+                                                    "type": "block",
+                                                    "label": "if silent:\n                sys.stdout = open(os.devnull, \"w\")\n                sys.stderr = open(os.devnull, \"w\")\n\n            set_service_name(self.service_name)\n            logger.info(f\"[{self.service_name}] Starting...\")\n            self.run()",
+                                                    "children": [
+                                                        {
+                                                            "type": "if_statement",
+                                                            "label": "if silent:\n                sys.stdout = open(os.devnull, \"w\")\n                sys.stderr = open(os.devnull, \"w\")",
+                                                            "children": [
+                                                                {
+                                                                    "type": "identifier",
+                                                                    "label": "silent",
+                                                                    "children": []
+                                                                },
+                                                                {
+                                                                    "type": "block",
+                                                                    "label": "sys.stdout = open(os.devnull, \"w\")\n                sys.stderr = open(os.devnull, \"w\")",
+                                                                    "children": [
+                                                                        {
+                                                                            "type": "expression_statement",
+                                                                            "label": "sys.stdout = open(os.devnull, \"w\")",
+                                                                            "children": [
+                                                                                {
+                                                                                    "type": "assignment",
+                                                                                    "label": "sys.stdout = open(os.devnull, \"w\")",
+                                                                                    "children": [
+                                                                                        {
+                                                                                            "type": "attribute",
+                                                                                            "label": "sys.stdout",
+                                                                                            "children": [
+                                                                                                {
+                                                                                                    "type": "identifier",
+                                                                                                    "label": "sys",
+                                                                                                    "children": []
+                                                                                                },
+                                                                                                {
+                                                                                                    "type": "identifier",
+                                                                                                    "label": "stdout",
+                                                                                                    "children": []
+                                                                                                }
+                                                                                            ]
+                                                                                        },
+                                                                                        {
+                                                                                            "type": "call",
+                                                                                            "label": "open(os.devnull, \"w\")",
+                                                                                            "children": [
+                                                                                                {
+                                                                                                    "type": "identifier",
+                                                                                                    "label": "open",
+                                                                                                    "children": []
+                                                                                                },
+                                                                                                {
+                                                                                                    "type": "argument_list",
+                                                                                                    "label": "(os.devnull, \"w\")",
+                                                                                                    "children": [
+                                                                                                        {
+                                                                                                            "type": "attribute",
+                                                                                                            "label": "os.devnull",
+                                                                                                            "children": [
+                                                                                                                {
+                                                                                                                    "type": "identifier",
+                                                                                                                    "label": "os",
+                                                                                                                    "children": []
+                                                                                                                },
+                                                                                                                {
+                                                                                                                    "type": "identifier",
+                                                                                                                    "label": "devnull",
+                                                                                                                    "children": []
+                                                                                                                }
+                                                                                                            ]
+                                                                                                        },
+                                                                                                        {
+                                                                                                            "type": "string",
+                                                                                                            "label": "\"w\"",
+                                                                                                            "children": [
+                                                                                                                {
+                                                                                                                    "type": "string_start",
+                                                                                                                    "label": "\"",
+                                                                                                                    "children": []
+                                                                                                                },
+                                                                                                                {
+                                                                                                                    "type": "string_content",
+                                                                                                                    "label": "w",
+                                                                                                                    "children": []
+                                                                                                                },
+                                                                                                                {
+                                                                                                                    "type": "string_end",
+                                                                                                                    "label": "\"",
+                                                                                                                    "children": []
+                                                                                                                }
+                                                                                                            ]
+                                                                                                        }
+                                                                                                    ]
+                                                                                                }
+                                                                                            ]
+                                                                                        }
+                                                                                    ]
+                                                                                }
+                                                                            ]
+                                                                        },
+                                                                        {
+                                                                            "type": "expression_statement",
+                                                                            "label": "sys.stderr = open(os.devnull, \"w\")",
+                                                                            "children": [
+                                                                                {
+                                                                                    "type": "assignment",
+                                                                                    "label": "sys.stderr = open(os.devnull, \"w\")",
+                                                                                    "children": [
+                                                                                        {
+                                                                                            "type": "attribute",
+                                                                                            "label": "sys.stderr",
+                                                                                            "children": [
+                                                                                                {
+                                                                                                    "type": "identifier",
+                                                                                                    "label": "sys",
+                                                                                                    "children": []
+                                                                                                },
+                                                                                                {
+                                                                                                    "type": "identifier",
+                                                                                                    "label": "stderr",
+                                                                                                    "children": []
+                                                                                                }
+                                                                                            ]
+                                                                                        },
+                                                                                        {
+                                                                                            "type": "call",
+                                                                                            "label": "open(os.devnull, \"w\")",
+                                                                                            "children": [
+                                                                                                {
+                                                                                                    "type": "identifier",
+                                                                                                    "label": "open",
+                                                                                                    "children": []
+                                                                                                },
+                                                                                                {
+                                                                                                    "type": "argument_list",
+                                                                                                    "label": "(os.devnull, \"w\")",
+                                                                                                    "children": [
+                                                                                                        {
+                                                                                                            "type": "attribute",
+                                                                                                            "label": "os.devnull",
+                                                                                                            "children": [
+                                                                                                                {
+                                                                                                                    "type": "identifier",
+                                                                                                                    "label": "os",
+                                                                                                                    "children": []
+                                                                                                                },
+                                                                                                                {
+                                                                                                                    "type": "identifier",
+                                                                                                                    "label": "devnull",
+                                                                                                                    "children": []
+                                                                                                                }
+                                                                                                            ]
+                                                                                                        },
+                                                                                                        {
+                                                                                                            "type": "string",
+                                                                                                            "label": "\"w\"",
+                                                                                                            "children": [
+                                                                                                                {
+                                                                                                                    "type": "string_start",
+                                                                                                                    "label": "\"",
+                                                                                                                    "children": []
+                                                                                                                },
+                                                                                                                {
+                                                                                                                    "type": "string_content",
+                                                                                                                    "label": "w",
+                                                                                                                    "children": []
+                                                                                                                },
+                                                                                                                {
+                                                                                                                    "type": "string_end",
+                                                                                                                    "label": "\"",
+                                                                                                                    "children": []
+                                                                                                                }
+                                                                                                            ]
+                                                                                                        }
+                                                                                                    ]
+                                                                                                }
+                                                                                            ]
+                                                                                        }
+                                                                                    ]
+                                                                                }
+                                                                            ]
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        },
+                                                        {
+                                                            "type": "expression_statement",
+                                                            "label": "set_service_name(self.service_name)",
+                                                            "children": [
+                                                                {
+                                                                    "type": "call",
+                                                                    "label": "set_service_name(self.service_name)",
+                                                                    "children": [
+                                                                        {
+                                                                            "type": "identifier",
+                                                                            "label": "set_service_name",
+                                                                            "children": []
+                                                                        },
+                                                                        {
+                                                                            "type": "argument_list",
+                                                                            "label": "(self.service_name)",
+                                                                            "children": [
+                                                                                {
+                                                                                    "type": "attribute",
+                                                                                    "label": "self.service_name",
+                                                                                    "children": [
+                                                                                        {
+                                                                                            "type": "identifier",
+                                                                                            "label": "self",
+                                                                                            "children": []
+                                                                                        },
+                                                                                        {
+                                                                                            "type": "identifier",
+                                                                                            "label": "service_name",
+                                                                                            "children": []
+                                                                                        }
+                                                                                    ]
+                                                                                }
+                                                                            ]
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        },
+                                                        {
+                                                            "type": "expression_statement",
+                                                            "label": "logger.info(f\"[{self.service_name}] Starting...\")",
+                                                            "children": [
+                                                                {
+                                                                    "type": "call",
+                                                                    "label": "logger.info(f\"[{self.service_name}] Starting...\")",
+                                                                    "children": [
+                                                                        {
+                                                                            "type": "attribute",
+                                                                            "label": "logger.info",
+                                                                            "children": [
+                                                                                {
+                                                                                    "type": "identifier",
+                                                                                    "label": "logger",
+                                                                                    "children": []
+                                                                                },
+                                                                                {
+                                                                                    "type": "identifier",
+                                                                                    "label": "info",
+                                                                                    "children": []
+                                                                                }
+                                                                            ]
+                                                                        },
+                                                                        {
+                                                                            "type": "argument_list",
+                                                                            "label": "(f\"[{self.service_name}] Starting...\")",
+                                                                            "children": [
+                                                                                {
+                                                                                    "type": "string",
+                                                                                    "label": "f\"[{self.service_name}] Starting...\"",
+                                                                                    "children": [
+                                                                                        {
+                                                                                            "type": "string_start",
+                                                                                            "label": "f\"",
+                                                                                            "children": []
+                                                                                        },
+                                                                                        {
+                                                                                            "type": "string_content",
+                                                                                            "label": "[",
+                                                                                            "children": []
+                                                                                        },
+                                                                                        {
+                                                                                            "type": "interpolation",
+                                                                                            "label": "{self.service_name}",
+                                                                                            "children": [
+                                                                                                {
+                                                                                                    "type": "attribute",
+                                                                                                    "label": "self.service_name",
+                                                                                                    "children": [
+                                                                                                        {
+                                                                                                            "type": "identifier",
+                                                                                                            "label": "self",
+                                                                                                            "children": []
+                                                                                                        },
+                                                                                                        {
+                                                                                                            "type": "identifier",
+                                                                                                            "label": "service_name",
+                                                                                                            "children": []
+                                                                                                        }
+                                                                                                    ]
+                                                                                                }
+                                                                                            ]
+                                                                                        },
+                                                                                        {
+                                                                                            "type": "string_content",
+                                                                                            "label": "] Starting...",
+                                                                                            "children": []
+                                                                                        },
+                                                                                        {
+                                                                                            "type": "string_end",
+                                                                                            "label": "\"",
+                                                                                            "children": []
+                                                                                        }
+                                                                                    ]
+                                                                                }
+                                                                            ]
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        },
+                                                        {
+                                                            "type": "expression_statement",
+                                                            "label": "self.run()",
+                                                            "children": [
+                                                                {
+                                                                    "type": "call",
+                                                                    "label": "self.run()",
+                                                                    "children": [
+                                                                        {
+                                                                            "type": "attribute",
+                                                                            "label": "self.run",
+                                                                            "children": [
+                                                                                {
+                                                                                    "type": "identifier",
+                                                                                    "label": "self",
+                                                                                    "children": []
+                                                                                },
+                                                                                {
+                                                                                    "type": "identifier",
+                                                                                    "label": "run",
+                                                                                    "children": []
+                                                                                }
+                                                                            ]
+                                                                        },
+                                                                        {
+                                                                            "type": "argument_list",
+                                                                            "label": "()",
+                                                                            "children": []
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                },
+                                                {
+                                                    "type": "except_clause",
+                                                    "label": "except (KeyboardInterrupt, SystemExit) as e:\n            logger.warning(f\"[{self.service_name}] Terminated: {e}; quitting...\")",
+                                                    "children": [
+                                                        {
+                                                            "type": "as_pattern",
+                                                            "label": "(KeyboardInterrupt, SystemExit) as e",
+                                                            "children": [
+                                                                {
+                                                                    "type": "tuple",
+                                                                    "label": "(KeyboardInterrupt, SystemExit)",
+                                                                    "children": [
+                                                                        {
+                                                                            "type": "identifier",
+                                                                            "label": "KeyboardInterrupt",
+                                                                            "children": []
+                                                                        },
+                                                                        {
+                                                                            "type": "identifier",
+                                                                            "label": "SystemExit",
+                                                                            "children": []
+                                                                        }
+                                                                    ]
+                                                                },
+                                                                {
+                                                                    "type": "as_pattern_target",
+                                                                    "label": "e",
+                                                                    "children": [
+                                                                        {
+                                                                            "type": "identifier",
+                                                                            "label": "e",
+                                                                            "children": []
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        },
+                                                        {
+                                                            "type": "block",
+                                                            "label": "logger.warning(f\"[{self.service_name}] Terminated: {e}; quitting...\")",
+                                                            "children": [
+                                                                {
+                                                                    "type": "expression_statement",
+                                                                    "label": "logger.warning(f\"[{self.service_name}] Terminated: {e}; quitting...\")",
+                                                                    "children": [
+                                                                        {
+                                                                            "type": "call",
+                                                                            "label": "logger.warning(f\"[{self.service_name}] Terminated: {e}; quitting...\")",
+                                                                            "children": [
+                                                                                {
+                                                                                    "type": "attribute",
+                                                                                    "label": "logger.warning",
+                                                                                    "children": [
+                                                                                        {
+                                                                                            "type": "identifier",
+                                                                                            "label": "logger",
+                                                                                            "children": []
+                                                                                        },
+                                                                                        {
+                                                                                            "type": "identifier",
+                                                                                            "label": "warning",
+                                                                                            "children": []
+                                                                                        }
+                                                                                    ]
+                                                                                },
+                                                                                {
+                                                                                    "type": "argument_list",
+                                                                                    "label": "(f\"[{self.service_name}] Terminated: {e}; quitting...\")",
+                                                                                    "children": [
+                                                                                        {
+                                                                                            "type": "string",
+                                                                                            "label": "f\"[{self.service_name}] Terminated: {e}; quitting...\"",
+                                                                                            "children": [
+                                                                                                {
+                                                                                                    "type": "string_start",
+                                                                                                    "label": "f\"",
+                                                                                                    "children": []
+                                                                                                },
+                                                                                                {
+                                                                                                    "type": "string_content",
+                                                                                                    "label": "[",
+                                                                                                    "children": []
+                                                                                                },
+                                                                                                {
+                                                                                                    "type": "interpolation",
+                                                                                                    "label": "{self.service_name}",
+                                                                                                    "children": [
+                                                                                                        {
+                                                                                                            "type": "attribute",
+                                                                                                            "label": "self.service_name",
+                                                                                                            "children": [
+                                                                                                                {
+                                                                                                                    "type": "identifier",
+                                                                                                                    "label": "self",
+                                                                                                                    "children": []
+                                                                                                                },
+                                                                                                                {
+                                                                                                                    "type": "identifier",
+                                                                                                                    "label": "service_name",
+                                                                                                                    "children": []
+                                                                                                                }
+                                                                                                            ]
+                                                                                                        }
+                                                                                                    ]
+                                                                                                },
+                                                                                                {
+                                                                                                    "type": "string_content",
+                                                                                                    "label": "] Terminated: ",
+                                                                                                    "children": []
+                                                                                                },
+                                                                                                {
+                                                                                                    "type": "interpolation",
+                                                                                                    "label": "{e}",
+                                                                                                    "children": [
+                                                                                                        {
+                                                                                                            "type": "identifier",
+                                                                                                            "label": "e",
+                                                                                                            "children": []
+                                                                                                        }
+                                                                                                    ]
+                                                                                                },
+                                                                                                {
+                                                                                                    "type": "string_content",
+                                                                                                    "label": "; quitting...",
+                                                                                                    "children": []
+                                                                                                },
+                                                                                                {
+                                                                                                    "type": "string_end",
+                                                                                                    "label": "\"",
+                                                                                                    "children": []
+                                                                                                }
+                                                                                            ]
+                                                                                        }
+                                                                                    ]
+                                                                                }
+                                                                            ]
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "function_definition",
+                            "label": "def _self_terminate(self, signum: int, frame):\n        self.cleanup()\n        sys.exit(0)",
+                            "children": [
+                                {
+                                    "type": "identifier",
+                                    "label": "_self_terminate",
+                                    "children": []
+                                },
+                                {
+                                    "type": "parameters",
+                                    "label": "(self, signum: int, frame)",
+                                    "children": [
+                                        {
+                                            "type": "identifier",
+                                            "label": "self",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "typed_parameter",
+                                            "label": "signum: int",
+                                            "children": [
+                                                {
+                                                    "type": "identifier",
+                                                    "label": "signum",
+                                                    "children": []
+                                                },
+                                                {
+                                                    "type": "type",
+                                                    "label": "int",
+                                                    "children": [
+                                                        {
+                                                            "type": "identifier",
+                                                            "label": "int",
+                                                            "children": []
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "identifier",
+                                            "label": "frame",
+                                            "children": []
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "block",
+                                    "label": "self.cleanup()\n        sys.exit(0)",
+                                    "children": [
+                                        {
+                                            "type": "expression_statement",
+                                            "label": "self.cleanup()",
+                                            "children": [
+                                                {
+                                                    "type": "call",
+                                                    "label": "self.cleanup()",
+                                                    "children": [
+                                                        {
+                                                            "type": "attribute",
+                                                            "label": "self.cleanup",
+                                                            "children": [
+                                                                {
+                                                                    "type": "identifier",
+                                                                    "label": "self",
+                                                                    "children": []
+                                                                },
+                                                                {
+                                                                    "type": "identifier",
+                                                                    "label": "cleanup",
+                                                                    "children": []
+                                                                }
+                                                            ]
+                                                        },
+                                                        {
+                                                            "type": "argument_list",
+                                                            "label": "()",
+                                                            "children": []
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "expression_statement",
+                                            "label": "sys.exit(0)",
+                                            "children": [
+                                                {
+                                                    "type": "call",
+                                                    "label": "sys.exit(0)",
+                                                    "children": [
+                                                        {
+                                                            "type": "attribute",
+                                                            "label": "sys.exit",
+                                                            "children": [
+                                                                {
+                                                                    "type": "identifier",
+                                                                    "label": "sys",
+                                                                    "children": []
+                                                                },
+                                                                {
+                                                                    "type": "identifier",
+                                                                    "label": "exit",
+                                                                    "children": []
+                                                                }
+                                                            ]
+                                                        },
+                                                        {
+                                                            "type": "argument_list",
+                                                            "label": "(0)",
+                                                            "children": [
+                                                                {
+                                                                    "type": "integer",
+                                                                    "label": "0",
+                                                                    "children": []
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "comment",
+                            "label": "# Methods that are executed OUTSIDE the process #",
+                            "children": []
+                        },
+                        {
+                            "type": "function_definition",
+                            "label": "def __enter__(self):\n        self.start(background=True)\n        return self",
+                            "children": [
+                                {
+                                    "type": "identifier",
+                                    "label": "__enter__",
+                                    "children": []
+                                },
+                                {
+                                    "type": "parameters",
+                                    "label": "(self)",
+                                    "children": [
+                                        {
+                                            "type": "identifier",
+                                            "label": "self",
+                                            "children": []
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "block",
+                                    "label": "self.start(background=True)\n        return self",
+                                    "children": [
+                                        {
+                                            "type": "expression_statement",
+                                            "label": "self.start(background=True)",
+                                            "children": [
+                                                {
+                                                    "type": "call",
+                                                    "label": "self.start(background=True)",
+                                                    "children": [
+                                                        {
+                                                            "type": "attribute",
+                                                            "label": "self.start",
+                                                            "children": [
+                                                                {
+                                                                    "type": "identifier",
+                                                                    "label": "self",
+                                                                    "children": []
+                                                                },
+                                                                {
+                                                                    "type": "identifier",
+                                                                    "label": "start",
+                                                                    "children": []
+                                                                }
+                                                            ]
+                                                        },
+                                                        {
+                                                            "type": "argument_list",
+                                                            "label": "(background=True)",
+                                                            "children": [
+                                                                {
+                                                                    "type": "keyword_argument",
+                                                                    "label": "background=True",
+                                                                    "children": [
+                                                                        {
+                                                                            "type": "identifier",
+                                                                            "label": "background",
+                                                                            "children": []
+                                                                        },
+                                                                        {
+                                                                            "type": "true",
+                                                                            "label": "True",
+                                                                            "children": []
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "return_statement",
+                                            "label": "return self",
+                                            "children": [
+                                                {
+                                                    "type": "identifier",
+                                                    "label": "self",
+                                                    "children": []
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "function_definition",
+                            "label": "def __exit__(self, *args, **kwargs):\n        self.stop()",
+                            "children": [
+                                {
+                                    "type": "identifier",
+                                    "label": "__exit__",
+                                    "children": []
+                                },
+                                {
+                                    "type": "parameters",
+                                    "label": "(self, *args, **kwargs)",
+                                    "children": [
+                                        {
+                                            "type": "identifier",
+                                            "label": "self",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "list_splat_pattern",
+                                            "label": "*args",
+                                            "children": [
+                                                {
+                                                    "type": "identifier",
+                                                    "label": "args",
+                                                    "children": []
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "dictionary_splat_pattern",
+                                            "label": "**kwargs",
+                                            "children": [
+                                                {
+                                                    "type": "identifier",
+                                                    "label": "kwargs",
+                                                    "children": []
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "block",
+                                    "label": "self.stop()",
+                                    "children": [
+                                        {
+                                            "type": "expression_statement",
+                                            "label": "self.stop()",
+                                            "children": [
+                                                {
+                                                    "type": "call",
+                                                    "label": "self.stop()",
+                                                    "children": [
+                                                        {
+                                                            "type": "attribute",
+                                                            "label": "self.stop",
+                                                            "children": [
+                                                                {
+                                                                    "type": "identifier",
+                                                                    "label": "self",
+                                                                    "children": []
+                                                                },
+                                                                {
+                                                                    "type": "identifier",
+                                                                    "label": "stop",
+                                                                    "children": []
+                                                                }
+                                                            ]
+                                                        },
+                                                        {
+                                                            "type": "argument_list",
+                                                            "label": "()",
+                                                            "children": []
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "function_definition",
+                            "label": "def start(self, background: bool = False, silent: bool = False, **proc_args) -> int:\n        \"\"\"\n        Start the background process.\n        Args:\n            background: Whether to run the process in the background.\n            silent: Whether to disable stdout and stderr.\n            proc_args: Additional arguments to pass to the process.\n        Returns:\n            the process id or 0 if the process is not running in the background.\n        \"\"\"\n        if not background:\n            self.execute_run_command(silent)\n            return 0\n\n        self.process = Process(\n            name=self.__class__.__name__,\n            target=self.execute_run_command,\n            args=(silent,),\n            **proc_args,\n        )\n        self.process.start()\n        self.health_check()\n        return self.process.pid or 0",
+                            "children": [
+                                {
+                                    "type": "identifier",
+                                    "label": "start",
+                                    "children": []
+                                },
+                                {
+                                    "type": "parameters",
+                                    "label": "(self, background: bool = False, silent: bool = False, **proc_args)",
+                                    "children": [
+                                        {
+                                            "type": "identifier",
+                                            "label": "self",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "typed_default_parameter",
+                                            "label": "background: bool = False",
+                                            "children": [
+                                                {
+                                                    "type": "identifier",
+                                                    "label": "background",
+                                                    "children": []
+                                                },
+                                                {
+                                                    "type": "type",
+                                                    "label": "bool",
+                                                    "children": [
+                                                        {
+                                                            "type": "identifier",
+                                                            "label": "bool",
+                                                            "children": []
+                                                        }
+                                                    ]
+                                                },
+                                                {
+                                                    "type": "false",
+                                                    "label": "False",
+                                                    "children": []
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "typed_default_parameter",
+                                            "label": "silent: bool = False",
+                                            "children": [
+                                                {
+                                                    "type": "identifier",
+                                                    "label": "silent",
+                                                    "children": []
+                                                },
+                                                {
+                                                    "type": "type",
+                                                    "label": "bool",
+                                                    "children": [
+                                                        {
+                                                            "type": "identifier",
+                                                            "label": "bool",
+                                                            "children": []
+                                                        }
+                                                    ]
+                                                },
+                                                {
+                                                    "type": "false",
+                                                    "label": "False",
+                                                    "children": []
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "dictionary_splat_pattern",
+                                            "label": "**proc_args",
+                                            "children": [
+                                                {
+                                                    "type": "identifier",
+                                                    "label": "proc_args",
+                                                    "children": []
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "type",
+                                    "label": "int",
+                                    "children": [
+                                        {
+                                            "type": "identifier",
+                                            "label": "int",
+                                            "children": []
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "block",
+                                    "label": "\"\"\"\n        Start the background process.\n        Args:\n            background: Whether to run the process in the background.\n            silent: Whether to disable stdout and stderr.\n            proc_args: Additional arguments to pass to the process.\n        Returns:\n            the process id or 0 if the process is not running in the background.\n        \"\"\"\n        if not background:\n            self.execute_run_command(silent)\n            return 0\n\n        self.process = Process(\n            name=self.__class__.__name__,\n            target=self.execute_run_command,\n            args=(silent,),\n            **proc_args,\n        )\n        self.process.start()\n        self.health_check()\n        return self.process.pid or 0",
+                                    "children": [
+                                        {
+                                            "type": "expression_statement",
+                                            "label": "\"\"\"\n        Start the background process.\n        Args:\n            background: Whether to run the process in the background.\n            silent: Whether to disable stdout and stderr.\n            proc_args: Additional arguments to pass to the process.\n        Returns:\n            the process id or 0 if the process is not running in the background.\n        \"\"\"",
+                                            "children": [
+                                                {
+                                                    "type": "string",
+                                                    "label": "\"\"\"\n        Start the background process.\n        Args:\n            background: Whether to run the process in the background.\n            silent: Whether to disable stdout and stderr.\n            proc_args: Additional arguments to pass to the process.\n        Returns:\n            the process id or 0 if the process is not running in the background.\n        \"\"\"",
+                                                    "children": [
+                                                        {
+                                                            "type": "string_start",
+                                                            "label": "\"\"\"",
+                                                            "children": []
+                                                        },
+                                                        {
+                                                            "type": "string_content",
+                                                            "label": "\n        Start the background process.\n        Args:\n            background: Whether to run the process in the background.\n            silent: Whether to disable stdout and stderr.\n            proc_args: Additional arguments to pass to the process.\n        Returns:\n            the process id or 0 if the process is not running in the background.\n        ",
+                                                            "children": []
+                                                        },
+                                                        {
+                                                            "type": "string_end",
+                                                            "label": "\"\"\"",
+                                                            "children": []
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "if_statement",
+                                            "label": "if not background:\n            self.execute_run_command(silent)\n            return 0",
+                                            "children": [
+                                                {
+                                                    "type": "not_operator",
+                                                    "label": "not background",
+                                                    "children": [
+                                                        {
+                                                            "type": "identifier",
+                                                            "label": "background",
+                                                            "children": []
+                                                        }
+                                                    ]
+                                                },
+                                                {
+                                                    "type": "block",
+                                                    "label": "self.execute_run_command(silent)\n            return 0",
+                                                    "children": [
+                                                        {
+                                                            "type": "expression_statement",
+                                                            "label": "self.execute_run_command(silent)",
+                                                            "children": [
+                                                                {
+                                                                    "type": "call",
+                                                                    "label": "self.execute_run_command(silent)",
+                                                                    "children": [
+                                                                        {
+                                                                            "type": "attribute",
+                                                                            "label": "self.execute_run_command",
+                                                                            "children": [
+                                                                                {
+                                                                                    "type": "identifier",
+                                                                                    "label": "self",
+                                                                                    "children": []
+                                                                                },
+                                                                                {
+                                                                                    "type": "identifier",
+                                                                                    "label": "execute_run_command",
+                                                                                    "children": []
+                                                                                }
+                                                                            ]
+                                                                        },
+                                                                        {
+                                                                            "type": "argument_list",
+                                                                            "label": "(silent)",
+                                                                            "children": [
+                                                                                {
+                                                                                    "type": "identifier",
+                                                                                    "label": "silent",
+                                                                                    "children": []
+                                                                                }
+                                                                            ]
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        },
+                                                        {
+                                                            "type": "return_statement",
+                                                            "label": "return 0",
+                                                            "children": [
+                                                                {
+                                                                    "type": "integer",
+                                                                    "label": "0",
+                                                                    "children": []
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "expression_statement",
+                                            "label": "self.process = Process(\n            name=self.__class__.__name__,\n            target=self.execute_run_command,\n            args=(silent,),\n            **proc_args,\n        )",
+                                            "children": [
+                                                {
+                                                    "type": "assignment",
+                                                    "label": "self.process = Process(\n            name=self.__class__.__name__,\n            target=self.execute_run_command,\n            args=(silent,),\n            **proc_args,\n        )",
+                                                    "children": [
+                                                        {
+                                                            "type": "attribute",
+                                                            "label": "self.process",
+                                                            "children": [
+                                                                {
+                                                                    "type": "identifier",
+                                                                    "label": "self",
+                                                                    "children": []
+                                                                },
+                                                                {
+                                                                    "type": "identifier",
+                                                                    "label": "process",
+                                                                    "children": []
+                                                                }
+                                                            ]
+                                                        },
+                                                        {
+                                                            "type": "call",
+                                                            "label": "Process(\n            name=self.__class__.__name__,\n            target=self.execute_run_command,\n            args=(silent,),\n            **proc_args,\n        )",
+                                                            "children": [
+                                                                {
+                                                                    "type": "identifier",
+                                                                    "label": "Process",
+                                                                    "children": []
+                                                                },
+                                                                {
+                                                                    "type": "argument_list",
+                                                                    "label": "(\n            name=self.__class__.__name__,\n            target=self.execute_run_command,\n            args=(silent,),\n            **proc_args,\n        )",
+                                                                    "children": [
+                                                                        {
+                                                                            "type": "keyword_argument",
+                                                                            "label": "name=self.__class__.__name__",
+                                                                            "children": [
+                                                                                {
+                                                                                    "type": "identifier",
+                                                                                    "label": "name",
+                                                                                    "children": []
+                                                                                },
+                                                                                {
+                                                                                    "type": "attribute",
+                                                                                    "label": "self.__class__.__name__",
+                                                                                    "children": [
+                                                                                        {
+                                                                                            "type": "attribute",
+                                                                                            "label": "self.__class__",
+                                                                                            "children": [
+                                                                                                {
+                                                                                                    "type": "identifier",
+                                                                                                    "label": "self",
+                                                                                                    "children": []
+                                                                                                },
+                                                                                                {
+                                                                                                    "type": "identifier",
+                                                                                                    "label": "__class__",
+                                                                                                    "children": []
+                                                                                                }
+                                                                                            ]
+                                                                                        },
+                                                                                        {
+                                                                                            "type": "identifier",
+                                                                                            "label": "__name__",
+                                                                                            "children": []
+                                                                                        }
+                                                                                    ]
+                                                                                }
+                                                                            ]
+                                                                        },
+                                                                        {
+                                                                            "type": "keyword_argument",
+                                                                            "label": "target=self.execute_run_command",
+                                                                            "children": [
+                                                                                {
+                                                                                    "type": "identifier",
+                                                                                    "label": "target",
+                                                                                    "children": []
+                                                                                },
+                                                                                {
+                                                                                    "type": "attribute",
+                                                                                    "label": "self.execute_run_command",
+                                                                                    "children": [
+                                                                                        {
+                                                                                            "type": "identifier",
+                                                                                            "label": "self",
+                                                                                            "children": []
+                                                                                        },
+                                                                                        {
+                                                                                            "type": "identifier",
+                                                                                            "label": "execute_run_command",
+                                                                                            "children": []
+                                                                                        }
+                                                                                    ]
+                                                                                }
+                                                                            ]
+                                                                        },
+                                                                        {
+                                                                            "type": "keyword_argument",
+                                                                            "label": "args=(silent,)",
+                                                                            "children": [
+                                                                                {
+                                                                                    "type": "identifier",
+                                                                                    "label": "args",
+                                                                                    "children": []
+                                                                                },
+                                                                                {
+                                                                                    "type": "tuple",
+                                                                                    "label": "(silent,)",
+                                                                                    "children": [
+                                                                                        {
+                                                                                            "type": "identifier",
+                                                                                            "label": "silent",
+                                                                                            "children": []
+                                                                                        }
+                                                                                    ]
+                                                                                }
+                                                                            ]
+                                                                        },
+                                                                        {
+                                                                            "type": "dictionary_splat",
+                                                                            "label": "**proc_args",
+                                                                            "children": [
+                                                                                {
+                                                                                    "type": "identifier",
+                                                                                    "label": "proc_args",
+                                                                                    "children": []
+                                                                                }
+                                                                            ]
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "expression_statement",
+                                            "label": "self.process.start()",
+                                            "children": [
+                                                {
+                                                    "type": "call",
+                                                    "label": "self.process.start()",
+                                                    "children": [
+                                                        {
+                                                            "type": "attribute",
+                                                            "label": "self.process.start",
+                                                            "children": [
+                                                                {
+                                                                    "type": "attribute",
+                                                                    "label": "self.process",
+                                                                    "children": [
+                                                                        {
+                                                                            "type": "identifier",
+                                                                            "label": "self",
+                                                                            "children": []
+                                                                        },
+                                                                        {
+                                                                            "type": "identifier",
+                                                                            "label": "process",
+                                                                            "children": []
+                                                                        }
+                                                                    ]
+                                                                },
+                                                                {
+                                                                    "type": "identifier",
+                                                                    "label": "start",
+                                                                    "children": []
+                                                                }
+                                                            ]
+                                                        },
+                                                        {
+                                                            "type": "argument_list",
+                                                            "label": "()",
+                                                            "children": []
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "expression_statement",
+                                            "label": "self.health_check()",
+                                            "children": [
+                                                {
+                                                    "type": "call",
+                                                    "label": "self.health_check()",
+                                                    "children": [
+                                                        {
+                                                            "type": "attribute",
+                                                            "label": "self.health_check",
+                                                            "children": [
+                                                                {
+                                                                    "type": "identifier",
+                                                                    "label": "self",
+                                                                    "children": []
+                                                                },
+                                                                {
+                                                                    "type": "identifier",
+                                                                    "label": "health_check",
+                                                                    "children": []
+                                                                }
+                                                            ]
+                                                        },
+                                                        {
+                                                            "type": "argument_list",
+                                                            "label": "()",
+                                                            "children": []
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "return_statement",
+                                            "label": "return self.process.pid or 0",
+                                            "children": [
+                                                {
+                                                    "type": "boolean_operator",
+                                                    "label": "self.process.pid or 0",
+                                                    "children": [
+                                                        {
+                                                            "type": "attribute",
+                                                            "label": "self.process.pid",
+                                                            "children": [
+                                                                {
+                                                                    "type": "attribute",
+                                                                    "label": "self.process",
+                                                                    "children": [
+                                                                        {
+                                                                            "type": "identifier",
+                                                                            "label": "self",
+                                                                            "children": []
+                                                                        },
+                                                                        {
+                                                                            "type": "identifier",
+                                                                            "label": "process",
+                                                                            "children": []
+                                                                        }
+                                                                    ]
+                                                                },
+                                                                {
+                                                                    "type": "identifier",
+                                                                    "label": "pid",
+                                                                    "children": []
+                                                                }
+                                                            ]
+                                                        },
+                                                        {
+                                                            "type": "integer",
+                                                            "label": "0",
+                                                            "children": []
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "function_definition",
+                            "label": "def stop(self):\n        \"\"\"\n        Stop the background process.\n        \"\"\"\n        if not self.process:\n            return\n\n        self.process.terminate()\n        self.process.join()\n        self.process = None",
+                            "children": [
+                                {
+                                    "type": "identifier",
+                                    "label": "stop",
+                                    "children": []
+                                },
+                                {
+                                    "type": "parameters",
+                                    "label": "(self)",
+                                    "children": [
+                                        {
+                                            "type": "identifier",
+                                            "label": "self",
+                                            "children": []
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "block",
+                                    "label": "\"\"\"\n        Stop the background process.\n        \"\"\"\n        if not self.process:\n            return\n\n        self.process.terminate()\n        self.process.join()\n        self.process = None",
+                                    "children": [
+                                        {
+                                            "type": "expression_statement",
+                                            "label": "\"\"\"\n        Stop the background process.\n        \"\"\"",
+                                            "children": [
+                                                {
+                                                    "type": "string",
+                                                    "label": "\"\"\"\n        Stop the background process.\n        \"\"\"",
+                                                    "children": [
+                                                        {
+                                                            "type": "string_start",
+                                                            "label": "\"\"\"",
+                                                            "children": []
+                                                        },
+                                                        {
+                                                            "type": "string_content",
+                                                            "label": "\n        Stop the background process.\n        ",
+                                                            "children": []
+                                                        },
+                                                        {
+                                                            "type": "string_end",
+                                                            "label": "\"\"\"",
+                                                            "children": []
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "if_statement",
+                                            "label": "if not self.process:\n            return",
+                                            "children": [
+                                                {
+                                                    "type": "not_operator",
+                                                    "label": "not self.process",
+                                                    "children": [
+                                                        {
+                                                            "type": "attribute",
+                                                            "label": "self.process",
+                                                            "children": [
+                                                                {
+                                                                    "type": "identifier",
+                                                                    "label": "self",
+                                                                    "children": []
+                                                                },
+                                                                {
+                                                                    "type": "identifier",
+                                                                    "label": "process",
+                                                                    "children": []
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                },
+                                                {
+                                                    "type": "block",
+                                                    "label": "return",
+                                                    "children": [
+                                                        {
+                                                            "type": "return_statement",
+                                                            "label": "return",
+                                                            "children": []
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "expression_statement",
+                                            "label": "self.process.terminate()",
+                                            "children": [
+                                                {
+                                                    "type": "call",
+                                                    "label": "self.process.terminate()",
+                                                    "children": [
+                                                        {
+                                                            "type": "attribute",
+                                                            "label": "self.process.terminate",
+                                                            "children": [
+                                                                {
+                                                                    "type": "attribute",
+                                                                    "label": "self.process",
+                                                                    "children": [
+                                                                        {
+                                                                            "type": "identifier",
+                                                                            "label": "self",
+                                                                            "children": []
+                                                                        },
+                                                                        {
+                                                                            "type": "identifier",
+                                                                            "label": "process",
+                                                                            "children": []
+                                                                        }
+                                                                    ]
+                                                                },
+                                                                {
+                                                                    "type": "identifier",
+                                                                    "label": "terminate",
+                                                                    "children": []
+                                                                }
+                                                            ]
+                                                        },
+                                                        {
+                                                            "type": "argument_list",
+                                                            "label": "()",
+                                                            "children": []
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "expression_statement",
+                                            "label": "self.process.join()",
+                                            "children": [
+                                                {
+                                                    "type": "call",
+                                                    "label": "self.process.join()",
+                                                    "children": [
+                                                        {
+                                                            "type": "attribute",
+                                                            "label": "self.process.join",
+                                                            "children": [
+                                                                {
+                                                                    "type": "attribute",
+                                                                    "label": "self.process",
+                                                                    "children": [
+                                                                        {
+                                                                            "type": "identifier",
+                                                                            "label": "self",
+                                                                            "children": []
+                                                                        },
+                                                                        {
+                                                                            "type": "identifier",
+                                                                            "label": "process",
+                                                                            "children": []
+                                                                        }
+                                                                    ]
+                                                                },
+                                                                {
+                                                                    "type": "identifier",
+                                                                    "label": "join",
+                                                                    "children": []
+                                                                }
+                                                            ]
+                                                        },
+                                                        {
+                                                            "type": "argument_list",
+                                                            "label": "()",
+                                                            "children": []
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "expression_statement",
+                                            "label": "self.process = None",
+                                            "children": [
+                                                {
+                                                    "type": "assignment",
+                                                    "label": "self.process = None",
+                                                    "children": [
+                                                        {
+                                                            "type": "attribute",
+                                                            "label": "self.process",
+                                                            "children": [
+                                                                {
+                                                                    "type": "identifier",
+                                                                    "label": "self",
+                                                                    "children": []
+                                                                },
+                                                                {
+                                                                    "type": "identifier",
+                                                                    "label": "process",
+                                                                    "children": []
+                                                                }
+                                                            ]
+                                                        },
+                                                        {
+                                                            "type": "none",
+                                                            "label": "None",
+                                                            "children": []
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}
