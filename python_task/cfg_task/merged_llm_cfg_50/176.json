@@ -1,0 +1,266 @@
+{
+  "name": "example_script",
+  "type": "CFG",
+  "start_line": 1,
+  "end_line": 189,
+  "functions": [
+    {
+      "name": "lifespan",
+      "type": "function",
+      "start_line": 23,
+      "end_line": 27,
+      "functions": [],
+      "classes": [],
+      "simplified_code": "async def lifespan(app: FastAPI):\n    manager = get_connection_manager()\n    fut = asyncio.create_task(event_broadcaster(manager))\n    fut.add_done_callback(lambda _: logger.info(\"Event broadcaster stopped\"))\n    yield",
+      "blocks": [
+        {
+          "id": 1,
+          "label": "manager = get_connection_manager()\nfut = asyncio.create_task(event_broadcaster(manager))\nfut.add_done_callback(lambda _: logger.info(\"Event broadcaster stopped\"))\nyield",
+          "successors": []
+        }
+      ]
+    },
+    {
+      "name": "get_connection_manager",
+      "type": "function",
+      "start_line": 35,
+      "end_line": 39,
+      "functions": [],
+      "classes": [],
+      "simplified_code": "def get_connection_manager():\n    global _connection_manager\n    if _connection_manager is None:\n        _connection_manager = ConnectionManager()\n    return _connection_manager",
+      "blocks": [
+        {
+          "id": 1,
+          "label": "def get_connection_manager():\n    global _connection_manager\nif _connection_manager is None:\n_connection_manager = ConnectionManager()",
+          "successors": [
+            4
+          ]
+        },
+        {
+          "id": 4,
+          "label": "return _connection_manager",
+          "successors": []
+        }
+      ]
+    },
+    {
+      "name": "event_broadcaster",
+      "type": "function",
+      "start_line": 42,
+      "end_line": 52,
+      "functions": [],
+      "classes": [],
+      "simplified_code": "async def event_broadcaster(manager: ConnectionManager):\n    try:\n        redis.connect()\n        event_queue = AsyncRedisExecutionEventBus()\n        async for event in event_queue.listen():\n            await manager.send_execution_result(event)\n    except Exception as e:\n        logger.exception(f\"Event broadcaster error: {e}\")\n        raise\n    finally:\n        redis.disconnect()",
+      "blocks": [
+        {
+          "id": 1,
+          "label": "redis.connect()\nevent_queue = AsyncRedisExecutionEventBus()",
+          "successors": [
+            3
+          ]
+        },
+        {
+          "id": 3,
+          "label": "async for event in event_queue.listen():\nawait manager.send_execution_result(event)",
+          "successors": [
+            3
+          ]
+        },
+        {
+          "id": 5,
+          "label": "except Exception as e:\nlogger.exception(f\"Event broadcaster error: {e}\")\nraise\nfinally:\nredis.disconnect()",
+          "successors": []
+        }
+      ]
+    },
+    {
+      "name": "authenticate_websocket",
+      "type": "function",
+      "start_line": 55,
+      "end_line": 73,
+      "functions": [],
+      "classes": [],
+      "simplified_code": "async def authenticate_websocket(websocket: WebSocket) -> str:\n    if not settings.config.enable_auth:\n        return DEFAULT_USER_ID\n\n    token = websocket.query_params.get(\"token\")\n    if not token:\n        await websocket.close(code=4001, reason=\"Missing authentication token\")\n        return \"\"\n\n    try:\n        payload = parse_jwt_token(token)\n        user_id = payload.get(\"sub\")\n        if not user_id:\n            await websocket.close(code=4002, reason=\"Invalid token\")\n            return \"\"\n        return user_id\n    except ValueError:\n        await websocket.close(code=4003, reason=\"Invalid token\")\n        return \"\"",
+      "blocks": [
+        {
+          "id": 1,
+          "label": "if not settings.config.enable_auth:\nreturn DEFAULT_USER_ID",
+          "successors": []
+        },
+        {
+          "id": 3,
+          "label": "token = websocket.query_params.get(\"token\")\nif not token:\nawait websocket.close(code=4001, reason=\"Missing authentication token\")\nreturn \"\"",
+          "successors": []
+        },
+        {
+          "id": 5,
+          "label": "try:\n    payload = parse_jwt_token(token)\n    user_id = payload.get(\"sub\")\n    if not user_id:\nawait websocket.close(code=4002, reason=\"Invalid token\")\nreturn \"\"",
+          "successors": []
+        },
+        {
+          "id": 7,
+          "label": "return user_id",
+          "successors": []
+        }
+      ]
+    },
+    {
+      "name": "handle_subscribe",
+      "type": "function",
+      "start_line": 76,
+      "end_line": 97,
+      "functions": [],
+      "classes": [],
+      "simplified_code": "async def handle_subscribe(\n    websocket: WebSocket, manager: ConnectionManager, message: WsMessage\n):\n    if not message.data:\n        await websocket.send_text(\n            WsMessage(\n                method=Methods.ERROR,\n                success=False,\n                error=\"Subscription data missing\",\n            ).model_dump_json()\n        )\n    else:\n        ex_sub = ExecutionSubscription.model_validate(message.data)\n        await manager.subscribe(ex_sub.graph_id, websocket)\n        logger.debug(f\"New execution subscription for graph {ex_sub.graph_id}\")\n        await websocket.send_text(\n            WsMessage(\n                method=Methods.SUBSCRIBE,\n                success=True,\n                channel=ex_sub.graph_id,\n            ).model_dump_json()\n        )",
+      "blocks": [
+        {
+          "id": 1,
+          "label": "async def handle_subscribe(\n    websocket: WebSocket, manager: ConnectionManager, message: WsMessage\n):\nif not message.data:\nawait websocket.send_text(\n    WsMessage(\n        method=Methods.ERROR,\n        success=False,\n        error=\"Subscription data missing\",\n    ).model_dump_json()\n)",
+          "successors": []
+        },
+        {
+          "id": 5,
+          "label": "ex_sub = ExecutionSubscription.model_validate(message.data)\nawait manager.subscribe(ex_sub.graph_id, websocket)\nlogger.debug(f\"New execution subscription for graph {ex_sub.graph_id}\")\nawait websocket.send_text(\n    WsMessage(\n        method=Methods.SUBSCRIBE,\n        success=True,\n        channel=ex_sub.graph_id,\n    ).model_dump_json()\n)",
+          "successors": []
+        }
+      ]
+    },
+    {
+      "name": "handle_unsubscribe",
+      "type": "function",
+      "start_line": 100,
+      "end_line": 121,
+      "functions": [],
+      "classes": [],
+      "simplified_code": "async def handle_unsubscribe(\n    websocket: WebSocket, manager: ConnectionManager, message: WsMessage\n):\n    if not message.data:\n        await websocket.send_text(\n            WsMessage(\n                method=Methods.ERROR,\n                success=False,\n                error=\"Subscription data missing\",\n            ).model_dump_json()\n        )\n    else:\n        ex_sub = ExecutionSubscription.model_validate(message.data)\n        await manager.unsubscribe(ex_sub.graph_id, websocket)\n        logger.debug(f\"Removed execution subscription for graph {ex_sub.graph_id}\")\n        await websocket.send_text(\n            WsMessage(\n                method=Methods.UNSUBSCRIBE,\n                success=True,\n                channel=ex_sub.graph_id,\n            ).model_dump_json()\n        )",
+      "blocks": [
+        {
+          "id": 1,
+          "label": "if not message.data:\nawait websocket.send_text(\n    WsMessage(\n        method=Methods.ERROR,\n        success=False,\n        error=\"Subscription data missing\",\n    ).model_dump_json()\n)",
+          "successors": []
+        },
+        {
+          "id": 3,
+          "label": "ex_sub = ExecutionSubscription.model_validate(message.data)\nawait manager.unsubscribe(ex_sub.graph_id, websocket)\nlogger.debug(f\"Removed execution subscription for graph {ex_sub.graph_id}\")\nawait websocket.send_text(\n    WsMessage(\n        method=Methods.UNSUBSCRIBE,\n        success=True,\n        channel=ex_sub.graph_id,\n    ).model_dump_json()\n)",
+          "successors": []
+        }
+      ]
+    },
+    {
+      "name": "health",
+      "type": "function",
+      "start_line": 125,
+      "end_line": 126,
+      "functions": [],
+      "classes": [],
+      "simplified_code": "async def health():\n    return {\"status\": \"healthy\"}",
+      "blocks": [
+        {
+          "id": 1,
+          "label": "async def health():\nreturn {\"status\": \"healthy\"}",
+          "successors": []
+        }
+      ]
+    },
+    {
+      "name": "websocket_router",
+      "type": "function",
+      "start_line": 130,
+      "end_line": 172,
+      "functions": [],
+      "classes": [],
+      "simplified_code": "async def websocket_router(\n    websocket: WebSocket, manager: ConnectionManager = Depends(get_connection_manager)\n):\n    user_id = await authenticate_websocket(websocket)\n    if not user_id:\n        return\n    await manager.connect(websocket)\n    try:\n        while True:\n            data = await websocket.receive_text()\n            message = WsMessage.model_validate_json(data)\n\n            if message.method == Methods.HEARTBEAT:\n                await websocket.send_json(\n                    {\"method\": Methods.HEARTBEAT.value, \"data\": \"pong\", \"success\": True}\n                )\n                continue\n\n            if message.method == Methods.SUBSCRIBE:\n                await handle_subscribe(websocket, manager, message)\n\n            elif message.method == Methods.UNSUBSCRIBE:\n                await handle_unsubscribe(websocket, manager, message)\n\n            elif message.method == Methods.ERROR:\n                logger.error(f\"WebSocket Error message received: {message.data}\")\n\n            else:\n                logger.warning(\n                    f\"Unknown WebSocket message type {message.method} received: \"\n                    f\"{message.data}\"\n                )\n                await websocket.send_text(\n                    WsMessage(\n                        method=Methods.ERROR,\n                        success=False,\n                        error=\"Message type is not processed by the server\",\n                    ).model_dump_json()\n                )\n\n    except WebSocketDisconnect:\n        manager.disconnect(websocket)\n        logger.debug(\"WebSocket client disconnected\")",
+      "blocks": [
+        {
+          "id": 1,
+          "label": "async def websocket_router(\n    websocket: WebSocket, manager: ConnectionManager = Depends(get_connection_manager)\n):\nuser_id = await authenticate_websocket(websocket)\nif not user_id:\nreturn",
+          "successors": []
+        },
+        {
+          "id": 5,
+          "label": "await manager.connect(websocket)\ntry:",
+          "successors": [
+            7,
+            15
+          ]
+        },
+        {
+          "id": 7,
+          "label": "while True:\ndata = await websocket.receive_text()\nmessage = WsMessage.model_validate_json(data)\nif message.method == Methods.HEARTBEAT:\nawait websocket.send_json(\n    {\"method\": Methods.HEARTBEAT.value, \"data\": \"pong\", \"success\": True}\n)\ncontinue",
+          "successors": [
+            7
+          ]
+        },
+        {
+          "id": 11,
+          "label": "if message.method == Methods.SUBSCRIBE:\nawait handle_subscribe(websocket, manager, message)",
+          "successors": [
+            14
+          ]
+        },
+        {
+          "id": 13,
+          "label": "elif message.method == Methods.UNSUBSCRIBE:",
+          "successors": [
+            14
+          ]
+        },
+        {
+          "id": 14,
+          "label": "await handle_unsubscribe(websocket, manager, message)\nelif message.method == Methods.ERROR:\n    logger.error(f\"WebSocket Error message received: {message.data}\")\nelse:\n    logger.warning(\n        f\"Unknown WebSocket message type {message.method} received: \"\n        f\"{message.data}\"\n    )\n    await websocket.send_text(\n        WsMessage(\n            method=Methods.ERROR,\n            success=False,\n            error=\"Message type is not processed by the server\",\n        ).model_dump_json()\n    )",
+          "successors": [
+            7
+          ]
+        },
+        {
+          "id": 15,
+          "label": "except WebSocketDisconnect:\nmanager.disconnect(websocket)\nlogger.debug(\"WebSocket client disconnected\")",
+          "successors": []
+        }
+      ]
+    }
+  ],
+  "classes": [
+    {
+      "name": "WebsocketServer",
+      "type": "class",
+      "start_line": 175,
+      "end_line": 189,
+      "functions": [
+        {
+          "name": "run",
+          "type": "function",
+          "start_line": 176,
+          "end_line": 189,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "    def run(self):\n        logger.info(f\"CORS allow origins: {settings.config.backend_cors_allow_origins}\")\n        server_app = CORSMiddleware(\n            app=app,\n            allow_origins=settings.config.backend_cors_allow_origins,\n            allow_credentials=True,\n            allow_methods=[\"*\"],\n            allow_headers=[\"*\"],\n        )\n        uvicorn.run(\n            server_app,\n            host=Config().websocket_server_host,\n            port=Config().websocket_server_port,\n        )",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "logger.info(f\"CORS allow origins: {settings.config.backend_cors_allow_origins}\")\nserver_app = CORSMiddleware(\n    app=app,\n    allow_origins=settings.config.backend_cors_allow_origins,\n    allow_credentials=True,\n    allow_methods=[\"*\"],\n    allow_headers=[\"*\"],\n)\nuvicorn.run(\n    server_app,\n    host=Config().websocket_server_host,\n    port=Config().websocket_server_port,\n)",
+              "successors": []
+            }
+          ]
+        }
+      ],
+      "classes": [],
+      "simplified_code": "class WebsocketServer(AppProcess):\n        )",
+      "blocks": [
+        {
+          "id": 1,
+          "label": "class WebsocketServer(AppProcess):",
+          "successors": []
+        }
+      ]
+    }
+  ],
+  "simplified_code": "import asyncio\nimport logging\nfrom contextlib import asynccontextmanager\n\nimport uvicorn\nfrom autogpt_libs.auth import parse_jwt_token\nfrom fastapi import Depends, FastAPI, WebSocket, WebSocketDisconnect\nfrom starlette.middleware.cors import CORSMiddleware\n\nfrom backend.data import redis\nfrom backend.data.execution import AsyncRedisExecutionEventBus\nfrom backend.data.user import DEFAULT_USER_ID\nfrom backend.server.conn_manager import ConnectionManager\nfrom backend.server.model import ExecutionSubscription, Methods, WsMessage\nfrom backend.util.service import AppProcess\nfrom backend.util.settings import AppEnvironment, Config, Settings\n\nlogger = logging.getLogger(__name__)\nsettings = Settings()\n\n\n@asynccontextmanager\n    yield\n\n\ndocs_url = \"/docs\" if settings.config.app_env == AppEnvironment.LOCAL else None\napp = FastAPI(lifespan=lifespan, docs_url=docs_url)\n_connection_manager = None\n\n\n    return _connection_manager\n\n\n        redis.disconnect()\n\n\n        return \"\"\n\n\n        )\n\n\n        )\n\n\n@app.get(\"/\")\n    return {\"status\": \"healthy\"}\n\n\n@app.websocket(\"/ws\")\n        logger.debug(\"WebSocket client disconnected\")\n\n\n        )",
+  "blocks": [
+    {
+      "id": 1,
+      "label": "import asyncio\nimport logging\nfrom contextlib import asynccontextmanager\n\nimport uvicorn\nfrom autogpt_libs.auth import parse_jwt_token\nfrom fastapi import Depends, FastAPI, WebSocket, WebSocketDisconnect\nfrom starlette.middleware.cors import CORSMiddleware\n\nfrom backend.data import redis\nfrom backend.data.execution import AsyncRedisExecutionEventBus\nfrom backend.data.user import DEFAULT_USER_ID\nfrom backend.server.conn_manager import ConnectionManager\nfrom backend.server.model import ExecutionSubscription, Methods, WsMessage\nfrom backend.util.service import AppProcess\nfrom backend.util.settings import AppEnvironment, Config, Settings\n\nlogger = logging.getLogger(__name__)\nsettings = Settings()\n@asynccontextmanager\n    yield\ndocs_url = \"/docs\" if settings.config.app_env == AppEnvironment.LOCAL else None\napp = FastAPI(lifespan=lifespan, docs_url=docs_url)\n_connection_manager = None\n    return _connection_manager\n        redis.disconnect()\n        return \"\"\n        )\n        )\n@app.get(\"/\")\n    return {\"status\": \"healthy\"}\n@app.websocket(\"/ws\")\n        logger.debug(\"WebSocket client disconnected\")",
+      "successors": []
+    }
+  ]
+}

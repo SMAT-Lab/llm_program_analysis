@@ -1,0 +1,130 @@
+{
+  "name": "44.py",
+  "type": "CFG",
+  "blocks": [
+    {
+      "id": 1,
+      "label": "#1\nfrom enum import Enum\nfrom typing import List, Literal\nfrom pydantic import SecretStr\nfrom backend.data.block import Block, BlockCategory, BlockOutput, BlockSchema\nfrom backend.data.model import APIKeyCredentials, BlockSecret, CredentialsField, CredentialsMetaInput, SchemaField, SecretField\nfrom backend.integrations.providers import ProviderName\nfrom backend.util.request import requests\nTEST_CREDENTIALS = APIKeyCredentials(id=\n    '01234567-89ab-cdef-0123-456789abcdef', provider='medium', api_key=\n    SecretStr('mock-medium-api-key'), title='Mock Medium API key',\n    expires_at=None)\nTEST_CREDENTIALS_INPUT = {'provider': TEST_CREDENTIALS.provider, 'id':\n    TEST_CREDENTIALS.id, 'type': TEST_CREDENTIALS.type, 'title':\n    TEST_CREDENTIALS.type}",
+      "successors": []
+    }
+  ],
+  "functions": [],
+  "classes": [
+    {
+      "name": "PublishToMediumStatus",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 3,
+          "label": "#3\nPUBLIC = 'public'\nDRAFT = 'draft'\nUNLISTED = 'unlisted'",
+          "successors": []
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "PublishToMediumBlock",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 6,
+          "label": "#6",
+          "successors": []
+        }
+      ],
+      "functions": [
+        {
+          "name": "__init__",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 14,
+              "label": "#14\nsuper().__init__(id='3f7b2dcb-4a78-4e3f-b0f1-88132e1b89df', input_schema=\n    PublishToMediumBlock.Input, output_schema=PublishToMediumBlock.Output,\n    description='Publishes a post to Medium.', categories={BlockCategory.\n    SOCIAL}, test_input={'author_id': '1234567890abcdef', 'title':\n    'Test Post', 'content':\n    '<h1>Test Content</h1><p>This is a test post.</p>', 'content_format':\n    'html', 'tags': ['test', 'automation'], 'license':\n    'all-rights-reserved', 'notify_followers': False, 'publish_status':\n    PublishToMediumStatus.DRAFT.value, 'credentials':\n    TEST_CREDENTIALS_INPUT}, test_output=[('post_id', 'e6f36a'), (\n    'post_url', 'https://medium.com/@username/test-post-e6f36a'), (\n    'published_at', 1626282600)], test_mock={'create_post': lambda *args,\n    **kwargs: {'data': {'id': 'e6f36a', 'url':\n    'https://medium.com/@username/test-post-e6f36a', 'authorId':\n    '1234567890abcdef', 'publishedAt': 1626282600}}}, test_credentials=\n    TEST_CREDENTIALS)",
+              "successors": []
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "create_post",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 17,
+              "label": "#17\nheaders = {'Authorization': f'Bearer {api_key.get_secret_value()}',\n    'Content-Type': 'application/json', 'Accept': 'application/json'}\ndata = {'title': title, 'content': content, 'contentFormat': content_format,\n    'tags': tags, 'canonicalUrl': canonical_url, 'publishStatus':\n    publish_status, 'license': license, 'notifyFollowers': notify_followers}\nresponse = requests.post(f'https://api.medium.com/v1/users/{author_id}/posts',\n    headers=headers, json=data)\nreturn response.json()",
+              "successors": []
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "run",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 21,
+              "label": "#21\nresponse = self.create_post(credentials.api_key, input_data.author_id.\n    get_secret_value(), input_data.title, input_data.content, input_data.\n    content_format, input_data.tags, input_data.canonical_url, input_data.\n    publish_status, input_data.license, input_data.notify_followers)\nif 'data' in response:",
+              "successors": [
+                {
+                  "id": 22,
+                  "label": "#22\nyield 'post_id', response['data']['id']",
+                  "successors": [
+                    {
+                      "id": 26,
+                      "label": "#26\nyield 'post_url', response['data']['url']",
+                      "successors": [
+                        {
+                          "id": 27,
+                          "label": "#27\nyield 'published_at', response['data']['publishedAt']",
+                          "successors": []
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "id": 24,
+                  "label": "#24\nerror_message = response.get('errors', [{}])[0].get('message',\n    'Unknown error occurred')\nraise RuntimeError(f'Failed to create Medium post: {error_message}')",
+                  "successors": []
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        }
+      ],
+      "classes": [
+        {
+          "name": "Input",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 8,
+              "label": "#8\nauthor_id: BlockSecret = SecretField(key='medium_author_id', description=\n    \"\"\"The Medium AuthorID of the user. You can get this by calling the /me endpoint of the Medium API.\n\ncurl -H \"Authorization: Bearer YOUR_ACCESS_TOKEN\" https://api.medium.com/v1/me\" the response will contain the authorId field.\"\"\"\n    , placeholder=\"Enter the author's Medium AuthorID\")\ntitle: str = SchemaField(description='The title of your Medium post',\n    placeholder='Enter your post title')\ncontent: str = SchemaField(description=\n    'The main content of your Medium post', placeholder=\n    'Enter your post content')\ncontent_format: str = SchemaField(description=\n    \"The format of the content: 'html' or 'markdown'\", placeholder='html')\ntags: List[str] = SchemaField(description=\n    'List of tags for your Medium post (up to 5)', placeholder=\n    \"['technology', 'AI', 'blogging']\")\ncanonical_url: str | None = SchemaField(default=None, description=\n    'The original home of this content, if it was originally published elsewhere'\n    , placeholder='https://yourblog.com/original-post')\npublish_status: PublishToMediumStatus = SchemaField(description=\n    'The publish status', placeholder=PublishToMediumStatus.DRAFT)\nlicense: str = SchemaField(default='all-rights-reserved', description=\n    \"The license of the post: 'all-rights-reserved', 'cc-40-by', 'cc-40-by-sa', 'cc-40-by-nd', 'cc-40-by-nc', 'cc-40-by-nc-nd', 'cc-40-by-nc-sa', 'cc-40-zero', 'public-domain'\"\n    , placeholder='all-rights-reserved')\nnotify_followers: bool = SchemaField(default=False, description=\n    'Whether to notify followers that the user has published', placeholder=\n    'False')\ncredentials: CredentialsMetaInput[Literal[ProviderName.MEDIUM], Literal[\n    'api_key']] = CredentialsField(description=\n    'The Medium integration can be used with any API key with sufficient permissions for the blocks it is used on.'\n    )",
+              "successors": []
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "Output",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 11,
+              "label": "#11\npost_id: str = SchemaField(description='The ID of the created Medium post')\npost_url: str = SchemaField(description='The URL of the created Medium post')\npublished_at: int = SchemaField(description=\n    'The timestamp when the post was published')\nerror: str = SchemaField(description=\n    'Error message if the post creation failed')",
+              "successors": []
+            }
+          ],
+          "functions": [],
+          "classes": []
+        }
+      ]
+    }
+  ]
+}

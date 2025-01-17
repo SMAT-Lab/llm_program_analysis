@@ -1,0 +1,857 @@
+{
+  "name": "example_script",
+  "type": "CFG",
+  "blocks": [
+    {
+      "id": 1,
+      "start_line": 1,
+      "end_line": 24,
+      "label": "from collections import defaultdict\nfrom datetime import datetime, timezone\nfrom multiprocessing import Manager\nfrom typing import Any, AsyncGenerator, Generator, Generic, TypeVar\nfrom prisma.enums import AgentExecutionStatus\nfrom prisma.models import (\n    AgentGraphExecution,\n    AgentNodeExecution,\n    AgentNodeExecutionInputOutput,\n)\nfrom pydantic import BaseModel\nfrom backend.data.block import BlockData, BlockInput, CompletedBlockOutput\nfrom backend.data.includes import EXECUTION_RESULT_INCLUDE, GRAPH_EXECUTION_INCLUDE\nfrom backend.data.queue import AsyncRedisEventBus, RedisEventBus\nfrom backend.util import json, mock\nfrom backend.util.settings import Config\nExecutionStatus = AgentExecutionStatus\nT = TypeVar(\"T\")\n# --------------------- Model functions --------------------- #\nLIST_SPLIT = \"_$_\"\nDICT_SPLIT = \"_#_\"\nOBJC_SPLIT = \"_@_\"\n# --------------------- Event Bus --------------------- #\nconfig = Config()",
+      "successors": []
+    }
+  ],
+  "functions": [
+    {
+      "name": "create_graph_execution",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 1,
+          "start_line": 1,
+          "end_line": 11,
+          "label": "async def create_graph_execution(\n    graph_id: str,\n    graph_version: int,\n    nodes_input: list[tuple[str, BlockInput]],\n    user_id: str,\n) -> tuple[str, list[ExecutionResult]]:\n    \"\"\"\n    Create a new AgentGraphExecution record.\n    Returns:\n        The id of the AgentGraphExecution and the list of ExecutionResult for each node.\n    \"\"\"",
+          "successors": [
+            {
+              "id": 2,
+              "start_line": 12,
+              "end_line": 35,
+              "label": "result = await AgentGraphExecution.prisma().create(\n        data={\n            \"agentGraphId\": graph_id,\n            \"agentGraphVersion\": graph_version,\n            \"executionStatus\": ExecutionStatus.QUEUED,\n            \"AgentNodeExecutions\": {\n                \"create\": [  # type: ignore\n                    {\n                        \"agentNodeId\": node_id,\n                        \"executionStatus\": ExecutionStatus.INCOMPLETE,\n                        \"Input\": {\n                            \"create\": [\n                                {\"name\": name, \"data\": json.dumps(data)}\n                                for name, data in node_input.items()\n                            ]\n                        },\n                    }\n                    for node_id, node_input in nodes_input\n                ]\n            },\n            \"userId\": user_id,\n        },\n        include=GRAPH_EXECUTION_INCLUDE,\n    )",
+              "successors": [
+                {
+                  "id": 3,
+                  "start_line": 36,
+                  "end_line": 39,
+                  "label": "return result.id, [\n        ExecutionResult.from_db(execution)\n        for execution in result.AgentNodeExecutions or []\n    ]",
+                  "successors": []
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "upsert_execution_input",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 1,
+          "start_line": 1,
+          "end_line": 32,
+          "label": "async def upsert_execution_input(\n    node_id: str,\n    graph_exec_id: str,\n    input_name: str,\n    input_data: Any,\n    node_exec_id: str | None = None,\n) -> tuple[str, BlockInput]:\n    \"\"\"\n    Insert AgentNodeExecutionInputOutput record for as one of AgentNodeExecution.Input.\n    If there is no AgentNodeExecution that has no `input_name` as input, create new one.\n    Args:\n        node_id: The id of the AgentNode.\n        graph_exec_id: The id of the AgentGraphExecution.\n        input_name: The name of the input data.\n        input_data: The input data to be inserted.\n        node_exec_id: [Optional] The id of the AgentNodeExecution that has no `input_name` as input. If not provided, it will find the eligible incomplete AgentNodeExecution or create a new one.\n    Returns:\n        * The id of the created or existing AgentNodeExecution.\n        * Dict of node input data, key is the input name, value is the input data.\n    \"\"\"\n    existing_execution = await AgentNodeExecution.prisma().find_first(\n        where={  # type: ignore\n            **({\"id\": node_exec_id} if node_exec_id else {}),\n            \"agentNodeId\": node_id,\n            \"agentGraphExecutionId\": graph_exec_id,\n            \"executionStatus\": ExecutionStatus.INCOMPLETE,\n            \"Input\": {\"every\": {\"name\": {\"not\": input_name}}},\n        },\n        order={\"addedTime\": \"asc\"},\n        include={\"Input\": True},\n    )\n    json_input_data = json.dumps(input_data)",
+          "successors": [
+            {
+              "id": 2,
+              "start_line": 33,
+              "end_line": 47,
+              "label": "if existing_execution:\n        await AgentNodeExecutionInputOutput.prisma().create(\n            data={\n                \"name\": input_name,\n                \"data\": json_input_data,\n                \"referencedByInputExecId\": existing_execution.id,\n            }\n        )\n        return existing_execution.id, {\n            **{\n                input_data.name: json.loads(input_data.data)\n                for input_data in existing_execution.Input or []\n            },\n            input_name: input_data,\n        }",
+              "successors": [
+                {
+                  "id": 3,
+                  "start_line": 48,
+                  "end_line": 57,
+                  "label": "elif not node_exec_id:\n        result = await AgentNodeExecution.prisma().create(\n            data={\n                \"agentNodeId\": node_id,\n                \"agentGraphExecutionId\": graph_exec_id,\n                \"executionStatus\": ExecutionStatus.INCOMPLETE,\n                \"Input\": {\"create\": {\"name\": input_name, \"data\": json_input_data}},\n            }\n        )\n        return result.id, {input_name: input_data}",
+                  "successors": [
+                    {
+                      "id": 4,
+                      "start_line": 58,
+                      "end_line": 61,
+                      "label": "else:\n        raise ValueError(\n            f\"NodeExecution {node_exec_id} not found or already has input {input_name}.\"\n        )",
+                      "successors": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "upsert_execution_output",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 1,
+          "start_line": 1,
+          "end_line": 15,
+          "label": "async def upsert_execution_output(\n    node_exec_id: str,\n    output_name: str,\n    output_data: Any,\n) -> None:\n    \"\"\"\n    Insert AgentNodeExecutionInputOutput record for as one of AgentNodeExecution.Output.\n    \"\"\"\n    await AgentNodeExecutionInputOutput.prisma().create(\n        data={\n            \"name\": output_name,\n            \"data\": json.dumps(output_data),\n            \"referencedByOutputExecId\": node_exec_id,\n        }\n    )",
+          "successors": []
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "update_graph_execution_start_time",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 1,
+          "start_line": 1,
+          "end_line": 8,
+          "label": "async def update_graph_execution_start_time(graph_exec_id: str):\n    await AgentGraphExecution.prisma().update(\n        where={\"id\": graph_exec_id},\n        data={\n            \"executionStatus\": ExecutionStatus.RUNNING,\n            \"startedAt\": datetime.now(tz=timezone.utc),\n        },\n    )",
+          "successors": []
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "update_graph_execution_stats",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 1,
+          "start_line": 5,
+          "end_line": 12,
+          "label": "status = ExecutionStatus.FAILED if stats.get(\"error\") else ExecutionStatus.COMPLETED\n    res = await AgentGraphExecution.prisma().update(\n        where={\"id\": graph_exec_id},\n        data={\n            \"executionStatus\": status,\n            \"stats\": json.dumps(stats),\n        },\n    )",
+          "successors": [
+            {
+              "id": 2,
+              "start_line": 13,
+              "end_line": 14,
+              "label": "if not res:\n        raise ValueError(f\"Execution {graph_exec_id} not found.\")",
+              "successors": []
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "start_line": 15,
+          "end_line": 15,
+          "label": "return ExecutionResult.from_graph(res)",
+          "successors": []
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "update_node_execution_stats",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 1,
+          "start_line": 1,
+          "end_line": 5,
+          "label": "async def update_node_execution_stats(node_exec_id: str, stats: dict[str, Any]):\n    await AgentNodeExecution.prisma().update(\n        where={\"id\": node_exec_id},\n        data={\"stats\": json.dumps(stats)},\n    )",
+          "successors": []
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "update_execution_status",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 1,
+          "start_line": 7,
+          "end_line": 7,
+          "label": "if status == ExecutionStatus.QUEUED and execution_data is None:",
+          "successors": [
+            {
+              "id": 2,
+              "start_line": 8,
+              "end_line": 8,
+              "label": "raise ValueError(\"Execution data must be provided when queuing an execution.\")",
+              "successors": []
+            },
+            {
+              "id": 3,
+              "start_line": 9,
+              "end_line": 18,
+              "label": "now = datetime.now(tz=timezone.utc)\n    data = {\n        **({\"executionStatus\": status}),\n        **({\"queuedTime\": now} if status == ExecutionStatus.QUEUED else {}),\n        **({\"startedTime\": now} if status == ExecutionStatus.RUNNING else {}),\n        **({\"endedTime\": now} if status == ExecutionStatus.FAILED else {}),\n        **({\"endedTime\": now} if status == ExecutionStatus.COMPLETED else {}),\n        **({\"executionData\": json.dumps(execution_data)} if execution_data else {}),\n        **({\"stats\": json.dumps(stats)} if stats else {}),\n    }",
+              "successors": [
+                {
+                  "id": 4,
+                  "start_line": 19,
+                  "end_line": 23,
+                  "label": "res = await AgentNodeExecution.prisma().update(\n        where={\"id\": node_exec_id},\n        data=data,  # type: ignore\n        include=EXECUTION_RESULT_INCLUDE,\n    )",
+                  "successors": [
+                    {
+                      "id": 5,
+                      "start_line": 24,
+                      "end_line": 24,
+                      "label": "if not res:",
+                      "successors": [
+                        {
+                          "id": 6,
+                          "start_line": 25,
+                          "end_line": 25,
+                          "label": "raise ValueError(f\"Execution {node_exec_id} not found.\")",
+                          "successors": []
+                        }
+                      ]
+                    },
+                    {
+                      "id": 7,
+                      "start_line": 26,
+                      "end_line": 26,
+                      "label": "return ExecutionResult.from_db(res)",
+                      "successors": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "get_execution_results",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 1,
+          "start_line": 1,
+          "end_line": 9,
+          "label": "async def get_execution_results(graph_exec_id: str) -> list[ExecutionResult]:\n    executions = await AgentNodeExecution.prisma().find_many(\n        where={\"agentGraphExecutionId\": graph_exec_id},\n        include=EXECUTION_RESULT_INCLUDE,\n        order=[\n            {\"queuedTime\": \"asc\"},\n            {\"addedTime\": \"asc\"},  # Fallback: Incomplete execs has no queuedTime.\n        ],\n    )",
+          "successors": [
+            {
+              "id": 2,
+              "start_line": 10,
+              "end_line": 10,
+              "label": "res = [ExecutionResult.from_db(execution) for execution in executions]",
+              "successors": [
+                {
+                  "id": 3,
+                  "start_line": 11,
+                  "end_line": 11,
+                  "label": "return res",
+                  "successors": []
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "parse_execution_output",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 1,
+          "start_line": 1,
+          "end_line": 3,
+          "label": "def parse_execution_output(output: BlockData, name: str) -> Any | None:\n    # Allow extracting partial output data by name.\n    output_name, output_data = output",
+          "successors": [
+            {
+              "id": 2,
+              "start_line": 4,
+              "end_line": 4,
+              "label": "if name == output_name:",
+              "successors": [
+                {
+                  "id": 3,
+                  "start_line": 5,
+                  "end_line": 5,
+                  "label": "return output_data",
+                  "successors": []
+                }
+              ]
+            },
+            {
+              "id": 4,
+              "start_line": 6,
+              "end_line": 6,
+              "label": "if name.startswith(f\"{output_name}{LIST_SPLIT}\"):",
+              "successors": [
+                {
+                  "id": 5,
+                  "start_line": 7,
+                  "end_line": 8,
+                  "label": "index = int(name.split(LIST_SPLIT)[1])\n        if not isinstance(output_data, list) or len(output_data) <= index:",
+                  "successors": [
+                    {
+                      "id": 6,
+                      "start_line": 9,
+                      "end_line": 9,
+                      "label": "return None",
+                      "successors": []
+                    },
+                    {
+                      "id": 7,
+                      "start_line": 10,
+                      "end_line": 10,
+                      "label": "return output_data[int(name.split(LIST_SPLIT)[1])]",
+                      "successors": []
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": 8,
+              "start_line": 11,
+              "end_line": 11,
+              "label": "if name.startswith(f\"{output_name}{DICT_SPLIT}\"):",
+              "successors": [
+                {
+                  "id": 9,
+                  "start_line": 12,
+                  "end_line": 13,
+                  "label": "index = name.split(DICT_SPLIT)[1]\n        if not isinstance(output_data, dict) or index not in output_data:",
+                  "successors": [
+                    {
+                      "id": 10,
+                      "start_line": 14,
+                      "end_line": 14,
+                      "label": "return None",
+                      "successors": []
+                    },
+                    {
+                      "id": 11,
+                      "start_line": 15,
+                      "end_line": 15,
+                      "label": "return output_data[index]",
+                      "successors": []
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": 12,
+              "start_line": 16,
+              "end_line": 16,
+              "label": "if name.startswith(f\"{output_name}{OBJC_SPLIT}\"):",
+              "successors": [
+                {
+                  "id": 13,
+                  "start_line": 17,
+                  "end_line": 18,
+                  "label": "index = name.split(OBJC_SPLIT)[1]\n        if isinstance(output_data, object) and hasattr(output_data, index):",
+                  "successors": [
+                    {
+                      "id": 14,
+                      "start_line": 19,
+                      "end_line": 19,
+                      "label": "return getattr(output_data, index)",
+                      "successors": []
+                    },
+                    {
+                      "id": 15,
+                      "start_line": 20,
+                      "end_line": 20,
+                      "label": "return None",
+                      "successors": []
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": 16,
+              "start_line": 21,
+              "end_line": 21,
+              "label": "return None",
+              "successors": []
+            }
+          ]
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "merge_execution_input",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 1,
+          "start_line": 1,
+          "end_line": 10,
+          "label": "def merge_execution_input(data: BlockInput) -> BlockInput:\n    \"\"\"\n    Merge all dynamic input pins which described by the following pattern:\n    - <input_name>_$_<index> for list input.\n    - <input_name>_#_<index> for dict input.\n    - <input_name>_@_<index> for object input.\n    This function will construct pins with the same name into a single list/dict/object.\n    \"\"\"\n    # Merge all input with <input_name>_$_<index> into a single list.\n    items = list(data.items())",
+          "successors": [
+            {
+              "id": 2,
+              "start_line": 11,
+              "end_line": 11,
+              "label": "for key, value in items:",
+              "successors": [
+                {
+                  "id": 3,
+                  "start_line": 12,
+                  "end_line": 12,
+                  "label": "if LIST_SPLIT not in key:",
+                  "successors": [
+                    {
+                      "id": 4,
+                      "start_line": 13,
+                      "end_line": 13,
+                      "label": "continue",
+                      "successors": []
+                    }
+                  ]
+                },
+                {
+                  "id": 5,
+                  "start_line": 14,
+                  "end_line": 14,
+                  "label": "name, index = key.split(LIST_SPLIT)",
+                  "successors": [
+                    {
+                      "id": 6,
+                      "start_line": 15,
+                      "end_line": 15,
+                      "label": "if not index.isdigit():",
+                      "successors": [
+                        {
+                          "id": 7,
+                          "start_line": 16,
+                          "end_line": 16,
+                          "label": "raise ValueError(f\"Invalid key: {key}, #{index} index must be an integer.\")",
+                          "successors": []
+                        }
+                      ]
+                    },
+                    {
+                      "id": 8,
+                      "start_line": 17,
+                      "end_line": 18,
+                      "label": "data[name] = data.get(name, [])\n        if int(index) >= len(data[name]):",
+                      "successors": [
+                        {
+                          "id": 9,
+                          "start_line": 19,
+                          "end_line": 21,
+                          "label": "# Pad list with empty string on missing indices.\n            data[name].extend([\"\"] * (int(index) - len(data[name]) + 1))\n        data[name][int(index)] = value",
+                          "successors": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": 10,
+              "start_line": 22,
+              "end_line": 23,
+              "label": "# Merge all input with <input_name>_#_<index> into a single dict.\n    for key, value in items:",
+              "successors": [
+                {
+                  "id": 11,
+                  "start_line": 24,
+                  "end_line": 24,
+                  "label": "if DICT_SPLIT not in key:",
+                  "successors": [
+                    {
+                      "id": 12,
+                      "start_line": 25,
+                      "end_line": 25,
+                      "label": "continue",
+                      "successors": []
+                    }
+                  ]
+                },
+                {
+                  "id": 13,
+                  "start_line": 26,
+                  "end_line": 28,
+                  "label": "name, index = key.split(DICT_SPLIT)\n        data[name] = data.get(name, {})\n        data[name][index] = value",
+                  "successors": []
+                }
+              ]
+            },
+            {
+              "id": 14,
+              "start_line": 29,
+              "end_line": 30,
+              "label": "# Merge all input with <input_name>_@_<index> into a single object.\n    for key, value in items:",
+              "successors": [
+                {
+                  "id": 15,
+                  "start_line": 31,
+                  "end_line": 31,
+                  "label": "if OBJC_SPLIT not in key:",
+                  "successors": [
+                    {
+                      "id": 16,
+                      "start_line": 32,
+                      "end_line": 32,
+                      "label": "continue",
+                      "successors": []
+                    }
+                  ]
+                },
+                {
+                  "id": 17,
+                  "start_line": 33,
+                  "end_line": 36,
+                  "label": "name, index = key.split(OBJC_SPLIT)\n        if name not in data or not isinstance(data[name], object):\n            data[name] = mock.MockObject()\n        setattr(data[name], index, value)",
+                  "successors": []
+                }
+              ]
+            },
+            {
+              "id": 18,
+              "start_line": 37,
+              "end_line": 37,
+              "label": "return data",
+              "successors": []
+            }
+          ]
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "get_latest_execution",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 1,
+          "start_line": 1,
+          "end_line": 11,
+          "label": "async def get_latest_execution(node_id: str, graph_eid: str) -> ExecutionResult | None:\n    execution = await AgentNodeExecution.prisma().find_first(\n        where={\n            \"agentNodeId\": node_id,\n            \"agentGraphExecutionId\": graph_eid,\n            \"executionStatus\": {\"not\": ExecutionStatus.INCOMPLETE},\n            \"executionData\": {\"not\": None},  # type: ignore\n        },\n        order={\"queuedTime\": \"desc\"},\n        include=EXECUTION_RESULT_INCLUDE,\n    )",
+          "successors": [
+            {
+              "id": 2,
+              "start_line": 12,
+              "end_line": 13,
+              "label": "if not execution:\n        return None",
+              "successors": []
+            },
+            {
+              "id": 3,
+              "start_line": 14,
+              "end_line": 14,
+              "label": "return ExecutionResult.from_db(execution)",
+              "successors": []
+            }
+          ]
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "get_incomplete_executions",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 1,
+          "start_line": 4,
+          "end_line": 11,
+          "label": "executions = await AgentNodeExecution.prisma().find_many(\n        where={\n            \"agentNodeId\": node_id,\n            \"agentGraphExecutionId\": graph_eid,\n            \"executionStatus\": ExecutionStatus.INCOMPLETE,\n        },\n        include=EXECUTION_RESULT_INCLUDE,\n    )",
+          "successors": []
+        },
+        {
+          "id": 2,
+          "start_line": 12,
+          "end_line": 12,
+          "label": "return [ExecutionResult.from_db(execution) for execution in executions]",
+          "successors": []
+        }
+      ],
+      "functions": [],
+      "classes": []
+    }
+  ],
+  "classes": [
+    {
+      "name": "GraphExecutionEntry",
+      "type": "CFG",
+      "blocks": [],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "NodeExecutionEntry",
+      "type": "CFG",
+      "blocks": [],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "ExecutionQueue",
+      "type": "CFG",
+      "blocks": [],
+      "functions": [
+        {
+          "name": "__init__",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 2,
+              "label": "def __init__(self):\n        self.queue = Manager().Queue()",
+              "successors": []
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "add",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 3,
+              "label": "def add(self, execution: T) -> T:\n        self.queue.put(execution)\n        return execution",
+              "successors": []
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "get",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 2,
+              "label": "def get(self) -> T:\n        return self.queue.get()",
+              "successors": []
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "empty",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 2,
+              "label": "def empty(self) -> bool:\n        return self.queue.empty()",
+              "successors": []
+            }
+          ],
+          "functions": [],
+          "classes": []
+        }
+      ],
+      "classes": []
+    },
+    {
+      "name": "ExecutionResult",
+      "type": "CFG",
+      "blocks": [],
+      "functions": [
+        {
+          "name": "from_graph",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 2,
+              "end_line": 18,
+              "label": "return ExecutionResult(\n            graph_id=graph.agentGraphId,\n            graph_version=graph.agentGraphVersion,\n            graph_exec_id=graph.id,\n            node_exec_id=\"\",\n            node_id=\"\",\n            block_id=\"\",\n            status=graph.executionStatus,\n            # TODO: Populate input_data & output_data from AgentNodeExecutions\n            #       Input & Output comes AgentInputBlock & AgentOutputBlock.\n            input_data={},\n            output_data={},\n            add_time=graph.createdAt,\n            queue_time=graph.createdAt,\n            start_time=graph.startedAt,\n            end_time=graph.updatedAt,\n        )",
+              "successors": []
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "from_db",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 2,
+              "end_line": 2,
+              "label": "if execution.executionData:",
+              "successors": [
+                {
+                  "id": 2,
+                  "start_line": 3,
+                  "end_line": 4,
+                  "label": "# Execution that has been queued for execution will persist its data.\n            input_data = json.loads(execution.executionData, target_type=dict[str, Any])",
+                  "successors": []
+                },
+                {
+                  "id": 3,
+                  "start_line": 5,
+                  "end_line": 9,
+                  "label": "else:\n            # For incomplete execution, executionData will not be yet available.\n            input_data: BlockInput = defaultdict()\n            for data in execution.Input or []:\n                input_data[data.name] = json.loads(data.data)",
+                  "successors": []
+                }
+              ]
+            },
+            {
+              "id": 4,
+              "start_line": 10,
+              "end_line": 10,
+              "label": "output_data: CompletedBlockOutput = defaultdict(list)",
+              "successors": [
+                {
+                  "id": 5,
+                  "start_line": 11,
+                  "end_line": 12,
+                  "label": "for data in execution.Output or []:\n            output_data[data.name].append(json.loads(data.data))",
+                  "successors": []
+                }
+              ]
+            },
+            {
+              "id": 6,
+              "start_line": 13,
+              "end_line": 28,
+              "label": "graph_execution: AgentGraphExecution | None = execution.AgentGraphExecution\n        return ExecutionResult(\n            graph_id=graph_execution.agentGraphId if graph_execution else \"\",\n            graph_version=graph_execution.agentGraphVersion if graph_execution else 0,\n            graph_exec_id=execution.agentGraphExecutionId,\n            block_id=execution.AgentNode.agentBlockId if execution.AgentNode else \"\",\n            node_exec_id=execution.id,\n            node_id=execution.agentNodeId,\n            status=execution.executionStatus,\n            input_data=input_data,\n            output_data=output_data,\n            add_time=execution.addedTime,\n            queue_time=execution.queuedTime,\n            start_time=execution.startedTime,\n            end_time=execution.endedTime,\n        )",
+              "successors": []
+            }
+          ],
+          "functions": [],
+          "classes": []
+        }
+      ],
+      "classes": []
+    },
+    {
+      "name": "RedisExecutionEventBus",
+      "type": "CFG",
+      "blocks": [],
+      "functions": [
+        {
+          "name": "event_bus_name",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 2,
+              "label": "def event_bus_name(self) -> str:\n        return config.execution_event_bus_name",
+              "successors": []
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "publish",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 2,
+              "label": "def publish(self, res: ExecutionResult):\n        self.publish_event(res, f\"{res.graph_id}/{res.graph_exec_id}\")",
+              "successors": []
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "listen",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 4,
+              "end_line": 4,
+              "label": "for execution_result in self.listen_events(f\"{graph_id}/{graph_exec_id}\"):",
+              "successors": [
+                {
+                  "id": 2,
+                  "start_line": 5,
+                  "end_line": 5,
+                  "label": "yield execution_result",
+                  "successors": []
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        }
+      ],
+      "classes": []
+    },
+    {
+      "name": "AsyncRedisExecutionEventBus",
+      "type": "CFG",
+      "blocks": [],
+      "functions": [
+        {
+          "name": "event_bus_name",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 2,
+              "label": "def event_bus_name(self) -> str:\n        return config.execution_event_bus_name",
+              "successors": []
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "publish",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 2,
+              "label": "async def publish(self, res: ExecutionResult):\n        await self.publish_event(res, f\"{res.graph_id}/{res.graph_exec_id}\")",
+              "successors": []
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "listen",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 4,
+              "label": "async def listen(\n        self, graph_id: str = \"*\", graph_exec_id: str = \"*\"\n    ) -> AsyncGenerator[ExecutionResult, None]:\n        async for execution_result in self.listen_events(f\"{graph_id}/{graph_exec_id}\"):",
+              "successors": [
+                {
+                  "id": 2,
+                  "start_line": 5,
+                  "end_line": 5,
+                  "label": "yield execution_result",
+                  "successors": []
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        }
+      ],
+      "classes": []
+    }
+  ]
+}

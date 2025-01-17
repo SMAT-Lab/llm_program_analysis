@@ -1,0 +1,364 @@
+{
+  "name": "example_script",
+  "type": "CFG",
+  "blocks": [
+    {
+      "id": 1,
+      "start_line": 1,
+      "end_line": 12,
+      "label": "import logging\nfrom contextlib import contextmanager\nfrom datetime import datetime\nfrom typing import TYPE_CHECKING\nfrom autogpt_libs.utils.synchronize import RedisKeyedMutex\nfrom redis.lock import Lock as RedisLock\nfrom backend.data import redis\nfrom backend.data.model import Credentials\nfrom backend.integrations.credentials_store import IntegrationCredentialsStore\nfrom backend.integrations.oauth import HANDLERS_BY_NAME\nfrom backend.util.exceptions import MissingConfigError\nfrom backend.util.settings import Settings",
+      "successors": [
+        {
+          "id": 2,
+          "start_line": 13,
+          "end_line": 14,
+          "label": "if TYPE_CHECKING:\n    from backend.integrations.oauth import BaseOAuthHandler",
+          "successors": []
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "start_line": 15,
+      "end_line": 16,
+      "label": "logger = logging.getLogger(__name__)\nsettings = Settings()",
+      "successors": []
+    }
+  ],
+  "functions": [
+    {
+      "name": "_get_provider_oauth_handler",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 1,
+          "start_line": 1,
+          "end_line": 2,
+          "label": "def _get_provider_oauth_handler(provider_name: str) -> \"BaseOAuthHandler\":\n    if provider_name not in HANDLERS_BY_NAME:",
+          "successors": [
+            {
+              "id": 2,
+              "start_line": 3,
+              "end_line": 3,
+              "label": "raise KeyError(f\"Unknown provider '{provider_name}'\")",
+              "successors": []
+            },
+            {
+              "id": 3,
+              "start_line": 4,
+              "end_line": 6,
+              "label": "client_id = getattr(settings.secrets, f\"{provider_name}_client_id\")\n    client_secret = getattr(settings.secrets, f\"{provider_name}_client_secret\")\n    if not (client_id and client_secret):",
+              "successors": [
+                {
+                  "id": 4,
+                  "start_line": 7,
+                  "end_line": 9,
+                  "label": "raise MissingConfigError(\n            f\"Integration with provider '{provider_name}' is not configured\",\n        )",
+                  "successors": []
+                },
+                {
+                  "id": 5,
+                  "start_line": 10,
+                  "end_line": 18,
+                  "label": "handler_class = HANDLERS_BY_NAME[provider_name]\n    frontend_base_url = (\n        settings.config.frontend_base_url or settings.config.platform_base_url\n    )\n    return handler_class(\n        client_id=client_id,\n        client_secret=client_secret,\n        redirect_uri=f\"{frontend_base_url}/auth/integrations/oauth_callback\",\n    )",
+                  "successors": []
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "functions": [],
+      "classes": []
+    }
+  ],
+  "classes": [
+    {
+      "name": "IntegrationCredentialsManager",
+      "type": "CFG",
+      "blocks": [],
+      "functions": [
+        {
+          "name": "__init__",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 4,
+              "label": "def __init__(self):\n        redis_conn = redis.get_redis()\n        self._locks = RedisKeyedMutex(redis_conn)\n        self.store = IntegrationCredentialsStore()",
+              "successors": []
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "create",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 2,
+              "label": "def create(self, user_id: str, credentials: Credentials) -> None:\n        return self.store.add_creds(user_id, credentials)",
+              "successors": []
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "exists",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 2,
+              "label": "def exists(self, user_id: str, credentials_id: str) -> bool:\n        return self.store.get_creds_by_id(user_id, credentials_id) is not None",
+              "successors": []
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "get",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 4,
+              "label": "def get(\n        self, user_id: str, credentials_id: str, lock: bool = True\n    ) -> Credentials | None:\n        credentials = self.store.get_creds_by_id(user_id, credentials_id)",
+              "successors": [
+                {
+                  "id": 2,
+                  "start_line": 5,
+                  "end_line": 6,
+                  "label": "if not credentials:\n            return None",
+                  "successors": []
+                },
+                {
+                  "id": 3,
+                  "start_line": 8,
+                  "end_line": 30,
+                  "label": "if credentials.type == \"oauth2\" and credentials.access_token_expires_at:\n        else:",
+                  "successors": [
+                    {
+                      "id": 4,
+                      "start_line": 9,
+                      "end_line": 13,
+                      "label": "logger.debug(\n                f\"Credentials #{credentials.id} expire at \"\n                f\"{datetime.fromtimestamp(credentials.access_token_expires_at)}; \"\n                f\"current time is {datetime.now()}\"\n            )",
+                      "successors": [
+                        {
+                          "id": 5,
+                          "start_line": 14,
+                          "end_line": 29,
+                          "label": "with self._locked(user_id, credentials_id, \"refresh\"):\n                oauth_handler = _get_provider_oauth_handler(credentials.provider)",
+                          "successors": [
+                            {
+                              "id": 6,
+                              "start_line": 16,
+                              "end_line": 29,
+                              "label": "if oauth_handler.needs_refresh(credentials):",
+                              "successors": [
+                                {
+                                  "id": 7,
+                                  "start_line": 17,
+                                  "end_line": 20,
+                                  "label": "logger.debug(\n                        f\"Refreshing '{credentials.provider}' \"\n                        f\"credentials #{credentials.id}\"\n                    )",
+                                  "successors": []
+                                },
+                                {
+                                  "id": 8,
+                                  "start_line": 21,
+                                  "end_line": 29,
+                                  "label": "_lock = None",
+                                  "successors": [
+                                    {
+                                      "id": 9,
+                                      "start_line": 22,
+                                      "end_line": 24,
+                                      "label": "if lock:\n                        # Wait until the credentials are no longer in use anywhere\n                        _lock = self._acquire_lock(user_id, credentials_id)",
+                                      "successors": []
+                                    },
+                                    {
+                                      "id": 10,
+                                      "start_line": 25,
+                                      "end_line": 29,
+                                      "label": "fresh_credentials = oauth_handler.refresh_tokens(credentials)\n                    self.store.update_creds(user_id, fresh_credentials)\n                    if _lock and _lock.locked():\n                        _lock.release()\n                    credentials = fresh_credentials",
+                                      "successors": []
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "id": 11,
+                      "start_line": 31,
+                      "end_line": 31,
+                      "label": "logger.debug(f\"Credentials #{credentials.id} never expire\")",
+                      "successors": []
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": 12,
+              "start_line": 32,
+              "end_line": 32,
+              "label": "return credentials",
+              "successors": []
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "acquire",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 11,
+              "end_line": 11,
+              "label": "with self._locked(user_id, credentials_id, \"!time_sensitive\"):",
+              "successors": [
+                {
+                  "id": 2,
+                  "start_line": 12,
+                  "end_line": 12,
+                  "label": "lock = self._acquire_lock(user_id, credentials_id)",
+                  "successors": []
+                }
+              ]
+            },
+            {
+              "id": 3,
+              "start_line": 13,
+              "end_line": 13,
+              "label": "credentials = self.get(user_id, credentials_id, lock=False)",
+              "successors": [
+                {
+                  "id": 4,
+                  "start_line": 14,
+                  "end_line": 14,
+                  "label": "if not credentials:",
+                  "successors": [
+                    {
+                      "id": 5,
+                      "start_line": 15,
+                      "end_line": 17,
+                      "label": "raise ValueError(\n                f\"Credentials #{credentials_id} for user #{user_id} not found\"\n            )",
+                      "successors": []
+                    }
+                  ]
+                },
+                {
+                  "id": 6,
+                  "start_line": 18,
+                  "end_line": 18,
+                  "label": "return credentials, lock",
+                  "successors": []
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "update",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 2,
+              "label": "def update(self, user_id: str, updated: Credentials) -> None:\n        with self._locked(user_id, updated.id):",
+              "successors": [
+                {
+                  "id": 2,
+                  "start_line": 3,
+                  "end_line": 3,
+                  "label": "self.store.update_creds(user_id, updated)",
+                  "successors": []
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "delete",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 2,
+              "end_line": 2,
+              "label": "with self._locked(user_id, credentials_id):",
+              "successors": [
+                {
+                  "id": 2,
+                  "start_line": 3,
+                  "end_line": 3,
+                  "label": "self.store.delete_creds_by_id(user_id, credentials_id)",
+                  "successors": []
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "_acquire_lock",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 7,
+              "label": "def _acquire_lock(self, user_id: str, credentials_id: str, *args: str) -> RedisLock:\n        key = (\n            f\"user:{user_id}\",\n            f\"credentials:{credentials_id}\",\n            *args,\n        )\n        return self._locks.acquire(key)",
+              "successors": []
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "_locked",
+          "type": "CFG",
+          "blocks": [],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "release_all_locks",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 4,
+              "label": "def release_all_locks(self):\n        \"\"\"Call this on process termination to ensure all locks are released\"\"\"\n        self._locks.release_all_locks()\n        self.store.locks.release_all_locks()",
+              "successors": []
+            }
+          ],
+          "functions": [],
+          "classes": []
+        }
+      ],
+      "classes": []
+    }
+  ]
+}

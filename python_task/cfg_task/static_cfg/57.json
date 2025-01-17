@@ -1,0 +1,311 @@
+{
+  "name": "57.py",
+  "type": "CFG",
+  "blocks": [
+    {
+      "id": 1,
+      "label": "#1\nimport logging\nfrom contextlib import contextmanager\nfrom datetime import datetime\nfrom typing import TYPE_CHECKING\nfrom autogpt_libs.utils.synchronize import RedisKeyedMutex\nfrom redis.lock import Lock as RedisLock\nfrom backend.data import redis\nfrom backend.data.model import Credentials\nfrom backend.integrations.credentials_store import IntegrationCredentialsStore\nfrom backend.integrations.oauth import HANDLERS_BY_NAME\nfrom backend.util.exceptions import MissingConfigError\nfrom backend.util.settings import Settings\nif TYPE_CHECKING:",
+      "successors": [
+        {
+          "id": 2,
+          "label": "#2\nfrom backend.integrations.oauth import BaseOAuthHandler",
+          "successors": [
+            {
+              "id": 3,
+              "label": "#3\nlogger = logging.getLogger(__name__)\nsettings = Settings()",
+              "successors": []
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "functions": [
+    {
+      "name": "_get_provider_oauth_handler",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 69,
+          "label": "#69\nif provider_name not in HANDLERS_BY_NAME:",
+          "successors": [
+            {
+              "id": 70,
+              "label": "#70\nraise KeyError(f\"Unknown provider '{provider_name}'\")",
+              "successors": []
+            },
+            {
+              "id": 71,
+              "label": "#71\nclient_id = getattr(settings.secrets, f'{provider_name}_client_id')\nclient_secret = getattr(settings.secrets, f'{provider_name}_client_secret')\nif not (client_id and client_secret):",
+              "successors": [
+                {
+                  "id": 73,
+                  "label": "#73\nraise MissingConfigError(\n    f\"Integration with provider '{provider_name}' is not configured\")",
+                  "successors": []
+                },
+                {
+                  "id": 74,
+                  "label": "#74\nhandler_class = HANDLERS_BY_NAME[provider_name]\nfrontend_base_url = (settings.config.frontend_base_url or settings.config.\n    platform_base_url)\nreturn handler_class(client_id=client_id, client_secret=client_secret,\n    redirect_uri=f'{frontend_base_url}/auth/integrations/oauth_callback')",
+                  "successors": []
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "functions": [],
+      "classes": []
+    }
+  ],
+  "classes": [
+    {
+      "name": "IntegrationCredentialsManager",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 5,
+          "label": "#5\n\"\"\"\n    Handles the lifecycle of integration credentials.\n    - Automatically refreshes requested credentials if needed.\n    - Uses locking mechanisms to ensure system-wide consistency and\n      prevent invalidation of in-use tokens.\n\n    ### \u26a0\ufe0f Gotcha\n    With `acquire(..)`, credentials can only be in use in one place at a time (e.g. one\n    block execution).\n\n    ### Locking mechanism\n    - Because *getting* credentials can result in a refresh (= *invalidation* +\n      *replacement*) of the stored credentials, *getting* is an operation that\n      potentially requires read/write access.\n    - Checking whether a token has to be refreshed is subject to an additional `refresh`\n      scoped lock to prevent unnecessary sequential refreshes when multiple executions\n      try to access the same credentials simultaneously.\n    - We MUST lock credentials while in use to prevent them from being invalidated while\n      they are in use, e.g. because they are being refreshed by a different part\n      of the system.\n    - The `!time_sensitive` lock in `acquire(..)` is part of a two-tier locking\n      mechanism in which *updating* gets priority over *getting* credentials.\n      This is to prevent a long queue of waiting *get* requests from blocking essential\n      credential refreshes or user-initiated updates.\n\n    It is possible to implement a reader/writer locking system where either multiple\n    readers or a single writer can have simultaneous access, but this would add a lot of\n    complexity to the mechanism. I don't expect the current (\"simple\") mechanism to\n    cause so much latency that it's worth implementing.\n    \"\"\"",
+          "successors": []
+        }
+      ],
+      "functions": [
+        {
+          "name": "__init__",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 7,
+              "label": "#7\nredis_conn = redis.get_redis()\nself._locks = RedisKeyedMutex(redis_conn)\nself.store = IntegrationCredentialsStore()",
+              "successors": []
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "create",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 10,
+              "label": "#10\nreturn self.store.add_creds(user_id, credentials)",
+              "successors": []
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "exists",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 14,
+              "label": "#14\nreturn self.store.get_creds_by_id(user_id, credentials_id) is not None",
+              "successors": []
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "get",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 18,
+              "label": "#18\ncredentials = self.store.get_creds_by_id(user_id, credentials_id)\nif not credentials:",
+              "successors": [
+                {
+                  "id": 19,
+                  "label": "#19\nreturn None",
+                  "successors": []
+                },
+                {
+                  "id": 20,
+                  "label": "#20\nif credentials.type == 'oauth2' and credentials.access_token_expires_at:",
+                  "successors": [
+                    {
+                      "id": 22,
+                      "label": "#22\nlogger.debug(\n    f'Credentials #{credentials.id} expire at {datetime.fromtimestamp(credentials.access_token_expires_at)}; current time is {datetime.now()}'\n    )\nwith self._locked(user_id, credentials_id, 'refresh'):",
+                      "successors": [
+                        {
+                          "id": 25,
+                          "label": "#25\noauth_handler = _get_provider_oauth_handler(credentials.provider)\nif oauth_handler.needs_refresh(credentials):",
+                          "successors": [
+                            {
+                              "id": 27,
+                              "label": "#27\nlogger.debug(\n    f\"Refreshing '{credentials.provider}' credentials #{credentials.id}\")\n_lock = None\nif lock:",
+                              "successors": [
+                                {
+                                  "id": 29,
+                                  "label": "#29\n_lock = self._acquire_lock(user_id, credentials_id)",
+                                  "successors": [
+                                    {
+                                      "id": 30,
+                                      "label": "#30\nfresh_credentials = oauth_handler.refresh_tokens(credentials)\nself.store.update_creds(user_id, fresh_credentials)\nif _lock and _lock.locked():",
+                                      "successors": [
+                                        {
+                                          "id": 31,
+                                          "label": "#31\n_lock.release()",
+                                          "successors": [
+                                            {
+                                              "id": 32,
+                                              "label": "#32\ncredentials = fresh_credentials",
+                                              "successors": [
+                                                {
+                                                  "id": 23,
+                                                  "label": "#23\nreturn credentials",
+                                                  "successors": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "id": 24,
+                      "label": "#24\nlogger.debug(f'Credentials #{credentials.id} never expire')",
+                      "successors": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "acquire",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 36,
+              "label": "#36\n\"\"\"\n        \u26a0\ufe0f WARNING: this locks credentials system-wide and blocks both acquiring\n        and updating them elsewhere until the lock is released.\n        See the class docstring for more info.\n        \"\"\"\nwith self._locked(user_id, credentials_id, '!time_sensitive'):",
+              "successors": [
+                {
+                  "id": 37,
+                  "label": "#37\nlock = self._acquire_lock(user_id, credentials_id)",
+                  "successors": [
+                    {
+                      "id": 38,
+                      "label": "#38\ncredentials = self.get(user_id, credentials_id, lock=False)\nif not credentials:",
+                      "successors": [
+                        {
+                          "id": 39,
+                          "label": "#39\nraise ValueError(f'Credentials #{credentials_id} for user #{user_id} not found'\n    )",
+                          "successors": []
+                        },
+                        {
+                          "id": 40,
+                          "label": "#40\nreturn credentials, lock",
+                          "successors": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "update",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 45,
+              "label": "#45\nwith self._locked(user_id, updated.id):",
+              "successors": [
+                {
+                  "id": 46,
+                  "label": "#46\nself.store.update_creds(user_id, updated)",
+                  "successors": []
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "delete",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 50,
+              "label": "#50\nwith self._locked(user_id, credentials_id):",
+              "successors": [
+                {
+                  "id": 51,
+                  "label": "#51\nself.store.delete_creds_by_id(user_id, credentials_id)",
+                  "successors": []
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "_acquire_lock",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 55,
+              "label": "#55\nkey = f'user:{user_id}', f'credentials:{credentials_id}', *args\nreturn self._locks.acquire(key)",
+              "successors": []
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "_locked",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 59,
+              "label": "#59\nlock = self._acquire_lock(user_id, credentials_id, *args)\ntry:",
+              "successors": [
+                {
+                  "id": 60,
+                  "label": "#60\nyield",
+                  "successors": []
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "release_all_locks",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 65,
+              "label": "#65\n\"\"\"Call this on process termination to ensure all locks are released\"\"\"\nself._locks.release_all_locks()\nself.store.locks.release_all_locks()",
+              "successors": []
+            }
+          ],
+          "functions": [],
+          "classes": []
+        }
+      ],
+      "classes": []
+    }
+  ]
+}

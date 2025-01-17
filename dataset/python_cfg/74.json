@@ -1,0 +1,178 @@
+{
+  "name": "74.py",
+  "type": "CFG",
+  "blocks": [
+    {
+      "id": 1,
+      "label": "#1\nimport logging\nfrom google.auth.external_account_authorized_user import Credentials as ExternalAccountCredentials\nfrom google.auth.transport.requests import AuthorizedSession, Request\nfrom google.oauth2.credentials import Credentials\nfrom google_auth_oauthlib.flow import Flow\nfrom pydantic import SecretStr\nfrom backend.data.model import OAuth2Credentials\nfrom backend.integrations.providers import ProviderName\nfrom .base import BaseOAuthHandler\nlogger = logging.getLogger(__name__)",
+      "successors": []
+    }
+  ],
+  "functions": [],
+  "classes": [
+    {
+      "name": "GoogleOAuthHandler",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 3,
+          "label": "#3\n\"\"\"\n    Based on the documentation at https://developers.google.com/identity/protocols/oauth2/web-server\n    \"\"\"\nPROVIDER_NAME = ProviderName.GOOGLE\nEMAIL_ENDPOINT = 'https://www.googleapis.com/oauth2/v2/userinfo'\nDEFAULT_SCOPES = ['https://www.googleapis.com/auth/userinfo.email',\n    'https://www.googleapis.com/auth/userinfo.profile', 'openid']",
+          "successors": []
+        }
+      ],
+      "functions": [
+        {
+          "name": "__init__",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 5,
+              "label": "#5\nself.client_id = client_id\nself.client_secret = client_secret\nself.redirect_uri = redirect_uri\nself.token_uri = 'https://oauth2.googleapis.com/token'\nself.revoke_uri = 'https://oauth2.googleapis.com/revoke'",
+              "successors": []
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "get_login_url",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 8,
+              "label": "#8\nall_scopes = list(set(scopes + self.DEFAULT_SCOPES))\nlogger.debug(f'Setting up OAuth flow with scopes: {all_scopes}')\nflow = self._setup_oauth_flow(all_scopes)\nflow.redirect_uri = self.redirect_uri\nauthorization_url, _ = flow.authorization_url(access_type='offline',\n    include_granted_scopes='true', state=state, prompt='consent')\nreturn authorization_url",
+              "successors": []
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "exchange_code_for_tokens",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 12,
+              "label": "#12\nlogger.debug(f'Exchanging code for tokens with scopes: {scopes}')\nflow = self._setup_oauth_flow(scopes)\nflow.redirect_uri = self.redirect_uri\nlogger.debug('Fetching token from Google')\nflow.oauth2session.scope = None\ntoken = flow.fetch_token(code=code)\nlogger.debug('Token fetched successfully')\ngranted_scopes: list[str] = token.get('scope', [])\nlogger.debug(f'Scopes granted by Google: {granted_scopes}')\ngoogle_creds = flow.credentials\nlogger.debug(f'Received credentials: {google_creds}')\nlogger.debug('Requesting user email')\nusername = self._request_email(google_creds)\nlogger.debug(f'User email retrieved: {username}')\nassert google_creds.token",
+              "successors": [
+                {
+                  "id": 14,
+                  "label": "#14\nassert google_creds.refresh_token",
+                  "successors": [
+                    {
+                      "id": 16,
+                      "label": "#16\nassert google_creds.expiry",
+                      "successors": [
+                        {
+                          "id": 18,
+                          "label": "#18\nassert granted_scopes",
+                          "successors": [
+                            {
+                              "id": 20,
+                              "label": "#20\ncredentials = OAuth2Credentials(provider=self.PROVIDER_NAME, title=None,\n    username=username, access_token=SecretStr(google_creds.token),\n    refresh_token=SecretStr(google_creds.refresh_token),\n    access_token_expires_at=int(google_creds.expiry.timestamp()) if\n    google_creds.expiry else None, refresh_token_expires_at=None, scopes=\n    granted_scopes)\nlogger.debug(\n    f'OAuth2Credentials object created successfully with scopes: {credentials.scopes}'\n    )\nreturn credentials",
+                              "successors": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "revoke_tokens",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 24,
+              "label": "#24\nsession = AuthorizedSession(credentials)\nsession.post(self.revoke_uri, params={'token': credentials.access_token.\n    get_secret_value()}, headers={'content-type':\n    'application/x-www-form-urlencoded'})\nreturn True",
+              "successors": []
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "_request_email",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 28,
+              "label": "#28\nsession = AuthorizedSession(creds)\nresponse = session.get(self.EMAIL_ENDPOINT)\nif not response.ok:",
+              "successors": [
+                {
+                  "id": 29,
+                  "label": "#29\nlogger.error(f'Failed to get user email. Status code: {response.status_code}')\nreturn None",
+                  "successors": []
+                },
+                {
+                  "id": 30,
+                  "label": "#30\nreturn response.json()['email']",
+                  "successors": []
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "_refresh_tokens",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 35,
+              "label": "#35\nassert credentials.refresh_token",
+              "successors": [
+                {
+                  "id": 37,
+                  "label": "#37\ngoogle_creds = Credentials(token=credentials.access_token.get_secret_value(\n    ), refresh_token=credentials.refresh_token.get_secret_value(),\n    token_uri=self.token_uri, client_id=self.client_id, client_secret=self.\n    client_secret, scopes=credentials.scopes)\nassert google_creds.refresh_token",
+                  "successors": [
+                    {
+                      "id": 39,
+                      "label": "#39\nassert google_creds.scopes",
+                      "successors": [
+                        {
+                          "id": 41,
+                          "label": "#41\ngoogle_creds.refresh(Request())\nassert google_creds.expiry",
+                          "successors": [
+                            {
+                              "id": 43,
+                              "label": "#43\nreturn OAuth2Credentials(provider=self.PROVIDER_NAME, id=credentials.id,\n    title=credentials.title, username=credentials.username, access_token=\n    SecretStr(google_creds.token), refresh_token=SecretStr(google_creds.\n    refresh_token), access_token_expires_at=int(google_creds.expiry.\n    timestamp()), refresh_token_expires_at=None, scopes=google_creds.scopes)",
+                              "successors": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "_setup_oauth_flow",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 47,
+              "label": "#47\nreturn Flow.from_client_config({'web': {'client_id': self.client_id,\n    'client_secret': self.client_secret, 'auth_uri':\n    'https://accounts.google.com/o/oauth2/auth', 'token_uri': self.\n    token_uri}}, scopes=scopes)",
+              "successors": []
+            }
+          ],
+          "functions": [],
+          "classes": []
+        }
+      ],
+      "classes": []
+    }
+  ]
+}

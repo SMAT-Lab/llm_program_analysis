@@ -1,0 +1,672 @@
+{
+  "name": "example_script",
+  "type": "CFG",
+  "start_line": 1,
+  "end_line": 173,
+  "functions": [
+    {
+      "name": "_canonicalize_url",
+      "type": "function",
+      "start_line": 30,
+      "end_line": 39,
+      "functions": [],
+      "classes": [],
+      "simplified_code": "def _canonicalize_url(url: str) -> str:\n    # Strip spaces and trailing slashes\n    url = url.strip().strip(\"/\")\n    # Ensure the URL starts with http:// or https://\n    if not url.startswith((\"http://\", \"https://\")):\n        url = \"http://\" + url\n\n    # Replace backslashes with forward slashes to avoid parsing ambiguities\n    url = url.replace(\"\\\\\", \"/\")\n    return url",
+      "blocks": [
+        {
+          "id": 1,
+          "label": "url = url.strip().strip(\"/\")",
+          "successors": [
+            2
+          ]
+        },
+        {
+          "id": 2,
+          "label": "if not url.startswith((\"http://\", \"https://\"))",
+          "successors": [
+            3,
+            4
+          ]
+        },
+        {
+          "id": 3,
+          "label": "url = \"http://\" + url",
+          "successors": [
+            4
+          ]
+        },
+        {
+          "id": 4,
+          "label": "url = url.replace(\"\\\\\", \"/\")",
+          "successors": [
+            5
+          ]
+        },
+        {
+          "id": 5,
+          "label": "return url",
+          "successors": []
+        }
+      ]
+    },
+    {
+      "name": "_is_ip_blocked",
+      "type": "function",
+      "start_line": 42,
+      "end_line": 47,
+      "functions": [],
+      "classes": [],
+      "simplified_code": "def _is_ip_blocked(ip: str) -> bool:\n    \"\"\"\n    Checks if the IP address is in a blocked network.\n    \"\"\"\n    ip_addr = ipaddress.ip_address(ip)\n    return any(ip_addr in network for network in BLOCKED_IP_NETWORKS)",
+      "blocks": [
+        {
+          "id": 1,
+          "label": "def _is_ip_blocked(ip: str) -> bool:",
+          "successors": [
+            2
+          ]
+        },
+        {
+          "id": 2,
+          "label": "\"\"\"\n    Checks if the IP address is in a blocked network.\n    \"\"\"",
+          "successors": [
+            3
+          ]
+        },
+        {
+          "id": 3,
+          "label": "ip_addr = ipaddress.ip_address(ip)",
+          "successors": [
+            4
+          ]
+        },
+        {
+          "id": 4,
+          "label": "return any(ip_addr in network for network in BLOCKED_IP_NETWORKS)",
+          "successors": []
+        }
+      ]
+    },
+    {
+      "name": "validate_url",
+      "type": "function",
+      "start_line": 50,
+      "end_line": 102,
+      "functions": [],
+      "classes": [],
+      "simplified_code": "def validate_url(url: str, trusted_origins: list[str]) -> str:\n    \"\"\"\n    Validates the URL to prevent SSRF attacks by ensuring it does not point to a private\n    or untrusted IP address, unless whitelisted.\n    \"\"\"\n    url = _canonicalize_url(url)\n    parsed = urlparse(url)\n\n    # Check scheme\n    if parsed.scheme not in ALLOWED_SCHEMES:\n        raise ValueError(\n            f\"Scheme '{parsed.scheme}' is not allowed. Only HTTP/HTTPS are supported.\"\n        )\n\n    # Validate and IDNA encode the hostname\n    if not parsed.hostname:\n        raise ValueError(\"Invalid URL: No hostname found.\")\n\n    # IDNA encode to prevent Unicode domain attacks\n    try:\n        ascii_hostname = idna.encode(parsed.hostname).decode(\"ascii\")\n    except idna.IDNAError:\n        raise ValueError(\"Invalid hostname with unsupported characters.\")\n\n    # Check hostname characters\n    if not HOSTNAME_REGEX.match(ascii_hostname):\n        raise ValueError(\"Hostname contains invalid characters.\")\n\n    # Rebuild the URL with the normalized, IDNA-encoded hostname\n    parsed = parsed._replace(netloc=ascii_hostname)\n    url = str(urlunparse(parsed))\n\n    # Check if hostname is a trusted origin (exact match)\n    if ascii_hostname in trusted_origins:\n        return url\n\n    # Resolve all IP addresses for the hostname\n    try:\n        ip_addresses = {res[4][0] for res in socket.getaddrinfo(ascii_hostname, None)}\n    except socket.gaierror:\n        raise ValueError(f\"Unable to resolve IP address for hostname {ascii_hostname}\")\n\n    if not ip_addresses:\n        raise ValueError(f\"No IP addresses found for {ascii_hostname}\")\n\n    # Check if any resolved IP address falls into blocked ranges\n    for ip in ip_addresses:\n        if _is_ip_blocked(ip):\n            raise ValueError(\n                f\"Access to private IP address {ip} for hostname {ascii_hostname} is not allowed.\"\n            )\n\n    return url",
+      "blocks": [
+        {
+          "id": 1,
+          "label": "_canonicalize_url(url)",
+          "successors": [
+            2
+          ]
+        },
+        {
+          "id": 2,
+          "label": "parsed = urlparse(url)",
+          "successors": [
+            3
+          ]
+        },
+        {
+          "id": 3,
+          "label": "if parsed.scheme not in ALLOWED_SCHEMES:",
+          "successors": [
+            4,
+            5
+          ]
+        },
+        {
+          "id": 4,
+          "label": "raise ValueError(f\"Scheme '{parsed.scheme}' is not allowed. Only HTTP/HTTPS are supported.\")",
+          "successors": []
+        },
+        {
+          "id": 5,
+          "label": "if not parsed.hostname:",
+          "successors": [
+            6,
+            7
+          ]
+        },
+        {
+          "id": 6,
+          "label": "raise ValueError(\"Invalid URL: No hostname found.\")",
+          "successors": []
+        },
+        {
+          "id": 7,
+          "label": "try:\n    ascii_hostname = idna.encode(parsed.hostname).decode(\"ascii\")",
+          "successors": [
+            8,
+            9
+          ]
+        },
+        {
+          "id": 8,
+          "label": "except idna.IDNAError:\n    raise ValueError(\"Invalid hostname with unsupported characters.\")",
+          "successors": []
+        },
+        {
+          "id": 9,
+          "label": "if not HOSTNAME_REGEX.match(ascii_hostname):",
+          "successors": [
+            10,
+            11
+          ]
+        },
+        {
+          "id": 10,
+          "label": "raise ValueError(\"Hostname contains invalid characters.\")",
+          "successors": []
+        },
+        {
+          "id": 11,
+          "label": "parsed = parsed._replace(netloc=ascii_hostname)\nurl = str(urlunparse(parsed))",
+          "successors": [
+            12
+          ]
+        },
+        {
+          "id": 12,
+          "label": "if ascii_hostname in trusted_origins:",
+          "successors": [
+            13,
+            14
+          ]
+        },
+        {
+          "id": 13,
+          "label": "return url",
+          "successors": []
+        },
+        {
+          "id": 14,
+          "label": "try:\n    ip_addresses = {res[4][0] for res in socket.getaddrinfo(ascii_hostname, None)}",
+          "successors": [
+            15,
+            16
+          ]
+        },
+        {
+          "id": 15,
+          "label": "except socket.gaierror:\n    raise ValueError(f\"Unable to resolve IP address for hostname {ascii_hostname}\")",
+          "successors": []
+        },
+        {
+          "id": 16,
+          "label": "if not ip_addresses:",
+          "successors": [
+            17,
+            18
+          ]
+        },
+        {
+          "id": 17,
+          "label": "raise ValueError(f\"No IP addresses found for {ascii_hostname}\")",
+          "successors": []
+        },
+        {
+          "id": 18,
+          "label": "for ip in ip_addresses:",
+          "successors": [
+            19,
+            20
+          ]
+        },
+        {
+          "id": 19,
+          "label": "if _is_ip_blocked(ip):",
+          "successors": [
+            21,
+            22
+          ]
+        },
+        {
+          "id": 20,
+          "label": "return url",
+          "successors": []
+        },
+        {
+          "id": 21,
+          "label": "raise ValueError(f\"Access to private IP address {ip} for hostname {ascii_hostname} is not allowed.\")",
+          "successors": []
+        },
+        {
+          "id": 22,
+          "label": "return url",
+          "successors": []
+        }
+      ]
+    }
+  ],
+  "classes": [
+    {
+      "name": "Requests",
+      "type": "class",
+      "start_line": 105,
+      "end_line": 170,
+      "functions": [
+        {
+          "name": "__init__",
+          "type": "function",
+          "start_line": 110,
+          "end_line": 126,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "    def __init__(\n        self,\n        trusted_origins: list[str] | None = None,\n        raise_for_status: bool = True,\n        extra_url_validator: Callable[[str], str] | None = None,\n        extra_headers: dict[str, str] | None = None,\n    ):\n        self.trusted_origins = []\n        for url in trusted_origins or []:\n            hostname = urlparse(url).hostname\n            if not hostname:\n                raise ValueError(f\"Invalid URL: Unable to determine hostname of {url}\")\n            self.trusted_origins.append(hostname)\n\n        self.raise_for_status = raise_for_status\n        self.extra_url_validator = extra_url_validator\n        self.extra_headers = extra_headers",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "self.trusted_origins = []",
+              "successors": [
+                2
+              ]
+            },
+            {
+              "id": 2,
+              "label": "for url in trusted_origins or []:",
+              "successors": [
+                3,
+                7
+              ]
+            },
+            {
+              "id": 3,
+              "label": "hostname = urlparse(url).hostname",
+              "successors": [
+                4
+              ]
+            },
+            {
+              "id": 4,
+              "label": "if not hostname:",
+              "successors": [
+                5,
+                6
+              ]
+            },
+            {
+              "id": 5,
+              "label": "raise ValueError(f\"Invalid URL: Unable to determine hostname of {url}\")",
+              "successors": [
+                6
+              ]
+            },
+            {
+              "id": 6,
+              "label": "self.trusted_origins.append(hostname)",
+              "successors": [
+                2
+              ]
+            },
+            {
+              "id": 7,
+              "label": "self.raise_for_status = raise_for_status",
+              "successors": [
+                8
+              ]
+            },
+            {
+              "id": 8,
+              "label": "self.extra_url_validator = extra_url_validator",
+              "successors": [
+                9
+              ]
+            },
+            {
+              "id": 9,
+              "label": "self.extra_headers = extra_headers",
+              "successors": []
+            }
+          ]
+        },
+        {
+          "name": "request",
+          "type": "function",
+          "start_line": 128,
+          "end_line": 149,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "    def request(\n        self, method, url, headers=None, allow_redirects=False, *args, **kwargs\n    ) -> req.Response:\n        if self.extra_headers is not None:\n            headers = {**(headers or {}), **self.extra_headers}\n\n        url = validate_url(url, self.trusted_origins)\n        if self.extra_url_validator is not None:\n            url = self.extra_url_validator(url)\n\n        response = req.request(\n            method,\n            url,\n            headers=headers,\n            allow_redirects=allow_redirects,\n            *args,\n            **kwargs,\n        )\n        if self.raise_for_status:\n            response.raise_for_status()\n\n        return response",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "if self.extra_headers is not None:",
+              "successors": [
+                2,
+                3
+              ]
+            },
+            {
+              "id": 2,
+              "label": "headers = {**(headers or {}), **self.extra_headers}",
+              "successors": [
+                3
+              ]
+            },
+            {
+              "id": 3,
+              "label": "url = validate_url(url, self.trusted_origins)",
+              "successors": [
+                4
+              ]
+            },
+            {
+              "id": 4,
+              "label": "if self.extra_url_validator is not None:",
+              "successors": [
+                5,
+                6
+              ]
+            },
+            {
+              "id": 5,
+              "label": "url = self.extra_url_validator(url)",
+              "successors": [
+                6
+              ]
+            },
+            {
+              "id": 6,
+              "label": "response = req.request(method, url, headers=headers, allow_redirects=allow_redirects, *args, **kwargs)",
+              "successors": [
+                7
+              ]
+            },
+            {
+              "id": 7,
+              "label": "if self.raise_for_status:",
+              "successors": [
+                8,
+                9
+              ]
+            },
+            {
+              "id": 8,
+              "label": "response.raise_for_status()",
+              "successors": [
+                9
+              ]
+            },
+            {
+              "id": 9,
+              "label": "return response",
+              "successors": []
+            }
+          ]
+        },
+        {
+          "name": "get",
+          "type": "function",
+          "start_line": 151,
+          "end_line": 152,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "    def get(self, url, *args, **kwargs) -> req.Response:\n        return self.request(\"GET\", url, *args, **kwargs)",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "def get(self, url, *args, **kwargs) -> req.Response:",
+              "successors": [
+                2
+              ]
+            },
+            {
+              "id": 2,
+              "label": "return self.request('GET', url, *args, **kwargs)",
+              "successors": []
+            }
+          ]
+        },
+        {
+          "name": "post",
+          "type": "function",
+          "start_line": 154,
+          "end_line": 155,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "    def post(self, url, *args, **kwargs) -> req.Response:\n        return self.request(\"POST\", url, *args, **kwargs)",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "def post(self, url, *args, **kwargs) -> req.Response:",
+              "successors": [
+                2
+              ]
+            },
+            {
+              "id": 2,
+              "label": "return self.request(\"POST\", url, *args, **kwargs)",
+              "successors": []
+            }
+          ]
+        },
+        {
+          "name": "put",
+          "type": "function",
+          "start_line": 157,
+          "end_line": 158,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "    def put(self, url, *args, **kwargs) -> req.Response:\n        return self.request(\"PUT\", url, *args, **kwargs)",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "def put(self, url, *args, **kwargs) -> req.Response:",
+              "successors": [
+                2
+              ]
+            },
+            {
+              "id": 2,
+              "label": "return self.request(\"PUT\", url, *args, **kwargs)",
+              "successors": []
+            }
+          ]
+        },
+        {
+          "name": "delete",
+          "type": "function",
+          "start_line": 160,
+          "end_line": 161,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "    def delete(self, url, *args, **kwargs) -> req.Response:\n        return self.request(\"DELETE\", url, *args, **kwargs)",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "def delete(self, url, *args, **kwargs) -> req.Response:",
+              "successors": [
+                2
+              ]
+            },
+            {
+              "id": 2,
+              "label": "return self.request(\"DELETE\", url, *args, **kwargs)",
+              "successors": []
+            }
+          ]
+        },
+        {
+          "name": "head",
+          "type": "function",
+          "start_line": 163,
+          "end_line": 164,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "    def head(self, url, *args, **kwargs) -> req.Response:\n        return self.request(\"HEAD\", url, *args, **kwargs)",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "def head(self, url, *args, **kwargs) -> req.Response:",
+              "successors": [
+                2
+              ]
+            },
+            {
+              "id": 2,
+              "label": "return self.request(\"HEAD\", url, *args, **kwargs)",
+              "successors": []
+            }
+          ]
+        },
+        {
+          "name": "options",
+          "type": "function",
+          "start_line": 166,
+          "end_line": 167,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "    def options(self, url, *args, **kwargs) -> req.Response:\n        return self.request(\"OPTIONS\", url, *args, **kwargs)",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "def options(self, url, *args, **kwargs) -> req.Response:",
+              "successors": [
+                2
+              ]
+            },
+            {
+              "id": 2,
+              "label": "return self.request(\"OPTIONS\", url, *args, **kwargs)",
+              "successors": []
+            }
+          ]
+        },
+        {
+          "name": "patch",
+          "type": "function",
+          "start_line": 169,
+          "end_line": 170,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "    def patch(self, url, *args, **kwargs) -> req.Response:\n        return self.request(\"PATCH\", url, *args, **kwargs)",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "def patch(self, url, *args, **kwargs) -> req.Response:",
+              "successors": [
+                2
+              ]
+            },
+            {
+              "id": 2,
+              "label": "return self.request(\"PATCH\", url, *args, **kwargs)",
+              "successors": []
+            }
+          ]
+        }
+      ],
+      "classes": [],
+      "simplified_code": "class Requests:\n    \"\"\"\n    A wrapper around the requests library that validates URLs before making requests.\n    \"\"\"\n\n        self.extra_headers = extra_headers\n\n        return response\n\n        return self.request(\"GET\", url, *args, **kwargs)\n\n        return self.request(\"POST\", url, *args, **kwargs)\n\n        return self.request(\"PUT\", url, *args, **kwargs)\n\n        return self.request(\"DELETE\", url, *args, **kwargs)\n\n        return self.request(\"HEAD\", url, *args, **kwargs)\n\n        return self.request(\"OPTIONS\", url, *args, **kwargs)\n\n        return self.request(\"PATCH\", url, *args, **kwargs)",
+      "blocks": [
+        {
+          "id": 1,
+          "label": "class Requests:",
+          "successors": [
+            2
+          ]
+        },
+        {
+          "id": 2,
+          "label": "\"\"\"\nA wrapper around the requests library that validates URLs before making requests.\n\"\"\"",
+          "successors": [
+            3
+          ]
+        },
+        {
+          "id": 3,
+          "label": "self.extra_headers = extra_headers",
+          "successors": [
+            4
+          ]
+        },
+        {
+          "id": 4,
+          "label": "return response",
+          "successors": [
+            5
+          ]
+        },
+        {
+          "id": 5,
+          "label": "return self.request(\"GET\", url, *args, **kwargs)",
+          "successors": [
+            6
+          ]
+        },
+        {
+          "id": 6,
+          "label": "return self.request(\"POST\", url, *args, **kwargs)",
+          "successors": [
+            7
+          ]
+        },
+        {
+          "id": 7,
+          "label": "return self.request(\"PUT\", url, *args, **kwargs)",
+          "successors": [
+            8
+          ]
+        },
+        {
+          "id": 8,
+          "label": "return self.request(\"DELETE\", url, *args, **kwargs)",
+          "successors": [
+            9
+          ]
+        },
+        {
+          "id": 9,
+          "label": "return self.request(\"HEAD\", url, *args, **kwargs)",
+          "successors": [
+            10
+          ]
+        },
+        {
+          "id": 10,
+          "label": "return self.request(\"OPTIONS\", url, *args, **kwargs)",
+          "successors": [
+            11
+          ]
+        },
+        {
+          "id": 11,
+          "label": "return self.request(\"PATCH\", url, *args, **kwargs)",
+          "successors": []
+        }
+      ]
+    }
+  ],
+  "simplified_code": "import ipaddress\nimport re\nimport socket\nfrom typing import Callable\nfrom urllib.parse import urlparse, urlunparse\n\nimport idna\nimport requests as req\n\nfrom backend.util.settings import Config\n\n# List of IP networks to block\nBLOCKED_IP_NETWORKS = [\n    # --8<-- [start:BLOCKED_IP_NETWORKS]\n    ipaddress.ip_network(\"0.0.0.0/8\"),  # \"This\" Network\n    ipaddress.ip_network(\"10.0.0.0/8\"),  # Private-Use\n    ipaddress.ip_network(\"127.0.0.0/8\"),  # Loopback\n    ipaddress.ip_network(\"169.254.0.0/16\"),  # Link Local\n    ipaddress.ip_network(\"172.16.0.0/12\"),  # Private-Use\n    ipaddress.ip_network(\"192.168.0.0/16\"),  # Private-Use\n    ipaddress.ip_network(\"224.0.0.0/4\"),  # Multicast\n    ipaddress.ip_network(\"240.0.0.0/4\"),  # Reserved for Future Use\n    # --8<-- [end:BLOCKED_IP_NETWORKS]\n]\n\nALLOWED_SCHEMES = [\"http\", \"https\"]\nHOSTNAME_REGEX = re.compile(r\"^[A-Za-z0-9.-]+$\")  # Basic DNS-safe hostname pattern\n\n\n    return url\n\n\n    return any(ip_addr in network for network in BLOCKED_IP_NETWORKS)\n\n\n    return url\n\n\n        return self.request(\"PATCH\", url, *args, **kwargs)\n\n\nrequests = Requests(trusted_origins=Config().trust_endpoints_for_requests)",
+  "blocks": [
+    {
+      "id": 1,
+      "label": "import ipaddress\nimport re\nimport socket\nfrom typing import Callable\nfrom urllib.parse import urlparse, urlunparse\n\nimport idna\nimport requests as req\n\nfrom backend.util.settings import Config",
+      "successors": [
+        2
+      ]
+    },
+    {
+      "id": 2,
+      "label": "BLOCKED_IP_NETWORKS = [\n    ipaddress.ip_network(\"0.0.0.0/8\"),\n    ipaddress.ip_network(\"10.0.0.0/8\"),\n    ipaddress.ip_network(\"127.0.0.0/8\"),\n    ipaddress.ip_network(\"169.254.0.0/16\"),\n    ipaddress.ip_network(\"172.16.0.0/12\"),\n    ipaddress.ip_network(\"192.168.0.0/16\"),\n    ipaddress.ip_network(\"224.0.0.0/4\"),\n    ipaddress.ip_network(\"240.0.0.0/4\"),\n]",
+      "successors": [
+        3
+      ]
+    },
+    {
+      "id": 3,
+      "label": "ALLOWED_SCHEMES = [\"http\", \"https\"]\nHOSTNAME_REGEX = re.compile(r\"^[A-Za-z0-9.-]+$\")",
+      "successors": [
+        4
+      ]
+    },
+    {
+      "id": 4,
+      "label": "requests = Requests(trusted_origins=Config().trust_endpoints_for_requests)",
+      "successors": []
+    }
+  ]
+}

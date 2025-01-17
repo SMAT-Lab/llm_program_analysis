@@ -3,7 +3,7 @@ import os
 from dotenv import load_dotenv, find_dotenv
 
 
-def get_openai_answer(ques, model_name="gpt-4o-mini", require_json=False):
+def get_openai_answer(ques, model_name="gpt-4o-mini", require_json=False, temperature=0.0):
     _ = load_dotenv(find_dotenv())  # read local .env file
     api_key = os.environ['OPENAI_API_KEY']
     api_base = os.environ['OPENAI_API_BASE']
@@ -17,6 +17,7 @@ def get_openai_answer(ques, model_name="gpt-4o-mini", require_json=False):
             model=model_name,
             messages=messages,
             stream=False,
+            temperature=temperature,
             response_format={
                 'type': 'json_object'
             }
@@ -26,12 +27,12 @@ def get_openai_answer(ques, model_name="gpt-4o-mini", require_json=False):
             model=model_name,
             messages=messages,
             stream=False,
-            max_tokens=8192
+            temperature=temperature
         )
 
     return response.choices[0].message.content
 
-def get_ollama_answers(ques, model_name, require_json=False):
+def get_ollama_answers(ques, model_name, require_json=False, temperature=0.0):
     _ = load_dotenv(find_dotenv())
     api_key = os.environ['OLLAMA_API_KEY']
     api_base = os.environ["OLLAMA_API_BASE"]
@@ -46,6 +47,7 @@ def get_ollama_answers(ques, model_name, require_json=False):
             messages=messages,
             stream=True,
             max_tokens=8192,
+            temperature=temperature,
             response_format={
                 'type': 'json_object'
             }
@@ -55,7 +57,8 @@ def get_ollama_answers(ques, model_name, require_json=False):
             model=model_name,
             messages=messages,
             stream=True,
-            max_tokens=8192
+            max_tokens=8192,
+            temperature=temperature
         )
     full_response = ""
     for chunk in response:
@@ -63,7 +66,7 @@ def get_ollama_answers(ques, model_name, require_json=False):
             full_response += chunk.choices[0].delta.content
     return full_response
 
-def get_gptgod_answers(ques, model_name, require_json=False):
+def get_gptgod_answers(ques, model_name, require_json=False, temperature=0.0):
     _ = load_dotenv(find_dotenv())
     api_key = os.environ['GPTGOD_API_KEY']
     api_base = os.environ["GPTGOD_API_BASE"]
@@ -77,6 +80,7 @@ def get_gptgod_answers(ques, model_name, require_json=False):
             model=model_name,
             messages=messages,
             max_tokens=8192,
+            temperature=temperature,
             response_format={
                 'type': 'json_object'
             }
@@ -90,7 +94,7 @@ def get_gptgod_answers(ques, model_name, require_json=False):
 
     return response.choices[0].message.content
 
-def get_deepseek_answers(ques, model_name, require_json=False):
+def get_deepseek_answers(ques, model_name, require_json=False, temperature=0.0):
     _ = load_dotenv(find_dotenv())
     api_key = os.environ['DEEPSEEK_API_KEY']
     api_base = os.environ["DEEPSEEK_API_BASE"]
@@ -102,8 +106,8 @@ def get_deepseek_answers(ques, model_name, require_json=False):
         response = client.chat.completions.create(
             model=model_name,
             messages=messages,
-            temperature=0,
             max_tokens=8192,
+            temperature=temperature,
             response_format={
                 'type': 'json_object'
             }
@@ -113,7 +117,8 @@ def get_deepseek_answers(ques, model_name, require_json=False):
             model=model_name,
             messages=messages,
             stream=False,
-            max_tokens=8192
+            max_tokens=8192,
+            temperature=temperature
         )
 
     return response.choices[0].message.content
@@ -124,12 +129,12 @@ def get_deepseek_answers(ques, model_name, require_json=False):
     #         full_response += chunk.choices[0].delta.content
     # return full_response
 
-def get_llm_answers(ques, model_name,require_json=False):
+def get_llm_answers(ques, model_name,require_json=False, temperature=0.0):
     if 'gpt' in model_name:
-        return get_openai_answer(ques, model_name, require_json)
+        return get_openai_answer(ques, model_name, require_json, temperature)
     elif model_name == "llama2":
-        return get_ollama_answers(ques, model_name, require_json)
+        return get_ollama_answers(ques, model_name, require_json, temperature)
     elif "deepseek" in model_name:
-        return get_deepseek_answers(ques, model_name, require_json)
+        return get_deepseek_answers(ques, model_name, require_json, temperature )
     else:
-        return get_gptgod_answers(ques, model_name, require_json)
+        return get_gptgod_answers(ques, model_name, require_json, temperature)

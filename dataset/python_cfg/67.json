@@ -1,0 +1,373 @@
+{
+  "name": "67.py",
+  "type": "CFG",
+  "blocks": [
+    {
+      "id": 1,
+      "label": "#1\nimport logging\nfrom typing import TYPE_CHECKING, Callable, Optional, cast\nfrom backend.data.block import BlockWebhookConfig, get_block\nfrom backend.data.graph import set_node_webhook\nfrom backend.data.model import CREDENTIALS_FIELD_NAME\nfrom backend.integrations.webhooks import WEBHOOK_MANAGERS_BY_NAME\nif TYPE_CHECKING:",
+      "successors": [
+        {
+          "id": 2,
+          "label": "#2\nfrom backend.data.graph import GraphModel, NodeModel\nfrom backend.data.model import Credentials\nfrom ._base import BaseWebhooksManager",
+          "successors": [
+            {
+              "id": 3,
+              "label": "#3\nlogger = logging.getLogger(__name__)",
+              "successors": []
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "functions": [
+    {
+      "name": "on_graph_activate",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 5,
+          "label": "#5\n\"\"\"\n    Hook to be called when a graph is activated/created.\n\n    \u26a0\ufe0f Assuming node entities are not re-used between graph versions, \u26a0\ufe0f\n    this hook calls `on_node_activate` on all nodes in this graph.\n\n    Params:\n        get_credentials: `credentials_id` -> Credentials\n    \"\"\"\nupdated_nodes = []",
+          "successors": [
+            {
+              "id": 6,
+              "label": "#6\nfor new_node in graph.nodes:",
+              "successors": [
+                {
+                  "id": 7,
+                  "label": "#7\nnode_credentials = None\nif (creds_meta := new_node.input_default.get(CREDENTIALS_FIELD_NAME)):",
+                  "successors": [
+                    {
+                      "id": 9,
+                      "label": "#9\nnode_credentials = get_credentials(creds_meta['id'])\nif not node_credentials:",
+                      "successors": [
+                        {
+                          "id": 11,
+                          "label": "#11\nraise ValueError(\n    f'Node #{new_node.id} updated with non-existent credentials #{node_credentials}'\n    )",
+                          "successors": []
+                        },
+                        {
+                          "id": 10,
+                          "label": "#10\nupdated_node = await on_node_activate(graph.user_id, new_node, credentials=\n    node_credentials)",
+                          "successors": [
+                            {
+                              "id": 14,
+                              "label": "#14\nupdated_nodes.append(updated_node)",
+                              "successors": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "id": 8,
+                  "label": "#8\ngraph.nodes = updated_nodes\nreturn graph",
+                  "successors": []
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "on_graph_deactivate",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 18,
+          "label": "#18\n\"\"\"\n    Hook to be called when a graph is deactivated/deleted.\n\n    \u26a0\ufe0f Assuming node entities are not re-used between graph versions, \u26a0\ufe0f\n    this hook calls `on_node_deactivate` on all nodes in `graph`.\n\n    Params:\n        get_credentials: `credentials_id` -> Credentials\n    \"\"\"\nupdated_nodes = []",
+          "successors": [
+            {
+              "id": 19,
+              "label": "#19\nfor node in graph.nodes:",
+              "successors": [
+                {
+                  "id": 20,
+                  "label": "#20\nnode_credentials = None\nif (creds_meta := node.input_default.get(CREDENTIALS_FIELD_NAME)):",
+                  "successors": [
+                    {
+                      "id": 22,
+                      "label": "#22\nnode_credentials = get_credentials(creds_meta['id'])\nif not node_credentials:",
+                      "successors": [
+                        {
+                          "id": 24,
+                          "label": "#24\nlogger.error(\n    f\"Node #{node.id} referenced non-existent credentials #{creds_meta['id']}\")",
+                          "successors": [
+                            {
+                              "id": 23,
+                              "label": "#23\nupdated_node = await on_node_deactivate(node, credentials=node_credentials)",
+                              "successors": [
+                                {
+                                  "id": 26,
+                                  "label": "#26\nupdated_nodes.append(updated_node)",
+                                  "successors": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "id": 21,
+                  "label": "#21\ngraph.nodes = updated_nodes\nreturn graph",
+                  "successors": []
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "on_node_activate",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 30,
+          "label": "#30\n\"\"\"Hook to be called when the node is activated/created\"\"\"\nblock = get_block(node.block_id)\nif not block:",
+          "successors": [
+            {
+              "id": 31,
+              "label": "#31\nraise ValueError(\n    f'Node #{node.id} is instance of unknown block #{node.block_id}')",
+              "successors": []
+            },
+            {
+              "id": 32,
+              "label": "#32\nif not block.webhook_config:",
+              "successors": [
+                {
+                  "id": 34,
+                  "label": "#34\nreturn node",
+                  "successors": []
+                },
+                {
+                  "id": 35,
+                  "label": "#35\nprovider = block.webhook_config.provider\nif provider not in WEBHOOK_MANAGERS_BY_NAME:",
+                  "successors": [
+                    {
+                      "id": 37,
+                      "label": "#37\nraise ValueError(\n    f'Block #{block.id} has webhook_config for provider {provider} which does not support webhooks'\n    )",
+                      "successors": []
+                    },
+                    {
+                      "id": 38,
+                      "label": "#38\nlogger.debug(\n    f'Activating webhook node #{node.id} with config {block.webhook_config}')\nwebhooks_manager = WEBHOOK_MANAGERS_BY_NAME[provider]()\nif (auto_setup_webhook := isinstance(block.webhook_config, BlockWebhookConfig)",
+                      "successors": [
+                        {
+                          "id": 40,
+                          "label": "#40\ntry:",
+                          "successors": [
+                            {
+                              "id": 43,
+                              "label": "#43\nresource = block.webhook_config.resource_format.format(**node.input_default)",
+                              "successors": [
+                                {
+                                  "id": 45,
+                                  "label": "#45\nlogger.debug(\n    f'Constructed resource string {resource} from input {node.input_default}')",
+                                  "successors": [
+                                    {
+                                      "id": 41,
+                                      "label": "#41\nneeds_credentials = CREDENTIALS_FIELD_NAME in block.input_schema.model_fields\ncredentials_meta = node.input_default.get(CREDENTIALS_FIELD_NAME\n    ) if needs_credentials else None\nevent_filter_input_name = block.webhook_config.event_filter_input\nhas_everything_for_webhook = resource is not None and (credentials_meta or \n    not needs_credentials) and (not event_filter_input_name or \n    event_filter_input_name in node.input_default and any(is_on for is_on in\n    node.input_default[event_filter_input_name].values()))\nif has_everything_for_webhook and resource is not None:",
+                                      "successors": [
+                                        {
+                                          "id": 46,
+                                          "label": "#46\nlogger.debug(f'Node #{node} has everything for a webhook!')\nif credentials_meta and not credentials:",
+                                          "successors": [
+                                            {
+                                              "id": 49,
+                                              "label": "#49\nraise ValueError(\n    f\"Cannot set up webhook for node #{node.id}: credentials #{credentials_meta['id']} not available\"\n    )",
+                                              "successors": []
+                                            },
+                                            {
+                                              "id": 50,
+                                              "label": "#50\nif event_filter_input_name:",
+                                              "successors": [
+                                                {
+                                                  "id": 52,
+                                                  "label": "#52\nevent_filter = cast(dict, node.input_default[event_filter_input_name])\nevents = [block.webhook_config.event_format.format(event=event) for event,\n    enabled in event_filter.items() if enabled is True]\nlogger.debug(f\"Webhook events to subscribe to: {', '.join(events)}\")",
+                                                  "successors": [
+                                                    {
+                                                      "id": 53,
+                                                      "label": "#53\nif auto_setup_webhook:",
+                                                      "successors": [
+                                                        {
+                                                          "id": 55,
+                                                          "label": "#55\nassert credentials is not None",
+                                                          "successors": [
+                                                            {
+                                                              "id": 60,
+                                                              "label": "#60\nnew_webhook = await webhooks_manager.get_suitable_auto_webhook(user_id,\n    credentials, block.webhook_config.webhook_type, resource, events)",
+                                                              "successors": [
+                                                                {
+                                                                  "id": 56,
+                                                                  "label": "#56\nlogger.debug(f'Acquired webhook: {new_webhook}')\nreturn await set_node_webhook(node.id, new_webhook.id)",
+                                                                  "successors": []
+                                                                }
+                                                              ]
+                                                            }
+                                                          ]
+                                                        },
+                                                        {
+                                                          "id": 57,
+                                                          "label": "#57\nnew_webhook = await webhooks_manager.get_manual_webhook(user_id, node.\n    graph_id, block.webhook_config.webhook_type, events)",
+                                                          "successors": []
+                                                        }
+                                                      ]
+                                                    }
+                                                  ]
+                                                },
+                                                {
+                                                  "id": 54,
+                                                  "label": "#54\nevents = []",
+                                                  "successors": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "id": 48,
+                                          "label": "#48\nlogger.debug(f'Node #{node.id} does not have everything for a webhook')",
+                                          "successors": [
+                                            {
+                                              "id": 47,
+                                              "label": "#47\nreturn node",
+                                              "successors": []
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "id": 44,
+                              "label": "#44\nresource = None",
+                              "successors": []
+                            }
+                          ]
+                        },
+                        {
+                          "id": 42,
+                          "label": "#42\nresource = ''",
+                          "successors": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "on_node_deactivate",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 66,
+          "label": "#66\n\"\"\"Hook to be called when node is deactivated/deleted\"\"\"\nlogger.debug(f'Deactivating node #{node.id}')\nblock = get_block(node.block_id)\nif not block:",
+          "successors": [
+            {
+              "id": 67,
+              "label": "#67\nraise ValueError(\n    f'Node #{node.id} is instance of unknown block #{node.block_id}')",
+              "successors": []
+            },
+            {
+              "id": 68,
+              "label": "#68\nif not block.webhook_config:",
+              "successors": [
+                {
+                  "id": 70,
+                  "label": "#70\nreturn node",
+                  "successors": []
+                },
+                {
+                  "id": 71,
+                  "label": "#71\nprovider = block.webhook_config.provider\nif provider not in WEBHOOK_MANAGERS_BY_NAME:",
+                  "successors": [
+                    {
+                      "id": 73,
+                      "label": "#73\nraise ValueError(\n    f'Block #{block.id} has webhook_config for provider {provider} which does not support webhooks'\n    )",
+                      "successors": []
+                    },
+                    {
+                      "id": 74,
+                      "label": "#74\nwebhooks_manager = WEBHOOK_MANAGERS_BY_NAME[provider]()\nif node.webhook_id:",
+                      "successors": [
+                        {
+                          "id": 76,
+                          "label": "#76\nlogger.debug(f'Node #{node.id} has webhook_id {node.webhook_id}')\nif not node.webhook:",
+                          "successors": [
+                            {
+                              "id": 78,
+                              "label": "#78\nlogger.error(f'Node #{node.id} has webhook_id but no webhook object')\nraise ValueError('node.webhook not included')",
+                              "successors": []
+                            },
+                            {
+                              "id": 79,
+                              "label": "#79\nlogger.debug(f'Detaching webhook from node #{node.id}')\nupdated_node = await set_node_webhook(node.id, None)",
+                              "successors": [
+                                {
+                                  "id": 81,
+                                  "label": "#81\nwebhook = node.webhook\nlogger.debug(\n    f\"Pruning{' and deregistering' if credentials else ''} webhook #{webhook.id}\"\n    )\nawait webhooks_manager.prune_webhook_if_dangling(webhook.id, credentials)",
+                                  "successors": [
+                                    {
+                                      "id": 82,
+                                      "label": "#82\nif CREDENTIALS_FIELD_NAME in block.input_schema.model_fields and not credentials:",
+                                      "successors": [
+                                        {
+                                          "id": 83,
+                                          "label": "#83\nlogger.warning(\n    f'Cannot deregister webhook #{webhook.id}: credentials #{webhook.credentials_id} not available ({webhook.provider.value} webhook ID: {webhook.provider_webhook_id})'\n    )",
+                                          "successors": [
+                                            {
+                                              "id": 84,
+                                              "label": "#84\nreturn updated_node",
+                                              "successors": []
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "id": 77,
+                          "label": "#77\nlogger.debug(f'Node #{node.id} has no webhook_id, returning')\nreturn node",
+                          "successors": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "functions": [],
+      "classes": []
+    }
+  ],
+  "classes": []
+}

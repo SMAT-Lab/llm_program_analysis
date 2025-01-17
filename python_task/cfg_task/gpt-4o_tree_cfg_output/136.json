@@ -1,0 +1,114 @@
+{
+  "name": "example_script",
+  "type": "CFG",
+  "blocks": [
+    {
+      "id": 1,
+      "start_line": 1,
+      "end_line": 8,
+      "label": "import logging\nimport requests\nfrom fastapi import Request\nfrom backend.data import integrations\nfrom backend.data.model import APIKeyCredentials, Credentials\nfrom backend.integrations.providers import ProviderName\nfrom backend.integrations.webhooks._base import BaseWebhooksManager\nlogger = logging.getLogger(__name__)",
+      "successors": []
+    }
+  ],
+  "functions": [],
+  "classes": [
+    {
+      "name": "Slant3DWebhooksManager",
+      "type": "CFG",
+      "blocks": [],
+      "functions": [
+        {
+          "name": "_register_webhook",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 11,
+              "label": "async def _register_webhook(\n        self,\n        credentials: Credentials,\n        webhook_type: str,\n        resource: str,\n        events: list[str],\n        ingress_url: str,\n        secret: str,\n    ) -> tuple[str, dict]:\n        \"\"\"Register a new webhook with Slant3D\"\"\"\n        if not isinstance(credentials, APIKeyCredentials):",
+              "successors": [
+                {
+                  "id": 2,
+                  "start_line": 12,
+                  "end_line": 12,
+                  "label": "raise ValueError(\"API key is required to register a webhook\")",
+                  "successors": []
+                },
+                {
+                  "id": 3,
+                  "start_line": 13,
+                  "end_line": 22,
+                  "label": "headers = {\n            \"api-key\": credentials.api_key.get_secret_value(),\n            \"Content-Type\": \"application/json\",\n        }\n        # Slant3D's API doesn't use events list, just register for all order updates\n        payload = {\"endPoint\": ingress_url}\n        response = requests.post(\n            f\"{self.BASE_URL}/customer/webhookSubscribe\", headers=headers, json=payload\n        )\n        if not response.ok:",
+                  "successors": [
+                    {
+                      "id": 4,
+                      "start_line": 23,
+                      "end_line": 24,
+                      "label": "error = response.json().get(\"error\", \"Unknown error\")\n            raise RuntimeError(f\"Failed to register webhook: {error}\")",
+                      "successors": []
+                    },
+                    {
+                      "id": 5,
+                      "start_line": 25,
+                      "end_line": 31,
+                      "label": "webhook_config = {\n            \"endpoint\": ingress_url,\n            \"provider\": self.PROVIDER_NAME,\n            \"events\": [\"order.shipped\"],  # Currently the only supported event\n            \"type\": webhook_type,\n        }\n        return \"\", webhook_config",
+                      "successors": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "validate_payload",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 8,
+              "label": "async def validate_payload(\n        cls, webhook: integrations.Webhook, request: Request\n    ) -> tuple[dict, str]:\n        \"\"\"Validate incoming webhook payload from Slant3D\"\"\"\n        payload = await request.json()\n        # Validate required fields from Slant3D API spec\n        required_fields = [\"orderId\", \"status\", \"trackingNumber\", \"carrierCode\"]\n        missing_fields = [field for field in required_fields if field not in payload]",
+              "successors": [
+                {
+                  "id": 2,
+                  "start_line": 9,
+                  "end_line": 10,
+                  "label": "if missing_fields:\n            raise ValueError(f\"Missing required fields: {', '.join(missing_fields)}\")",
+                  "successors": []
+                },
+                {
+                  "id": 3,
+                  "start_line": 11,
+                  "end_line": 21,
+                  "label": "# Normalize payload structure\n        normalized_payload = {\n            \"orderId\": payload[\"orderId\"],\n            \"status\": payload[\"status\"],\n            \"trackingNumber\": payload[\"trackingNumber\"],\n            \"carrierCode\": payload[\"carrierCode\"],\n        }\n        # Currently Slant3D only sends shipping notifications\n        # Convert status to lowercase for event format compatibility\n        event_type = f\"order.{payload['status'].lower()}\"\n        return normalized_payload, event_type",
+                  "successors": []
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "_deregister_webhook",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 12,
+              "label": "async def _deregister_webhook(\n        self, webhook: integrations.Webhook, credentials: Credentials\n    ) -> None:\n        \"\"\"\n        Note: Slant3D API currently doesn't provide a deregistration endpoint.\n        This would need to be handled through support.\n        \"\"\"\n        # Log warning since we can't properly deregister\n        logger.warning(\n            f\"Warning: Manual deregistration required for webhook {webhook.id}\"\n        )\n        pass",
+              "successors": []
+            }
+          ],
+          "functions": [],
+          "classes": []
+        }
+      ],
+      "classes": []
+    }
+  ]
+}

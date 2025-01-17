@@ -1,0 +1,1773 @@
+{
+  "name": "example_script",
+  "type": "CFG",
+  "blocks": [
+    {
+      "id": 1,
+      "start_line": 1,
+      "end_line": 23,
+      "label": "import asyncio\nimport logging\nimport uuid\nfrom collections import defaultdict\nfrom datetime import datetime, timezone\nfrom typing import Any, Literal, Optional, Type\nimport prisma\nfrom prisma.models import AgentGraph, AgentGraphExecution, AgentNode, AgentNodeLink\nfrom prisma.types import AgentGraphWhereInput\nfrom pydantic.fields import computed_field\nfrom backend.blocks.agent import AgentExecutorBlock\nfrom backend.blocks.basic import AgentInputBlock, AgentOutputBlock\nfrom backend.util import json\nfrom .block import BlockInput, BlockType, get_block, get_blocks\nfrom .db import BaseDbModel, transaction\nfrom .execution import ExecutionStatus\nfrom .includes import AGENT_GRAPH_INCLUDE, AGENT_NODE_INCLUDE\nfrom .integrations import Webhook\nlogger = logging.getLogger(__name__)\n# Fix 2-way reference Node <-> Webhook\nWebhook.model_rebuild()\n# --------------------- CRUD functions --------------------- #\n# ------------------------ UTILITIES ------------------------ #",
+      "successors": []
+    }
+  ],
+  "functions": [
+    {
+      "name": "get_node",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 1,
+          "start_line": 1,
+          "end_line": 1,
+          "label": "async def get_node(node_id: str) -> NodeModel:",
+          "successors": [
+            {
+              "id": 2,
+              "start_line": 2,
+              "end_line": 5,
+              "label": "node = await AgentNode.prisma().find_unique_or_raise(\n        where={\"id\": node_id},\n        include=AGENT_NODE_INCLUDE,\n    )",
+              "successors": [
+                {
+                  "id": 3,
+                  "start_line": 6,
+                  "end_line": 6,
+                  "label": "return NodeModel.from_db(node)",
+                  "successors": []
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "set_node_webhook",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 1,
+          "start_line": 1,
+          "end_line": 1,
+          "label": "async def set_node_webhook(node_id: str, webhook_id: str | None) -> NodeModel:",
+          "successors": [
+            {
+              "id": 2,
+              "start_line": 2,
+              "end_line": 10,
+              "label": "node = await AgentNode.prisma().update(\n        where={\"id\": node_id},\n        data=(\n            {\"Webhook\": {\"connect\": {\"id\": webhook_id}}}\n            if webhook_id\n            else {\"Webhook\": {\"disconnect\": True}}\n        ),\n        include=AGENT_NODE_INCLUDE,\n    )",
+              "successors": [
+                {
+                  "id": 3,
+                  "start_line": 11,
+                  "end_line": 11,
+                  "label": "if not node:",
+                  "successors": [
+                    {
+                      "id": 4,
+                      "start_line": 12,
+                      "end_line": 12,
+                      "label": "raise ValueError(f\"Node #{node_id} not found\")",
+                      "successors": []
+                    },
+                    {
+                      "id": 5,
+                      "start_line": 13,
+                      "end_line": 13,
+                      "label": "return NodeModel.from_db(node)",
+                      "successors": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "get_graphs",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 1,
+          "start_line": 1,
+          "end_line": 14,
+          "label": "async def get_graphs(\n    user_id: str,\n    filter_by: Literal[\"active\", \"template\"] | None = \"active\",\n) -> list[GraphModel]:\n    \"\"\"\n    Retrieves graph metadata objects.\n    Default behaviour is to get all currently active graphs.\n    Args:\n        filter_by: An optional filter to either select templates or active graphs.\n        user_id: The ID of the user that owns the graph.\n    Returns:\n        list[GraphModel]: A list of objects representing the retrieved graphs.\n    \"\"\"\n    where_clause: AgentGraphWhereInput = {\"userId\": user_id}",
+          "successors": [
+            {
+              "id": 2,
+              "start_line": 15,
+              "end_line": 15,
+              "label": "if filter_by == \"active\":",
+              "successors": [
+                {
+                  "id": 3,
+                  "start_line": 16,
+                  "end_line": 16,
+                  "label": "where_clause[\"isActive\"] = True",
+                  "successors": [
+                    {
+                      "id": 5,
+                      "start_line": 19,
+                      "end_line": 24,
+                      "label": "graphs = await AgentGraph.prisma().find_many(\n        where=where_clause,\n        distinct=[\"id\"],\n        order={\"version\": \"desc\"},\n        include=AGENT_GRAPH_INCLUDE,\n    )",
+                      "successors": [
+                        {
+                          "id": 6,
+                          "start_line": 25,
+                          "end_line": 25,
+                          "label": "graph_models = []",
+                          "successors": [
+                            {
+                              "id": 7,
+                              "start_line": 26,
+                              "end_line": 26,
+                              "label": "",
+                              "successors": [
+                                {
+                                  "id": 8,
+                                  "start_line": 27,
+                                  "end_line": 27,
+                                  "label": "try:",
+                                  "successors": [
+                                    {
+                                      "id": 9,
+                                      "start_line": 28,
+                                      "end_line": 28,
+                                      "label": "graph_models.append(GraphModel.from_db(graph))",
+                                      "successors": [
+                                        {
+                                          "id": 10,
+                                          "start_line": 31,
+                                          "end_line": 31,
+                                          "label": "continue",
+                                          "successors": [
+                                            {
+                                              "id": 7,
+                                              "start_line": 26,
+                                              "end_line": 26,
+                                              "label": "for graph in graphs:",
+                                              "successors": []
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "id": 11,
+                                      "start_line": 29,
+                                      "end_line": 30,
+                                      "label": "except Exception as e:\n            logger.error(f\"Error processing graph {graph.id}: {e}\")",
+                                      "successors": [
+                                        {
+                                          "id": 10,
+                                          "start_line": 31,
+                                          "end_line": 31,
+                                          "label": "continue",
+                                          "successors": [
+                                            {
+                                              "id": 7,
+                                              "start_line": 26,
+                                              "end_line": 26,
+                                              "label": "for graph in graphs:",
+                                              "successors": []
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "id": 4,
+                  "start_line": 17,
+                  "end_line": 17,
+                  "label": "elif filter_by == \"template\":",
+                  "successors": [
+                    {
+                      "id": 12,
+                      "start_line": 18,
+                      "end_line": 18,
+                      "label": "where_clause[\"isTemplate\"] = True",
+                      "successors": [
+                        {
+                          "id": 5,
+                          "start_line": 19,
+                          "end_line": 24,
+                          "label": "graphs = await AgentGraph.prisma().find_many(\n        where=where_clause,\n        distinct=[\"id\"],\n        order={\"version\": \"desc\"},\n        include=AGENT_GRAPH_INCLUDE,\n    )",
+                          "successors": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "get_executions",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 1,
+          "start_line": 1,
+          "end_line": 1,
+          "label": "async def get_executions(user_id: str) -> list[GraphExecution]:",
+          "successors": [
+            {
+              "id": 2,
+              "start_line": 2,
+              "end_line": 5,
+              "label": "executions = await AgentGraphExecution.prisma().find_many(\n        where={\"userId\": user_id},\n        order={\"createdAt\": \"desc\"},\n    )",
+              "successors": [
+                {
+                  "id": 3,
+                  "start_line": 6,
+                  "end_line": 6,
+                  "label": "return [GraphExecution.from_db(execution) for execution in executions]",
+                  "successors": []
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "get_execution",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 1,
+          "start_line": 1,
+          "end_line": 1,
+          "label": "async def get_execution(user_id: str, execution_id: str) -> GraphExecution | None:",
+          "successors": [
+            {
+              "id": 2,
+              "start_line": 2,
+              "end_line": 4,
+              "label": "execution = await AgentGraphExecution.prisma().find_first(\n        where={\"id\": execution_id, \"userId\": user_id}\n    )",
+              "successors": [
+                {
+                  "id": 3,
+                  "start_line": 5,
+                  "end_line": 5,
+                  "label": "return GraphExecution.from_db(execution) if execution else None",
+                  "successors": []
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "get_graph",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 1,
+          "start_line": 1,
+          "end_line": 16,
+          "label": "async def get_graph(\n    graph_id: str,\n    version: int | None = None,\n    template: bool = False,\n    user_id: str | None = None,\n    for_export: bool = False,\n) -> GraphModel | None:\n    \"\"\"\n    Retrieves a graph from the DB.\n    Defaults to the version with `is_active` if `version` is not passed,\n    or the latest version with `is_template` if `template=True`.\n    Returns `None` if the record is not found.\n    \"\"\"\n    where_clause: AgentGraphWhereInput = {\n        \"id\": graph_id,\n    }",
+          "successors": [
+            {
+              "id": 2,
+              "start_line": 17,
+              "end_line": 18,
+              "label": "if version is not None:\n        where_clause[\"version\"] = version",
+              "successors": [
+                {
+                  "id": 4,
+                  "start_line": 19,
+                  "end_line": 20,
+                  "label": "elif not template:\n        where_clause[\"isActive\"] = True",
+                  "successors": [
+                    {
+                      "id": 5,
+                      "start_line": 22,
+                      "end_line": 23,
+                      "label": "if user_id is not None and not template:\n        where_clause[\"userId\"] = user_id",
+                      "successors": [
+                        {
+                          "id": 6,
+                          "start_line": 24,
+                          "end_line": 28,
+                          "label": "graph = await AgentGraph.prisma().find_first(\n        where=where_clause,\n        include=AGENT_GRAPH_INCLUDE,\n        order={\"version\": \"desc\"},\n    )",
+                          "successors": [
+                            {
+                              "id": 7,
+                              "start_line": 29,
+                              "end_line": 29,
+                              "label": "return GraphModel.from_db(graph, for_export) if graph else None",
+                              "successors": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": 3,
+              "start_line": 19,
+              "end_line": 20,
+              "label": "elif not template:\n        where_clause[\"isActive\"] = True",
+              "successors": [
+                {
+                  "id": 5,
+                  "start_line": 22,
+                  "end_line": 23,
+                  "label": "if user_id is not None and not template:\n        where_clause[\"userId\"] = user_id",
+                  "successors": [
+                    {
+                      "id": 6,
+                      "start_line": 24,
+                      "end_line": 28,
+                      "label": "graph = await AgentGraph.prisma().find_first(\n        where=where_clause,\n        include=AGENT_GRAPH_INCLUDE,\n        order={\"version\": \"desc\"},\n    )",
+                      "successors": [
+                        {
+                          "id": 7,
+                          "start_line": 29,
+                          "end_line": 29,
+                          "label": "return GraphModel.from_db(graph, for_export) if graph else None",
+                          "successors": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "set_graph_active_version",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 1,
+          "start_line": 1,
+          "end_line": 10,
+          "label": "async def set_graph_active_version(graph_id: str, version: int, user_id: str) -> None:\n    # Activate the requested version if it exists and is owned by the user.\n    updated_count = await AgentGraph.prisma().update_many(\n        data={\"isActive\": True},\n        where={\n            \"id\": graph_id,\n            \"version\": version,\n            \"userId\": user_id,\n        },\n    )",
+          "successors": [
+            {
+              "id": 2,
+              "start_line": 11,
+              "end_line": 12,
+              "label": "if updated_count == 0:\n        raise Exception(f\"Graph #{graph_id} v{version} not found or not owned by user\")",
+              "successors": []
+            },
+            {
+              "id": 3,
+              "start_line": 13,
+              "end_line": 22,
+              "label": "# Deactivate all other versions.\n    await AgentGraph.prisma().update_many(\n        data={\"isActive\": False},\n        where={\n            \"id\": graph_id,\n            \"version\": {\"not\": version},\n            \"userId\": user_id,\n            \"isActive\": True,\n        },\n    )",
+              "successors": []
+            }
+          ]
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "get_graph_all_versions",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 1,
+          "start_line": 1,
+          "end_line": 6,
+          "label": "async def get_graph_all_versions(graph_id: str, user_id: str) -> list[GraphModel]:\n    graph_versions = await AgentGraph.prisma().find_many(\n        where={\"id\": graph_id, \"userId\": user_id},\n        order={\"version\": \"desc\"},\n        include=AGENT_GRAPH_INCLUDE,\n    )",
+          "successors": [
+            {
+              "id": 2,
+              "start_line": 7,
+              "end_line": 7,
+              "label": "if not graph_versions:",
+              "successors": [
+                {
+                  "id": 3,
+                  "start_line": 8,
+                  "end_line": 8,
+                  "label": "return []",
+                  "successors": []
+                },
+                {
+                  "id": 4,
+                  "start_line": 9,
+                  "end_line": 9,
+                  "label": "return [GraphModel.from_db(graph) for graph in graph_versions]",
+                  "successors": []
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "delete_graph",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 1,
+          "start_line": 1,
+          "end_line": 4,
+          "label": "async def delete_graph(graph_id: str, user_id: str) -> int:\n    entries_count = await AgentGraph.prisma().delete_many(\n        where={\"id\": graph_id, \"userId\": user_id}\n    )",
+          "successors": [
+            {
+              "id": 2,
+              "start_line": 5,
+              "end_line": 5,
+              "label": "if entries_count:",
+              "successors": [
+                {
+                  "id": 3,
+                  "start_line": 6,
+                  "end_line": 6,
+                  "label": "logger.info(f\"Deleted {entries_count} graph entries for Graph #{graph_id}\")",
+                  "successors": []
+                }
+              ]
+            },
+            {
+              "id": 4,
+              "start_line": 7,
+              "end_line": 7,
+              "label": "return entries_count",
+              "successors": []
+            }
+          ]
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "create_graph",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 1,
+          "start_line": 1,
+          "end_line": 1,
+          "label": "async def create_graph(graph: Graph, user_id: str) -> GraphModel:",
+          "successors": [
+            {
+              "id": 2,
+              "start_line": 2,
+              "end_line": 3,
+              "label": "async with transaction() as tx:\n        await __create_graph(tx, graph, user_id)",
+              "successors": [
+                {
+                  "id": 3,
+                  "start_line": 4,
+                  "end_line": 6,
+                  "label": "if created_graph := await get_graph(\n        graph.id, graph.version, graph.is_template, user_id=user_id\n    ):",
+                  "successors": [
+                    {
+                      "id": 4,
+                      "start_line": 7,
+                      "end_line": 7,
+                      "label": "return created_graph",
+                      "successors": []
+                    },
+                    {
+                      "id": 5,
+                      "start_line": 8,
+                      "end_line": 8,
+                      "label": "raise ValueError(f\"Created graph {graph.id} v{graph.version} is not in DB\")",
+                      "successors": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "__create_graph",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 1,
+          "start_line": 1,
+          "end_line": 1,
+          "label": "async def __create_graph(tx, graph: Graph, user_id: str):",
+          "successors": [
+            {
+              "id": 2,
+              "start_line": 2,
+              "end_line": 12,
+              "label": "await AgentGraph.prisma(tx).create(\n        data={\n            \"id\": graph.id,\n            \"version\": graph.version,\n            \"name\": graph.name,\n            \"description\": graph.description,\n            \"isTemplate\": graph.is_template,\n            \"isActive\": graph.is_active,\n            \"userId\": user_id,\n        }\n    )",
+              "successors": [
+                {
+                  "id": 3,
+                  "start_line": 13,
+                  "end_line": 27,
+                  "label": "await asyncio.gather(\n        *[\n            AgentNode.prisma(tx).create(\n                {\n                    \"id\": node.id,\n                    \"agentBlockId\": node.block_id,\n                    \"agentGraphId\": graph.id,\n                    \"agentGraphVersion\": graph.version,\n                    \"constantInput\": json.dumps(node.input_default),\n                    \"metadata\": json.dumps(node.metadata),\n                }\n            )\n            for node in graph.nodes\n        ]\n    )",
+                  "successors": [
+                    {
+                      "id": 4,
+                      "start_line": 28,
+                      "end_line": 42,
+                      "label": "await asyncio.gather(\n        *[\n            AgentNodeLink.prisma(tx).create(\n                {\n                    \"id\": str(uuid.uuid4()),\n                    \"sourceName\": link.source_name,\n                    \"sinkName\": link.sink_name,\n                    \"agentNodeSourceId\": link.source_id,\n                    \"agentNodeSinkId\": link.sink_id,\n                    \"isStatic\": link.is_static,\n                }\n            )\n            for link in graph.links\n        ]\n    )",
+                      "successors": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "make_graph_model",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 1,
+          "start_line": 1,
+          "end_line": 9,
+          "label": "def make_graph_model(creatable_graph: Graph, user_id: str) -> GraphModel:\n    \"\"\"\n    Convert a Graph to a GraphModel, setting graph_id and graph_version on all nodes.\n    Args:\n        creatable_graph (Graph): The creatable graph to convert.\n        user_id (str): The ID of the user creating the graph.\n    Returns:\n        GraphModel: The converted Graph object.\n    \"\"\"",
+          "successors": [
+            {
+              "id": 2,
+              "start_line": 10,
+              "end_line": 22,
+              "label": "# Create a new Graph object, inheriting properties from CreatableGraph\n    return GraphModel(\n        **creatable_graph.model_dump(exclude={\"nodes\"}),\n        user_id=user_id,\n        nodes=[\n            NodeModel(\n                **creatable_node.model_dump(),\n                graph_id=creatable_graph.id,\n                graph_version=creatable_graph.version,\n            )\n            for creatable_node in creatable_graph.nodes\n        ],\n    )",
+              "successors": []
+            }
+          ]
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "fix_llm_provider_credentials",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 1,
+          "start_line": 1,
+          "end_line": 5,
+          "label": "async def fix_llm_provider_credentials():\n    \"\"\"Fix node credentials with provider `llm`\"\"\"\n    from backend.integrations.credentials_store import IntegrationCredentialsStore\n    from .user import get_user_integrations\n    store = IntegrationCredentialsStore()",
+          "successors": [
+            {
+              "id": 2,
+              "start_line": 6,
+              "end_line": 17,
+              "label": "broken_nodes = await prisma.get_client().query_raw(\n        \"\"\"\n        SELECT    graph.\"userId\"       user_id,\n                  node.id              node_id,\n                  node.\"constantInput\" node_preset_input\n        FROM      platform.\"AgentNode\"  node\n        LEFT JOIN platform.\"AgentGraph\" graph\n        ON        node.\"agentGraphId\" = graph.id\n        WHERE     node.\"constantInput\"::jsonb->'credentials'->>'provider' = 'llm'\n        ORDER BY  graph.\"userId\";\n        \"\"\"\n    )",
+              "successors": [
+                {
+                  "id": 3,
+                  "start_line": 18,
+                  "end_line": 18,
+                  "label": "logger.info(f\"Fixing LLM credential inputs on {len(broken_nodes)} nodes\")",
+                  "successors": [
+                    {
+                      "id": 4,
+                      "start_line": 19,
+                      "end_line": 20,
+                      "label": "user_id: str = \"\"\n    user_integrations = None",
+                      "successors": [
+                        {
+                          "id": 5,
+                          "start_line": 21,
+                          "end_line": 21,
+                          "label": "for node in broken_nodes:",
+                          "successors": [
+                            {
+                              "id": 6,
+                              "start_line": 22,
+                              "end_line": 22,
+                              "label": "if node[\"user_id\"] != user_id:",
+                              "successors": [
+                                {
+                                  "id": 7,
+                                  "start_line": 23,
+                                  "end_line": 25,
+                                  "label": "# Save queries by only fetching once per user\n            user_id = node[\"user_id\"]\n            user_integrations = await get_user_integrations(user_id)",
+                                  "successors": [
+                                    {
+                                      "id": 8,
+                                      "start_line": 26,
+                                      "end_line": 26,
+                                      "label": "elif not user_integrations:",
+                                      "successors": [
+                                        {
+                                          "id": 9,
+                                          "start_line": 27,
+                                          "end_line": 27,
+                                          "label": "raise RuntimeError(f\"Impossible state while processing node {node}\")",
+                                          "successors": []
+                                        },
+                                        {
+                                          "id": 10,
+                                          "start_line": 28,
+                                          "end_line": 30,
+                                          "label": "node_id: str = node[\"node_id\"]\n        node_preset_input: dict = json.loads(node[\"node_preset_input\"])\n        credentials_meta: dict = node_preset_input[\"credentials\"]",
+                                          "successors": [
+                                            {
+                                              "id": 11,
+                                              "start_line": 31,
+                                              "end_line": 38,
+                                              "label": "credentials = next(\n            (\n                c\n                for c in user_integrations.credentials\n                if c.id == credentials_meta[\"id\"]\n            ),\n            None,\n        )",
+                                              "successors": [
+                                                {
+                                                  "id": 12,
+                                                  "start_line": 39,
+                                                  "end_line": 39,
+                                                  "label": "if not credentials:",
+                                                  "successors": [
+                                                    {
+                                                      "id": 13,
+                                                      "start_line": 40,
+                                                      "end_line": 40,
+                                                      "label": "continue",
+                                                      "successors": []
+                                                    },
+                                                    {
+                                                      "id": 14,
+                                                      "start_line": 41,
+                                                      "end_line": 41,
+                                                      "label": "if credentials.type != \"api_key\":",
+                                                      "successors": [
+                                                        {
+                                                          "id": 15,
+                                                          "start_line": 42,
+                                                          "end_line": 46,
+                                                          "label": "logger.warning(\n                f\"User {user_id} credentials {credentials.id} with provider 'llm' \"\n                f\"has invalid type '{credentials.type}'\"\n            )\n            continue",
+                                                          "successors": []
+                                                        },
+                                                        {
+                                                          "id": 16,
+                                                          "start_line": 47,
+                                                          "end_line": 47,
+                                                          "label": "api_key = credentials.api_key.get_secret_value()",
+                                                          "successors": [
+                                                            {
+                                                              "id": 17,
+                                                              "start_line": 48,
+                                                              "end_line": 48,
+                                                              "label": "if api_key.startswith(\"sk-ant-api03-\"):",
+                                                              "successors": [
+                                                                {
+                                                                  "id": 18,
+                                                                  "start_line": 49,
+                                                                  "end_line": 49,
+                                                                  "label": "credentials.provider = credentials_meta[\"provider\"] = \"anthropic\"",
+                                                                  "successors": []
+                                                                },
+                                                                {
+                                                                  "id": 19,
+                                                                  "start_line": 50,
+                                                                  "end_line": 50,
+                                                                  "label": "elif api_key.startswith(\"sk-\"):",
+                                                                  "successors": [
+                                                                    {
+                                                                      "id": 20,
+                                                                      "start_line": 51,
+                                                                      "end_line": 51,
+                                                                      "label": "credentials.provider = credentials_meta[\"provider\"] = \"openai\"",
+                                                                      "successors": []
+                                                                    },
+                                                                    {
+                                                                      "id": 21,
+                                                                      "start_line": 52,
+                                                                      "end_line": 52,
+                                                                      "label": "elif api_key.startswith(\"gsk_\"):",
+                                                                      "successors": [
+                                                                        {
+                                                                          "id": 22,
+                                                                          "start_line": 53,
+                                                                          "end_line": 53,
+                                                                          "label": "credentials.provider = credentials_meta[\"provider\"] = \"groq\"",
+                                                                          "successors": []
+                                                                        },
+                                                                        {
+                                                                          "id": 23,
+                                                                          "start_line": 54,
+                                                                          "end_line": 58,
+                                                                          "label": "else:\n            logger.warning(\n                f\"Could not identify provider from key prefix {api_key[:13]}*****\"\n            )\n            continue",
+                                                                          "successors": []
+                                                                        }
+                                                                      ]
+                                                                    }
+                                                                  ]
+                                                                }
+                                                              ]
+                                                            }
+                                                          ]
+                                                        }
+                                                      ]
+                                                    }
+                                                  ]
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "functions": [],
+      "classes": []
+    }
+  ],
+  "classes": [
+    {
+      "name": "Link",
+      "type": "CFG",
+      "blocks": [],
+      "functions": [
+        {
+          "name": "from_db",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 1,
+              "label": "def from_db(link: AgentNodeLink):",
+              "successors": [
+                {
+                  "id": 2,
+                  "start_line": 2,
+                  "end_line": 9,
+                  "label": "return Link(\n            id=link.id,\n            source_name=link.sourceName,\n            source_id=link.agentNodeSourceId,\n            sink_name=link.sinkName,\n            sink_id=link.agentNodeSinkId,\n            is_static=link.isStatic,\n        )",
+                  "successors": []
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "__hash__",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 1,
+              "label": "def __hash__(self):",
+              "successors": [
+                {
+                  "id": 2,
+                  "start_line": 2,
+                  "end_line": 2,
+                  "label": "return hash((self.source_id, self.sink_id, self.source_name, self.sink_name))",
+                  "successors": []
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        }
+      ],
+      "classes": []
+    },
+    {
+      "name": "Node",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 1,
+          "start_line": 1,
+          "end_line": 7,
+          "label": "class Node(BaseDbModel):\n    block_id: str\n    input_default: BlockInput = {}  # dict[input_name, default_value]\n    metadata: dict[str, Any] = {}\n    input_links: list[Link] = []\n    output_links: list[Link] = []\n    webhook_id: Optional[str] = None",
+          "successors": []
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "NodeModel",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 1,
+          "start_line": 1,
+          "end_line": 5,
+          "label": "class NodeModel(Node):\n    graph_id: str\n    graph_version: int\n    webhook: Optional[Webhook] = None\n    @staticmethod",
+          "successors": []
+        }
+      ],
+      "functions": [
+        {
+          "name": "from_db",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 1,
+              "label": "def from_db(node: AgentNode):",
+              "successors": [
+                {
+                  "id": 2,
+                  "start_line": 2,
+                  "end_line": 2,
+                  "label": "if not node.AgentBlock:",
+                  "successors": [
+                    {
+                      "id": 3,
+                      "start_line": 3,
+                      "end_line": 3,
+                      "label": "raise ValueError(f\"Invalid node {node.id}, invalid AgentBlock.\")",
+                      "successors": []
+                    },
+                    {
+                      "id": 4,
+                      "start_line": 4,
+                      "end_line": 13,
+                      "label": "obj = NodeModel(\n            id=node.id,\n            block_id=node.AgentBlock.id,\n            input_default=json.loads(node.constantInput, target_type=dict[str, Any]),\n            metadata=json.loads(node.metadata, target_type=dict[str, Any]),\n            graph_id=node.agentGraphId,\n            graph_version=node.agentGraphVersion,\n            webhook_id=node.webhookId,\n            webhook=Webhook.from_db(node.Webhook) if node.Webhook else None,\n        )",
+                      "successors": [
+                        {
+                          "id": 5,
+                          "start_line": 14,
+                          "end_line": 14,
+                          "label": "obj.input_links = [Link.from_db(link) for link in node.Input or []]",
+                          "successors": [
+                            {
+                              "id": 6,
+                              "start_line": 15,
+                              "end_line": 15,
+                              "label": "obj.output_links = [Link.from_db(link) for link in node.Output or []]",
+                              "successors": [
+                                {
+                                  "id": 7,
+                                  "start_line": 16,
+                                  "end_line": 16,
+                                  "label": "return obj",
+                                  "successors": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "is_triggered_by_event_type",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 1,
+              "label": "def is_triggered_by_event_type(self, event_type: str) -> bool:",
+              "successors": [
+                {
+                  "id": 2,
+                  "start_line": 2,
+                  "end_line": 2,
+                  "label": "if not (block := get_block(self.block_id)):",
+                  "successors": [
+                    {
+                      "id": 3,
+                      "start_line": 3,
+                      "end_line": 3,
+                      "label": "raise ValueError(f\"Block #{self.block_id} not found for node #{self.id}\")",
+                      "successors": []
+                    },
+                    {
+                      "id": 4,
+                      "start_line": 4,
+                      "end_line": 4,
+                      "label": "if not block.webhook_config:",
+                      "successors": [
+                        {
+                          "id": 5,
+                          "start_line": 5,
+                          "end_line": 5,
+                          "label": "raise TypeError(\"This method can't be used on non-webhook blocks\")",
+                          "successors": []
+                        },
+                        {
+                          "id": 6,
+                          "start_line": 6,
+                          "end_line": 6,
+                          "label": "if not block.webhook_config.event_filter_input:",
+                          "successors": [
+                            {
+                              "id": 7,
+                              "start_line": 7,
+                              "end_line": 7,
+                              "label": "return True",
+                              "successors": []
+                            },
+                            {
+                              "id": 8,
+                              "start_line": 8,
+                              "end_line": 8,
+                              "label": "event_filter = self.input_default.get(block.webhook_config.event_filter_input)",
+                              "successors": [
+                                {
+                                  "id": 9,
+                                  "start_line": 9,
+                                  "end_line": 9,
+                                  "label": "if not event_filter:",
+                                  "successors": [
+                                    {
+                                      "id": 10,
+                                      "start_line": 10,
+                                      "end_line": 10,
+                                      "label": "raise ValueError(f\"Event filter is not configured on node #{self.id}\")",
+                                      "successors": []
+                                    },
+                                    {
+                                      "id": 11,
+                                      "start_line": 11,
+                                      "end_line": 15,
+                                      "label": "return event_type in [\n            block.webhook_config.event_format.format(event=k)\n            for k in event_filter\n            if event_filter[k] is True\n        ]",
+                                      "successors": []
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        }
+      ],
+      "classes": []
+    },
+    {
+      "name": "GraphExecution",
+      "type": "CFG",
+      "blocks": [],
+      "functions": [
+        {
+          "name": "from_db",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 6,
+              "label": "def from_db(execution: AgentGraphExecution):\n        now = datetime.now(timezone.utc)\n        start_time = execution.startedAt or execution.createdAt\n        end_time = execution.updatedAt or now\n        duration = (end_time - start_time).total_seconds()\n        total_run_time = duration",
+              "successors": [
+                {
+                  "id": 2,
+                  "start_line": 7,
+                  "end_line": 7,
+                  "label": "try:",
+                  "successors": [
+                    {
+                      "id": 3,
+                      "start_line": 8,
+                      "end_line": 8,
+                      "label": "stats = json.loads(execution.stats or \"{}\", target_type=dict[str, Any])",
+                      "successors": [
+                        {
+                          "id": 4,
+                          "start_line": 11,
+                          "end_line": 12,
+                          "label": "duration = stats.get(\"walltime\", duration)\n        total_run_time = stats.get(\"nodes_walltime\", total_run_time)",
+                          "successors": [
+                            {
+                              "id": 5,
+                              "start_line": 13,
+                              "end_line": 23,
+                              "label": "return GraphExecution(\n            id=execution.id,\n            execution_id=execution.id,\n            started_at=start_time,\n            ended_at=end_time,\n            duration=duration,\n            total_run_time=total_run_time,\n            status=ExecutionStatus(execution.executionStatus),\n            graph_id=execution.agentGraphId,\n            graph_version=execution.agentGraphVersion,\n        )",
+                              "successors": []
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "id": 6,
+                      "start_line": 9,
+                      "end_line": 10,
+                      "label": "except ValueError:\n            stats = {}",
+                      "successors": [
+                        {
+                          "id": 4,
+                          "start_line": 11,
+                          "end_line": 12,
+                          "label": "duration = stats.get(\"walltime\", duration)\n        total_run_time = stats.get(\"nodes_walltime\", total_run_time)",
+                          "successors": [
+                            {
+                              "id": 5,
+                              "start_line": 13,
+                              "end_line": 23,
+                              "label": "return GraphExecution(\n            id=execution.id,\n            execution_id=execution.id,\n            started_at=start_time,\n            ended_at=end_time,\n            duration=duration,\n            total_run_time=total_run_time,\n            status=ExecutionStatus(execution.executionStatus),\n            graph_id=execution.agentGraphId,\n            graph_version=execution.agentGraphVersion,\n        )",
+                              "successors": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        }
+      ],
+      "classes": []
+    },
+    {
+      "name": "Graph",
+      "type": "CFG",
+      "blocks": [],
+      "functions": [
+        {
+          "name": "input_schema",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 3,
+              "label": "@computed_field\n    @property\n    def input_schema(self) -> dict[str, Any]:",
+              "successors": [
+                {
+                  "id": 2,
+                  "start_line": 4,
+                  "end_line": 13,
+                  "label": "return self._generate_schema(\n            AgentInputBlock.Input,\n            [\n                node.input_default\n                for node in self.nodes\n                if (b := get_block(node.block_id))\n                and b.block_type == BlockType.INPUT\n                and \"name\" in node.input_default\n            ],\n        )",
+                  "successors": []
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "output_schema",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 3,
+              "label": "@computed_field\n    @property\n    def output_schema(self) -> dict[str, Any]:",
+              "successors": [
+                {
+                  "id": 2,
+                  "start_line": 4,
+                  "end_line": 13,
+                  "label": "return self._generate_schema(\n            AgentOutputBlock.Input,\n            [\n                node.input_default\n                for node in self.nodes\n                if (b := get_block(node.block_id))\n                and b.block_type == BlockType.OUTPUT\n                and \"name\" in node.input_default\n            ],\n        )",
+                  "successors": []
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "_generate_schema",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 5,
+              "label": "@staticmethod\n    def _generate_schema(\n        type_class: Type[AgentInputBlock.Input] | Type[AgentOutputBlock.Input],\n        data: list[dict],\n    ) -> dict[str, Any]:",
+              "successors": [
+                {
+                  "id": 2,
+                  "start_line": 6,
+                  "end_line": 6,
+                  "label": "props = []",
+                  "successors": [
+                    {
+                      "id": 3,
+                      "start_line": 7,
+                      "end_line": 7,
+                      "label": "for p in data:",
+                      "successors": [
+                        {
+                          "id": 4,
+                          "start_line": 8,
+                          "end_line": 8,
+                          "label": "try:",
+                          "successors": [
+                            {
+                              "id": 5,
+                              "start_line": 9,
+                              "end_line": 9,
+                              "label": "props.append(type_class(**p))",
+                              "successors": []
+                            },
+                            {
+                              "id": 6,
+                              "start_line": 10,
+                              "end_line": 11,
+                              "label": "except Exception as e:\n                logger.warning(f\"Invalid {type_class}: {p}, {e}\")",
+                              "successors": []
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "id": 7,
+                      "start_line": 12,
+                      "end_line": 25,
+                      "label": "return {\n            \"type\": \"object\",\n            \"properties\": {\n                p.name: {\n                    \"secret\": p.secret,\n                    \"advanced\": p.advanced,\n                    \"title\": p.title or p.name,\n                    **({\"description\": p.description} if p.description else {}),\n                    **({\"default\": p.value} if p.value is not None else {}),\n                }\n                for p in props\n            },\n            \"required\": [p.name for p in props if p.value is None],\n        }",
+                      "successors": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        }
+      ],
+      "classes": []
+    },
+    {
+      "name": "GraphModel",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 1,
+          "start_line": 1,
+          "end_line": 1,
+          "label": "class GraphModel(Graph):",
+          "successors": [
+            {
+              "id": 2,
+              "start_line": 2,
+              "end_line": 2,
+              "label": "user_id: str",
+              "successors": [
+                {
+                  "id": 3,
+                  "start_line": 3,
+                  "end_line": 3,
+                  "label": "nodes: list[NodeModel] = []  # type: ignore",
+                  "successors": [
+                    {
+                      "id": 4,
+                      "start_line": 4,
+                      "end_line": 4,
+                      "label": "@staticmethod",
+                      "successors": [
+                        {
+                          "id": 5,
+                          "start_line": 5,
+                          "end_line": 5,
+                          "label": "@staticmethod",
+                          "successors": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "functions": [
+        {
+          "name": "starting_nodes",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 2,
+              "label": "@property\n    def starting_nodes(self) -> list[Node]:",
+              "successors": [
+                {
+                  "id": 2,
+                  "start_line": 3,
+                  "end_line": 8,
+                  "label": "outbound_nodes = {link.sink_id for link in self.links}\n        input_nodes = {\n            v.id\n            for v in self.nodes\n            if (b := get_block(v.block_id)) and b.block_type == BlockType.INPUT\n        }",
+                  "successors": [
+                    {
+                      "id": 3,
+                      "start_line": 9,
+                      "end_line": 13,
+                      "label": "return [\n            node\n            for node in self.nodes\n            if node.id not in outbound_nodes or node.id in input_nodes\n        ]",
+                      "successors": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "reassign_ids",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 5,
+              "label": "def reassign_ids(self, user_id: str, reassign_graph_id: bool = False):\n        \"\"\"\n        Reassigns all IDs in the graph to new UUIDs.\n        This method can be used before storing a new graph to the database.\n        \"\"\"",
+              "successors": [
+                {
+                  "id": 2,
+                  "start_line": 6,
+                  "end_line": 7,
+                  "label": "# Reassign Graph ID\n        id_map = {node.id: str(uuid.uuid4()) for node in self.nodes}",
+                  "successors": [
+                    {
+                      "id": 3,
+                      "start_line": 8,
+                      "end_line": 8,
+                      "label": "if reassign_graph_id:",
+                      "successors": [
+                        {
+                          "id": 4,
+                          "start_line": 9,
+                          "end_line": 9,
+                          "label": "self.id = str(uuid.uuid4())",
+                          "successors": []
+                        }
+                      ]
+                    },
+                    {
+                      "id": 5,
+                      "start_line": 10,
+                      "end_line": 10,
+                      "label": "# Reassign Node IDs",
+                      "successors": [
+                        {
+                          "id": 6,
+                          "start_line": 11,
+                          "end_line": 12,
+                          "label": "for node in self.nodes:\n            node.id = id_map[node.id]",
+                          "successors": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": 7,
+              "start_line": 13,
+              "end_line": 13,
+              "label": "# Reassign Link IDs",
+              "successors": [
+                {
+                  "id": 8,
+                  "start_line": 14,
+                  "end_line": 16,
+                  "label": "for link in self.links:\n            link.source_id = id_map[link.source_id]\n            link.sink_id = id_map[link.sink_id]",
+                  "successors": []
+                }
+              ]
+            },
+            {
+              "id": 9,
+              "start_line": 17,
+              "end_line": 17,
+              "label": "# Reassign User IDs for agent blocks",
+              "successors": [
+                {
+                  "id": 10,
+                  "start_line": 18,
+                  "end_line": 18,
+                  "label": "for node in self.nodes:",
+                  "successors": [
+                    {
+                      "id": 11,
+                      "start_line": 19,
+                      "end_line": 19,
+                      "label": "if node.block_id != AgentExecutorBlock().id:",
+                      "successors": [
+                        {
+                          "id": 12,
+                          "start_line": 20,
+                          "end_line": 20,
+                          "label": "continue",
+                          "successors": []
+                        }
+                      ]
+                    },
+                    {
+                      "id": 13,
+                      "start_line": 21,
+                      "end_line": 22,
+                      "label": "node.input_default[\"user_id\"] = user_id\n            node.input_default.setdefault(\"data\", {})",
+                      "successors": []
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": 14,
+              "start_line": 23,
+              "end_line": 23,
+              "label": "self.validate_graph()",
+              "successors": []
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "validate_graph",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 2,
+              "label": "def validate_graph(self, for_run: bool = False):\n        input_links = defaultdict(list)",
+              "successors": [
+                {
+                  "id": 2,
+                  "start_line": 3,
+                  "end_line": 4,
+                  "label": "for link in self.links:\n            input_links[link.sink_id].append(link)",
+                  "successors": [
+                    {
+                      "id": 3,
+                      "start_line": 5,
+                      "end_line": 6,
+                      "label": "# Nodes: required fields are filled or connected and dependencies are satisfied\n        for node in self.nodes:",
+                      "successors": [
+                        {
+                          "id": 4,
+                          "start_line": 7,
+                          "end_line": 9,
+                          "label": "block = get_block(node.block_id)\n            if block is None:\n                raise ValueError(f\"Invalid block {node.block_id} for node #{node.id}\")",
+                          "successors": [
+                            {
+                              "id": 5,
+                              "start_line": 10,
+                              "end_line": 13,
+                              "label": "provided_inputs = set(\n                [sanitize(name) for name in node.input_default]\n                + [sanitize(link.sink_name) for link in input_links.get(node.id, [])]\n            )",
+                              "successors": [
+                                {
+                                  "id": 6,
+                                  "start_line": 14,
+                                  "end_line": 28,
+                                  "label": "for name in block.input_schema.get_required_fields():\n                if (\n                    name not in provided_inputs\n                    and not (\n                        name == \"payload\"\n                        and block.block_type\n                        in (BlockType.WEBHOOK, BlockType.WEBHOOK_MANUAL)\n                    )\n                    and (\n                        for_run  # Skip input completion validation, unless when executing.\n                        or block.block_type == BlockType.INPUT\n                        or block.block_type == BlockType.OUTPUT\n                        or block.block_type == BlockType.AGENT\n                    )\n                ):",
+                                  "successors": [
+                                    {
+                                      "id": 7,
+                                      "start_line": 29,
+                                      "end_line": 31,
+                                      "label": "raise ValueError(\n                        f\"Node {block.name} #{node.id} required input missing: `{name}`\"\n                    )",
+                                      "successors": []
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": 8,
+              "start_line": 32,
+              "end_line": 34,
+              "label": "# Get input schema properties and check dependencies\n            input_schema = block.input_schema.model_fields\n            required_fields = block.input_schema.get_required_fields()",
+              "successors": [
+                {
+                  "id": 9,
+                  "start_line": 35,
+                  "end_line": 36,
+                  "label": "# Validate dependencies between fields\n            for field_name, field_info in input_schema.items():",
+                  "successors": [
+                    {
+                      "id": 10,
+                      "start_line": 37,
+                      "end_line": 41,
+                      "label": "# Apply input dependency validation only on run & field with depends_on\n                json_schema_extra = field_info.json_schema_extra or {}\n                dependencies = json_schema_extra.get(\"depends_on\", [])\n                if not for_run or not dependencies:\n                    continue",
+                      "successors": [
+                        {
+                          "id": 11,
+                          "start_line": 42,
+                          "end_line": 44,
+                          "label": "# Check if dependent field has value in input_default\n                field_has_value = has_value(field_name)\n                field_is_required = field_name in required_fields",
+                          "successors": [
+                            {
+                              "id": 12,
+                              "start_line": 45,
+                              "end_line": 47,
+                              "label": "# Check for missing dependencies when dependent field is present\n                missing_deps = [dep for dep in dependencies if not has_value(dep)]\n                if missing_deps and (field_has_value or field_is_required):",
+                              "successors": [
+                                {
+                                  "id": 13,
+                                  "start_line": 48,
+                                  "end_line": 50,
+                                  "label": "raise ValueError(\n                        f\"Node {block.name} #{node.id}: Field `{field_name}` requires [{', '.join(missing_deps)}] to be set\"\n                    )",
+                                  "successors": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": 14,
+              "start_line": 51,
+              "end_line": 52,
+              "label": "node_map = {v.id: v for v in self.nodes}\n        # Links: links are connected and the connected pin data type are compatible.",
+              "successors": [
+                {
+                  "id": 15,
+                  "start_line": 53,
+                  "end_line": 54,
+                  "label": "for link in self.links:\n            source = (link.source_id, link.source_name)",
+                  "successors": [
+                    {
+                      "id": 16,
+                      "start_line": 55,
+                      "end_line": 56,
+                      "label": "sink = (link.sink_id, link.sink_name)\n            suffix = f\"Link {source} <-> {sink}\"",
+                      "successors": [
+                        {
+                          "id": 17,
+                          "start_line": 57,
+                          "end_line": 62,
+                          "label": "for i, (node_id, name) in enumerate([source, sink]):\n                node = node_map.get(node_id)\n                if not node:\n                    raise ValueError(\n                        f\"{suffix}, {node_id} is invalid node id, available nodes: {node_map.keys()}\"\n                    )",
+                          "successors": [
+                            {
+                              "id": 18,
+                              "start_line": 63,
+                              "end_line": 68,
+                              "label": "block = get_block(node.block_id)\n                if not block:\n                    blocks = {v().id: v().name for v in get_blocks().values()}\n                    raise ValueError(\n                        f\"{suffix}, {node.block_id} is invalid block id, available blocks: {blocks}\"\n                    )",
+                              "successors": [
+                                {
+                                  "id": 19,
+                                  "start_line": 69,
+                                  "end_line": 70,
+                                  "label": "sanitized_name = sanitize(name)\n                vals = node.input_default",
+                                  "successors": [
+                                    {
+                                      "id": 20,
+                                      "start_line": 71,
+                                      "end_line": 77,
+                                      "label": "if i == 0:\n                    fields = (\n                        block.output_schema.get_fields()\n                        if block.block_type != BlockType.AGENT\n                        else vals.get(\"output_schema\", {}).get(\"properties\", {}).keys()\n                    )\n                else:",
+                                      "successors": [
+                                        {
+                                          "id": 21,
+                                          "start_line": 78,
+                                          "end_line": 82,
+                                          "label": "fields = (\n                        block.input_schema.get_fields()\n                        if block.block_type != BlockType.AGENT\n                        else vals.get(\"input_schema\", {}).get(\"properties\", {}).keys()\n                    )",
+                                          "successors": [
+                                            {
+                                              "id": 22,
+                                              "start_line": 83,
+                                              "end_line": 85,
+                                              "label": "if sanitized_name not in fields:\n                    fields_msg = f\"Allowed fields: {fields}\"\n                    raise ValueError(f\"{suffix}, `{name}` invalid, {fields_msg}\")",
+                                              "successors": []
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": 23,
+              "start_line": 86,
+              "end_line": 87,
+              "label": "if is_static_output_block(link.source_id):\n                link.is_static = True  # Each value block output should be static.",
+              "successors": []
+            }
+          ],
+          "functions": [
+            {
+              "name": "sanitize",
+              "type": "CFG",
+              "blocks": [
+                {
+                  "id": 1,
+                  "start_line": 1,
+                  "end_line": 1,
+                  "label": "def sanitize(name):",
+                  "successors": [
+                    {
+                      "id": 2,
+                      "start_line": 2,
+                      "end_line": 2,
+                      "label": "return name.split(\"_#_\")[0].split(\"_@_\")[0].split(\"_$_\")[0]",
+                      "successors": []
+                    }
+                  ]
+                }
+              ],
+              "functions": [],
+              "classes": []
+            },
+            {
+              "name": "has_value",
+              "type": "CFG",
+              "blocks": [
+                {
+                  "id": 1,
+                  "start_line": 1,
+                  "end_line": 1,
+                  "label": "def has_value(name):",
+                  "successors": [
+                    {
+                      "id": 2,
+                      "start_line": 2,
+                      "end_line": 7,
+                      "label": "return (\n                    node is not None\n                    and name in node.input_default\n                    and node.input_default[name] is not None\n                    and str(node.input_default[name]).strip() != \"\"\n                ) or (name in input_schema and input_schema[name].default is not None)",
+                      "successors": []
+                    }
+                  ]
+                }
+              ],
+              "functions": [],
+              "classes": []
+            },
+            {
+              "name": "is_static_output_block",
+              "type": "CFG",
+              "blocks": [
+                {
+                  "id": 1,
+                  "start_line": 1,
+                  "end_line": 1,
+                  "label": "def is_static_output_block(nid: str) -> bool:",
+                  "successors": [
+                    {
+                      "id": 2,
+                      "start_line": 2,
+                      "end_line": 4,
+                      "label": "bid = node_map[nid].block_id\n            b = get_block(bid)\n            return b.static_output if b else False",
+                      "successors": []
+                    }
+                  ]
+                }
+              ],
+              "functions": [],
+              "classes": []
+            }
+          ],
+          "classes": []
+        },
+        {
+          "name": "from_db",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 1,
+              "label": "def from_db(graph: AgentGraph, for_export: bool = False):",
+              "successors": [
+                {
+                  "id": 2,
+                  "start_line": 2,
+                  "end_line": 21,
+                  "label": "return GraphModel(\n            id=graph.id,\n            user_id=graph.userId,\n            version=graph.version,\n            is_active=graph.isActive,\n            is_template=graph.isTemplate,\n            name=graph.name or \"\",\n            description=graph.description or \"\",\n            nodes=[\n                NodeModel.from_db(GraphModel._process_node(node, for_export))\n                for node in graph.AgentNodes or []\n            ],\n            links=list(\n                {\n                    Link.from_db(link)\n                    for node in graph.AgentNodes or []\n                    for link in (node.Input or []) + (node.Output or [])\n                }\n            ),\n        )",
+                  "successors": []
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "_process_node",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 1,
+              "label": "def _process_node(node: AgentNode, for_export: bool) -> AgentNode:",
+              "successors": [
+                {
+                  "id": 2,
+                  "start_line": 2,
+                  "end_line": 2,
+                  "label": "if for_export:",
+                  "successors": [
+                    {
+                      "id": 3,
+                      "start_line": 3,
+                      "end_line": 13,
+                      "label": "# Remove credentials from node input\n            if node.constantInput:\n                constant_input = json.loads(\n                    node.constantInput, target_type=dict[str, Any]\n                )\n                constant_input = GraphModel._hide_node_input_credentials(constant_input)\n                node.constantInput = json.dumps(constant_input)\n            # Remove webhook info\n            node.webhookId = None\n            node.Webhook = None\n        return node",
+                      "successors": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "_hide_node_input_credentials",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 3,
+              "label": "def _hide_node_input_credentials(input_data: dict[str, Any]) -> dict[str, Any]:\n        sensitive_keys = [\"credentials\", \"api_key\", \"password\", \"token\", \"secret\"]\n        result = {}",
+              "successors": [
+                {
+                  "id": 2,
+                  "start_line": 4,
+                  "end_line": 4,
+                  "label": "for key, value in input_data.items():",
+                  "successors": [
+                    {
+                      "id": 3,
+                      "start_line": 5,
+                      "end_line": 5,
+                      "label": "if isinstance(value, dict):",
+                      "successors": [
+                        {
+                          "id": 4,
+                          "start_line": 6,
+                          "end_line": 6,
+                          "label": "result[key] = GraphModel._hide_node_input_credentials(value)",
+                          "successors": [
+                            {
+                              "id": 5,
+                              "start_line": 7,
+                              "end_line": 9,
+                              "label": "elif isinstance(value, str) and any(\n                sensitive_key in key.lower() for sensitive_key in sensitive_keys\n            ):",
+                              "successors": [
+                                {
+                                  "id": 6,
+                                  "start_line": 10,
+                                  "end_line": 11,
+                                  "label": "# Skip this key-value pair in the result\n                continue",
+                                  "successors": [
+                                    {
+                                      "id": 7,
+                                      "start_line": 12,
+                                      "end_line": 13,
+                                      "label": "else:\n                result[key] = value",
+                                      "successors": []
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        }
+      ],
+      "classes": []
+    }
+  ]
+}

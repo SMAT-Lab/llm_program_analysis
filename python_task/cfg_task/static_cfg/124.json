@@ -1,0 +1,296 @@
+{
+  "name": "124.py",
+  "type": "CFG",
+  "blocks": [
+    {
+      "id": 1,
+      "label": "#1\nimport hashlib\nimport hmac\nimport logging\nimport requests\nfrom fastapi import HTTPException, Request\nfrom strenum import StrEnum\nfrom backend.data import integrations\nfrom backend.data.model import Credentials\nfrom backend.integrations.providers import ProviderName\nfrom ._base import BaseWebhooksManager\nlogger = logging.getLogger(__name__)",
+      "successors": []
+    }
+  ],
+  "functions": [
+    {
+      "name": "extract_github_error_msg",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 60,
+          "label": "#60\nerror_msgs = []\nresp = response.json()\nif resp.get('message'):",
+          "successors": [
+            {
+              "id": 61,
+              "label": "#61\nerror_msgs.append(resp['message'])",
+              "successors": [
+                {
+                  "id": 62,
+                  "label": "#62\nif resp.get('errors'):",
+                  "successors": [
+                    {
+                      "id": 63,
+                      "label": "#63\nerror_msgs.extend(f\"* {err.get('message', err)}\" for err in resp['errors'])",
+                      "successors": [
+                        {
+                          "id": 64,
+                          "label": "#64\nif resp.get('error'):",
+                          "successors": [
+                            {
+                              "id": 65,
+                              "label": "#65\nif isinstance(resp['error'], dict):",
+                              "successors": [
+                                {
+                                  "id": 67,
+                                  "label": "#67\nerror_msgs.append(resp['error'].get('message', resp['error']))",
+                                  "successors": [
+                                    {
+                                      "id": 66,
+                                      "label": "#66\nreturn '\\n'.join(error_msgs)",
+                                      "successors": []
+                                    }
+                                  ]
+                                },
+                                {
+                                  "id": 69,
+                                  "label": "#69\nerror_msgs.append(resp['error'])",
+                                  "successors": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "functions": [],
+      "classes": []
+    }
+  ],
+  "classes": [
+    {
+      "name": "GithubWebhookType",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 3,
+          "label": "#3\nREPO = 'repo'",
+          "successors": []
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "GithubWebhooksManager",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 6,
+          "label": "#6\nPROVIDER_NAME = ProviderName.GITHUB\nWebhookType = GithubWebhookType\nGITHUB_API_URL = 'https://api.github.com'\nGITHUB_API_DEFAULT_HEADERS = {'Accept': 'application/vnd.github.v3+json'}",
+          "successors": []
+        }
+      ],
+      "functions": [
+        {
+          "name": "validate_payload",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 8,
+              "label": "#8\nif not (event_type := request.headers.get('X-GitHub-Event')):",
+              "successors": [
+                {
+                  "id": 9,
+                  "label": "#9\nraise HTTPException(status_code=400, detail='X-GitHub-Event header is missing!'\n    )",
+                  "successors": []
+                },
+                {
+                  "id": 10,
+                  "label": "#10\nif not (signature_header := request.headers.get('X-Hub-Signature-256')):",
+                  "successors": [
+                    {
+                      "id": 12,
+                      "label": "#12\nraise HTTPException(status_code=403, detail=\n    'X-Hub-Signature-256 header is missing!')",
+                      "successors": []
+                    },
+                    {
+                      "id": 13,
+                      "label": "#13\npayload_body = await request.body()",
+                      "successors": [
+                        {
+                          "id": 15,
+                          "label": "#15\nhash_object = hmac.new(webhook.secret.encode('utf-8'), msg=payload_body,\n    digestmod=hashlib.sha256)\nexpected_signature = 'sha256=' + hash_object.hexdigest()\nif not hmac.compare_digest(expected_signature, signature_header):",
+                          "successors": [
+                            {
+                              "id": 16,
+                              "label": "#16\nraise HTTPException(status_code=403, detail=\"Request signatures didn't match!\")",
+                              "successors": []
+                            },
+                            {
+                              "id": 17,
+                              "label": "#17\npayload = await request.json()",
+                              "successors": [
+                                {
+                                  "id": 19,
+                                  "label": "#19\nif (action := payload.get('action')):",
+                                  "successors": [
+                                    {
+                                      "id": 20,
+                                      "label": "#20\nevent_type += f'.{action}'",
+                                      "successors": [
+                                        {
+                                          "id": 21,
+                                          "label": "#21\nreturn payload, event_type",
+                                          "successors": []
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "trigger_ping",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 25,
+              "label": "#25\nif not credentials:",
+              "successors": [
+                {
+                  "id": 26,
+                  "label": "#26\nraise ValueError('Credentials are required but were not passed')",
+                  "successors": []
+                },
+                {
+                  "id": 27,
+                  "label": "#27\nheaders = {**self.GITHUB_API_DEFAULT_HEADERS, 'Authorization': credentials.\n    bearer()}\nrepo, github_hook_id = webhook.resource, webhook.provider_webhook_id\nping_url = f'{self.GITHUB_API_URL}/repos/{repo}/hooks/{github_hook_id}/pings'\nresponse = requests.post(ping_url, headers=headers)\nif response.status_code != 204:",
+                  "successors": [
+                    {
+                      "id": 29,
+                      "label": "#29\nerror_msg = extract_github_error_msg(response)\nraise ValueError(f'Failed to ping GitHub webhook: {error_msg}')",
+                      "successors": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "_register_webhook",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 34,
+              "label": "#34\nif webhook_type == self.WebhookType.REPO and resource.count('/') > 1:",
+              "successors": [
+                {
+                  "id": 35,
+                  "label": "#35\nraise ValueError(\"Invalid repo format: expected 'owner/repo'\")",
+                  "successors": []
+                },
+                {
+                  "id": 36,
+                  "label": "#36\ngithub_events = list({event.split('.')[0] for event in events})\nheaders = {**self.GITHUB_API_DEFAULT_HEADERS, 'Authorization': credentials.\n    bearer()}\nwebhook_data = {'name': 'web', 'active': True, 'events': github_events,\n    'config': {'url': ingress_url, 'content_type': 'json', 'insecure_ssl':\n    '0', 'secret': secret}}\nresponse = requests.post(f'{self.GITHUB_API_URL}/repos/{resource}/hooks',\n    headers=headers, json=webhook_data)\nif response.status_code != 201:",
+                  "successors": [
+                    {
+                      "id": 38,
+                      "label": "#38\nerror_msg = extract_github_error_msg(response)\nif 'not found' in error_msg.lower():",
+                      "successors": [
+                        {
+                          "id": 40,
+                          "label": "#40\nerror_msg = (\n    f\"{error_msg} (Make sure the GitHub account or API key has 'repo' or webhook create permissions to '{resource}')\"\n    )",
+                          "successors": [
+                            {
+                              "id": 41,
+                              "label": "#41\nraise ValueError(f'Failed to create GitHub webhook: {error_msg}')",
+                              "successors": []
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "id": 39,
+                      "label": "#39\nwebhook_id = response.json()['id']\nconfig = response.json()['config']\nreturn str(webhook_id), config",
+                      "successors": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "_deregister_webhook",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 46,
+              "label": "#46\nwebhook_type = self.WebhookType(webhook.webhook_type)\nif webhook.credentials_id != credentials.id:",
+              "successors": [
+                {
+                  "id": 47,
+                  "label": "#47\nraise ValueError(\n    f'Webhook #{webhook.id} does not belong to credentials {credentials.id}')",
+                  "successors": []
+                },
+                {
+                  "id": 48,
+                  "label": "#48\nheaders = {**self.GITHUB_API_DEFAULT_HEADERS, 'Authorization': credentials.\n    bearer()}\nif webhook_type == self.WebhookType.REPO:",
+                  "successors": [
+                    {
+                      "id": 50,
+                      "label": "#50\nrepo = webhook.resource\ndelete_url = (\n    f'{self.GITHUB_API_URL}/repos/{repo}/hooks/{webhook.provider_webhook_id}')",
+                      "successors": [
+                        {
+                          "id": 51,
+                          "label": "#51\nresponse = requests.delete(delete_url, headers=headers)\nif response.status_code not in [204, 404]:",
+                          "successors": [
+                            {
+                              "id": 54,
+                              "label": "#54\nerror_msg = extract_github_error_msg(response)\nraise ValueError(f'Failed to delete GitHub webhook: {error_msg}')",
+                              "successors": []
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "id": 52,
+                      "label": "#52\nraise NotImplementedError(f\"Unsupported webhook type '{webhook.webhook_type}'\")",
+                      "successors": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        }
+      ],
+      "classes": []
+    }
+  ]
+}

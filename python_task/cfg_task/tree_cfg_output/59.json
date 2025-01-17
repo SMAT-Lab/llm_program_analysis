@@ -1,0 +1,589 @@
+{
+  "name": "example_script",
+  "type": "CFG",
+  "blocks": [
+    {
+      "id": 1,
+      "start_line": 1,
+      "end_line": 12,
+      "label": "import logging\nimport time\nfrom typing import Sequence\nfrom backend.data import db\nfrom backend.data.block import Block, initialize_blocks\nfrom backend.data.execution import ExecutionResult, ExecutionStatus\nfrom backend.data.model import CREDENTIALS_FIELD_NAME\nfrom backend.data.user import create_default_user\nfrom backend.executor import DatabaseManager, ExecutionManager, ExecutionScheduler\nfrom backend.server.rest_api import AgentServer\nfrom backend.server.utils import get_user_id\nlog = logging.getLogger(__name__)",
+      "successors": []
+    }
+  ],
+  "functions": [
+    {
+      "name": "wait_execution",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 1,
+          "start_line": 1,
+          "end_line": 6,
+          "label": "async def wait_execution(\n    user_id: str,\n    graph_id: str,\n    graph_exec_id: str,\n    timeout: int = 20,\n) -> Sequence[ExecutionResult]:",
+          "successors": [
+            {
+              "id": 2,
+              "start_line": 7,
+              "end_line": 7,
+              "label": "# Wait for the executions to complete",
+              "successors": [
+                {
+                  "id": 3,
+                  "start_line": 8,
+                  "end_line": 8,
+                  "label": "for i in range(timeout):",
+                  "successors": [
+                    {
+                      "id": 4,
+                      "start_line": 9,
+                      "end_line": 9,
+                      "label": "if await is_execution_completed():",
+                      "successors": [
+                        {
+                          "id": 5,
+                          "start_line": 10,
+                          "end_line": 12,
+                          "label": "return await AgentServer().test_get_graph_run_node_execution_results(\n                graph_id, graph_exec_id, user_id\n            )",
+                          "successors": []
+                        }
+                      ]
+                    },
+                    {
+                      "id": 6,
+                      "start_line": 13,
+                      "end_line": 13,
+                      "label": "time.sleep(1)",
+                      "successors": [
+                        {
+                          "id": 7,
+                          "start_line": 14,
+                          "end_line": 14,
+                          "label": "assert False, \"Execution did not complete in time.\"",
+                          "successors": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "functions": [
+        {
+          "name": "is_execution_completed",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 1,
+              "label": "async def is_execution_completed():",
+              "successors": [
+                {
+                  "id": 2,
+                  "start_line": 2,
+                  "end_line": 3,
+                  "label": "status = await AgentServer().test_get_graph_run_status(graph_exec_id, user_id)\n        log.info(f\"Execution status: {status}\")",
+                  "successors": [
+                    {
+                      "id": 3,
+                      "start_line": 4,
+                      "end_line": 4,
+                      "label": "if status == ExecutionStatus.FAILED:",
+                      "successors": [
+                        {
+                          "id": 4,
+                          "start_line": 5,
+                          "end_line": 6,
+                          "label": "log.info(\"Execution failed\")\n            raise Exception(\"Execution failed\")",
+                          "successors": []
+                        },
+                        {
+                          "id": 5,
+                          "start_line": 7,
+                          "end_line": 7,
+                          "label": "return status == ExecutionStatus.COMPLETED",
+                          "successors": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        }
+      ],
+      "classes": []
+    },
+    {
+      "name": "execute_block_test",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 1,
+          "start_line": 1,
+          "end_line": 2,
+          "label": "def execute_block_test(block: Block):\n    prefix = f\"[Test-{block.name}]\"",
+          "successors": [
+            {
+              "id": 2,
+              "start_line": 3,
+              "end_line": 5,
+              "label": "if not block.test_input or not block.test_output:\n        log.info(f\"{prefix} No test data provided\")\n        return",
+              "successors": [
+                {
+                  "id": 3,
+                  "start_line": 6,
+                  "end_line": 7,
+                  "label": "if not isinstance(block.test_input, list):\n        block.test_input = [block.test_input]",
+                  "successors": [
+                    {
+                      "id": 4,
+                      "start_line": 8,
+                      "end_line": 9,
+                      "label": "if not isinstance(block.test_output, list):\n        block.test_output = [block.test_output]",
+                      "successors": [
+                        {
+                          "id": 5,
+                          "start_line": 10,
+                          "end_line": 11,
+                          "label": "output_index = 0\n    log.info(f\"{prefix} Executing {len(block.test_input)} tests...\")",
+                          "successors": [
+                            {
+                              "id": 6,
+                              "start_line": 12,
+                              "end_line": 12,
+                              "label": "prefix = \" \" * 4 + prefix",
+                              "successors": [
+                                {
+                                  "id": 7,
+                                  "start_line": 13,
+                                  "end_line": 18,
+                                  "label": "for mock_name, mock_obj in (block.test_mock or {}).items():\n        log.info(f\"{prefix} mocking {mock_name}...\")\n        if hasattr(block, mock_name):\n            setattr(block, mock_name, mock_obj)\n        else:\n            log.info(f\"{prefix} mock {mock_name} not found in block\")",
+                                  "successors": [
+                                    {
+                                      "id": 8,
+                                      "start_line": 19,
+                                      "end_line": 19,
+                                      "label": "extra_exec_kwargs = {}",
+                                      "successors": [
+                                        {
+                                          "id": 9,
+                                          "start_line": 20,
+                                          "end_line": 25,
+                                          "label": "if CREDENTIALS_FIELD_NAME in block.input_schema.model_fields:\n        if not block.test_credentials:\n            raise ValueError(\n                f\"{prefix} requires credentials but has no test_credentials\"\n            )\n        extra_exec_kwargs[CREDENTIALS_FIELD_NAME] = block.test_credentials",
+                                          "successors": [
+                                            {
+                                              "id": 10,
+                                              "start_line": 26,
+                                              "end_line": 34,
+                                              "label": "for input_data in block.test_input:\n        log.info(f\"{prefix} in: {input_data}\")\n        for output_name, output_data in block.execute(input_data, **extra_exec_kwargs):\n            if output_index >= len(block.test_output):\n                raise ValueError(f\"{prefix} produced output more than expected\")\n            ex_output_name, ex_output_data = block.test_output[output_index]\n            compare(output_data, ex_output_data)\n            compare(output_name, ex_output_name)\n            output_index += 1",
+                                              "successors": [
+                                                {
+                                                  "id": 11,
+                                                  "start_line": 35,
+                                                  "end_line": 38,
+                                                  "label": "if output_index < len(block.test_output):\n        raise ValueError(\n            f\"{prefix} produced output less than expected. output_index={output_index}, len(block.test_output)={len(block.test_output)}\"\n        )",
+                                                  "successors": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "functions": [
+        {
+          "name": "compare",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 1,
+              "label": "def compare(data, expected_data):",
+              "successors": [
+                {
+                  "id": 2,
+                  "start_line": 2,
+                  "end_line": 2,
+                  "label": "if data == expected_data:",
+                  "successors": [
+                    {
+                      "id": 3,
+                      "start_line": 3,
+                      "end_line": 3,
+                      "label": "is_matching = True",
+                      "successors": [
+                        {
+                          "id": 10,
+                          "start_line": 10,
+                          "end_line": 10,
+                          "label": "mark = \"\u2705\" if is_matching else \"\u274c\"",
+                          "successors": [
+                            {
+                              "id": 11,
+                              "start_line": 11,
+                              "end_line": 11,
+                              "label": "log.info(f\"{prefix} {mark} comparing `{data}` vs `{expected_data}`\")",
+                              "successors": [
+                                {
+                                  "id": 12,
+                                  "start_line": 12,
+                                  "end_line": 12,
+                                  "label": "if not is_matching:",
+                                  "successors": [
+                                    {
+                                      "id": 13,
+                                      "start_line": 13,
+                                      "end_line": 15,
+                                      "label": "raise ValueError(\n                        f\"{prefix}: wrong output {data} vs {expected_data}\"\n                    )",
+                                      "successors": []
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "id": 4,
+                      "start_line": 4,
+                      "end_line": 4,
+                      "label": "elif isinstance(expected_data, type):",
+                      "successors": [
+                        {
+                          "id": 5,
+                          "start_line": 5,
+                          "end_line": 5,
+                          "label": "is_matching = isinstance(data, expected_data)",
+                          "successors": [
+                            {
+                              "id": 10,
+                              "start_line": 10,
+                              "end_line": 10,
+                              "label": "mark = \"\u2705\" if is_matching else \"\u274c\"",
+                              "successors": [
+                                {
+                                  "id": 11,
+                                  "start_line": 11,
+                                  "end_line": 11,
+                                  "label": "log.info(f\"{prefix} {mark} comparing `{data}` vs `{expected_data}`\")",
+                                  "successors": [
+                                    {
+                                      "id": 12,
+                                      "start_line": 12,
+                                      "end_line": 12,
+                                      "label": "if not is_matching:",
+                                      "successors": [
+                                        {
+                                          "id": 13,
+                                          "start_line": 13,
+                                          "end_line": 15,
+                                          "label": "raise ValueError(\n                        f\"{prefix}: wrong output {data} vs {expected_data}\"\n                    )",
+                                          "successors": []
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "id": 6,
+                      "start_line": 6,
+                      "end_line": 6,
+                      "label": "elif callable(expected_data):",
+                      "successors": [
+                        {
+                          "id": 7,
+                          "start_line": 7,
+                          "end_line": 7,
+                          "label": "is_matching = expected_data(data)",
+                          "successors": [
+                            {
+                              "id": 10,
+                              "start_line": 10,
+                              "end_line": 10,
+                              "label": "mark = \"\u2705\" if is_matching else \"\u274c\"",
+                              "successors": [
+                                {
+                                  "id": 11,
+                                  "start_line": 11,
+                                  "end_line": 11,
+                                  "label": "log.info(f\"{prefix} {mark} comparing `{data}` vs `{expected_data}`\")",
+                                  "successors": [
+                                    {
+                                      "id": 12,
+                                      "start_line": 12,
+                                      "end_line": 12,
+                                      "label": "if not is_matching:",
+                                      "successors": [
+                                        {
+                                          "id": 13,
+                                          "start_line": 13,
+                                          "end_line": 15,
+                                          "label": "raise ValueError(\n                        f\"{prefix}: wrong output {data} vs {expected_data}\"\n                    )",
+                                          "successors": []
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "id": 8,
+                      "start_line": 8,
+                      "end_line": 8,
+                      "label": "else:",
+                      "successors": [
+                        {
+                          "id": 9,
+                          "start_line": 9,
+                          "end_line": 9,
+                          "label": "is_matching = False",
+                          "successors": [
+                            {
+                              "id": 10,
+                              "start_line": 10,
+                              "end_line": 10,
+                              "label": "mark = \"\u2705\" if is_matching else \"\u274c\"",
+                              "successors": [
+                                {
+                                  "id": 11,
+                                  "start_line": 11,
+                                  "end_line": 11,
+                                  "label": "log.info(f\"{prefix} {mark} comparing `{data}` vs `{expected_data}`\")",
+                                  "successors": [
+                                    {
+                                      "id": 12,
+                                      "start_line": 12,
+                                      "end_line": 12,
+                                      "label": "if not is_matching:",
+                                      "successors": [
+                                        {
+                                          "id": 13,
+                                          "start_line": 13,
+                                          "end_line": 15,
+                                          "label": "raise ValueError(\n                        f\"{prefix}: wrong output {data} vs {expected_data}\"\n                    )",
+                                          "successors": []
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        }
+      ],
+      "classes": []
+    }
+  ],
+  "classes": [
+    {
+      "name": "SpinTestServer",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 1,
+          "start_line": 1,
+          "end_line": 2,
+          "label": "class SpinTestServer:\n    @staticmethod",
+          "successors": []
+        }
+      ],
+      "functions": [
+        {
+          "name": "__init__",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 1,
+              "label": "def __init__(self):",
+              "successors": [
+                {
+                  "id": 2,
+                  "start_line": 2,
+                  "end_line": 5,
+                  "label": "self.db_api = DatabaseManager()\n        self.exec_manager = ExecutionManager()\n        self.agent_server = AgentServer()\n        self.scheduler = ExecutionScheduler()",
+                  "successors": []
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "test_get_user_id",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 1,
+              "label": "def test_get_user_id():",
+              "successors": [
+                {
+                  "id": 2,
+                  "start_line": 2,
+                  "end_line": 2,
+                  "label": "return \"3e53486c-cf57-477e-ba2a-cb02dc828e1a\"",
+                  "successors": []
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "__aenter__",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 1,
+              "label": "async def __aenter__(self):",
+              "successors": [
+                {
+                  "id": 2,
+                  "start_line": 2,
+                  "end_line": 10,
+                  "label": "self.setup_dependency_overrides()\n        self.db_api.__enter__()\n        self.agent_server.__enter__()\n        self.exec_manager.__enter__()\n        self.scheduler.__enter__()\n        await db.connect()\n        await initialize_blocks()\n        await create_default_user()\n        return self",
+                  "successors": []
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "__aexit__",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 1,
+              "label": "async def __aexit__(self, exc_type, exc_val, exc_tb):",
+              "successors": [
+                {
+                  "id": 2,
+                  "start_line": 2,
+                  "end_line": 2,
+                  "label": "await db.disconnect()",
+                  "successors": [
+                    {
+                      "id": 3,
+                      "start_line": 3,
+                      "end_line": 3,
+                      "label": "self.scheduler.__exit__(exc_type, exc_val, exc_tb)",
+                      "successors": [
+                        {
+                          "id": 4,
+                          "start_line": 4,
+                          "end_line": 4,
+                          "label": "self.exec_manager.__exit__(exc_type, exc_val, exc_tb)",
+                          "successors": [
+                            {
+                              "id": 5,
+                              "start_line": 5,
+                              "end_line": 5,
+                              "label": "self.agent_server.__exit__(exc_type, exc_val, exc_tb)",
+                              "successors": [
+                                {
+                                  "id": 6,
+                                  "start_line": 6,
+                                  "end_line": 6,
+                                  "label": "self.db_api.__exit__(exc_type, exc_val, exc_tb)",
+                                  "successors": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "setup_dependency_overrides",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 1,
+              "label": "def setup_dependency_overrides(self):",
+              "successors": [
+                {
+                  "id": 2,
+                  "start_line": 2,
+                  "end_line": 5,
+                  "label": "# Override get_user_id for testing\n        self.agent_server.set_test_dependency_overrides(\n            {get_user_id: self.test_get_user_id}\n        )",
+                  "successors": []
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        }
+      ],
+      "classes": []
+    }
+  ]
+}

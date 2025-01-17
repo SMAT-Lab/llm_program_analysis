@@ -1,0 +1,2110 @@
+{
+  "name": "example_script",
+  "type": "CFG",
+  "blocks": [
+    {
+      "id": 1,
+      "start_line": 1,
+      "end_line": 16,
+      "label": "import base64\nfrom email.utils import parseaddr\nfrom typing import List\nfrom google.oauth2.credentials import Credentials\nfrom googleapiclient.discovery import build\nfrom pydantic import BaseModel\nfrom backend.data.block import Block, BlockCategory, BlockOutput, BlockSchema\nfrom backend.data.model import SchemaField\nfrom ._auth import (\n    GOOGLE_OAUTH_IS_CONFIGURED,\n    TEST_CREDENTIALS,\n    TEST_CREDENTIALS_INPUT,\n    GoogleCredentials,\n    GoogleCredentialsField,\n    GoogleCredentialsInput,\n)",
+      "successors": []
+    }
+  ],
+  "functions": [
+    {
+      "name": "run",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 1,
+          "start_line": 1,
+          "end_line": 3,
+          "label": "def run(\n        self, input_data: Input, *, credentials: GoogleCredentials, **kwargs\n    ) -> BlockOutput:",
+          "successors": [
+            {
+              "id": 2,
+              "start_line": 4,
+              "end_line": 4,
+              "label": "service = self._build_service(credentials, **kwargs)",
+              "successors": [
+                {
+                  "id": 3,
+                  "start_line": 5,
+                  "end_line": 5,
+                  "label": "messages = self._read_emails(service, input_data.query, input_data.max_results)",
+                  "successors": [
+                    {
+                      "id": 4,
+                      "start_line": 6,
+                      "end_line": 6,
+                      "label": "for email in messages:",
+                      "successors": [
+                        {
+                          "id": 5,
+                          "start_line": 7,
+                          "end_line": 7,
+                          "label": "yield \"email\", email",
+                          "successors": []
+                        }
+                      ]
+                    },
+                    {
+                      "id": 6,
+                      "start_line": 8,
+                      "end_line": 8,
+                      "label": "yield \"emails\", messages",
+                      "successors": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "_build_service",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 1,
+          "start_line": 1,
+          "end_line": 1,
+          "label": "def _build_service(credentials: GoogleCredentials, **kwargs):",
+          "successors": [
+            {
+              "id": 2,
+              "start_line": 2,
+              "end_line": 17,
+              "label": "creds = Credentials(\n            token=(\n                credentials.access_token.get_secret_value()\n                if credentials.access_token\n                else None\n            ),\n            refresh_token=(\n                credentials.refresh_token.get_secret_value()\n                if credentials.refresh_token\n                else None\n            ),\n            token_uri=\"https://oauth2.googleapis.com/token\",\n            client_id=kwargs.get(\"client_id\"),\n            client_secret=kwargs.get(\"client_secret\"),\n            scopes=credentials.scopes,\n        )",
+              "successors": [
+                {
+                  "id": 3,
+                  "start_line": 18,
+                  "end_line": 18,
+                  "label": "return build(\"gmail\", \"v1\", credentials=creds)",
+                  "successors": []
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "_read_emails",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 1,
+          "start_line": 1,
+          "end_line": 3,
+          "label": "def _read_emails(\n        self, service, query: str | None, max_results: int | None\n    ) -> list[Email]:",
+          "successors": [
+            {
+              "id": 2,
+              "start_line": 4,
+              "end_line": 9,
+              "label": "results = (\n            service.users()\n            .messages()\n            .list(userId=\"me\", q=query or \"\", maxResults=max_results or 10)\n            .execute()\n        )",
+              "successors": [
+                {
+                  "id": 3,
+                  "start_line": 10,
+                  "end_line": 10,
+                  "label": "messages = results.get(\"messages\", [])",
+                  "successors": [
+                    {
+                      "id": 4,
+                      "start_line": 11,
+                      "end_line": 11,
+                      "label": "email_data = []",
+                      "successors": [
+                        {
+                          "id": 5,
+                          "start_line": 12,
+                          "end_line": 12,
+                          "label": "for message in messages:",
+                          "successors": [
+                            {
+                              "id": 6,
+                              "start_line": 13,
+                              "end_line": 18,
+                              "label": "msg = (\n                service.users()\n                .messages()\n                .get(userId=\"me\", id=message[\"id\"], format=\"full\")\n                .execute()\n            )",
+                              "successors": [
+                                {
+                                  "id": 7,
+                                  "start_line": 19,
+                                  "end_line": 22,
+                                  "label": "headers = {\n                header[\"name\"].lower(): header[\"value\"]\n                for header in msg[\"payload\"][\"headers\"]\n            }",
+                                  "successors": [
+                                    {
+                                      "id": 8,
+                                      "start_line": 23,
+                                      "end_line": 23,
+                                      "label": "attachments = self._get_attachments(service, msg)",
+                                      "successors": [
+                                        {
+                                          "id": 9,
+                                          "start_line": 24,
+                                          "end_line": 34,
+                                          "label": "email = Email(\n                id=msg[\"id\"],\n                subject=headers.get(\"subject\", \"No Subject\"),\n                snippet=msg[\"snippet\"],\n                from_=parseaddr(headers.get(\"from\", \"\"))[1],\n                to=parseaddr(headers.get(\"to\", \"\"))[1],\n                date=headers.get(\"date\", \"\"),\n                body=self._get_email_body(msg),\n                sizeEstimate=msg[\"sizeEstimate\"],\n                attachments=attachments,\n            )",
+                                          "successors": [
+                                            {
+                                              "id": 10,
+                                              "start_line": 35,
+                                              "end_line": 35,
+                                              "label": "email_data.append(email)",
+                                              "successors": []
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "_get_email_body",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 1,
+          "start_line": 1,
+          "end_line": 1,
+          "label": "def _get_email_body(self, msg):",
+          "successors": [
+            {
+              "id": 2,
+              "start_line": 2,
+              "end_line": 2,
+              "label": "if \"parts\" in msg[\"payload\"]:",
+              "successors": [
+                {
+                  "id": 3,
+                  "start_line": 3,
+                  "end_line": 3,
+                  "label": "for part in msg[\"payload\"][\"parts\"]:",
+                  "successors": [
+                    {
+                      "id": 4,
+                      "start_line": 4,
+                      "end_line": 4,
+                      "label": "if part[\"mimeType\"] == \"text/plain\":",
+                      "successors": [
+                        {
+                          "id": 5,
+                          "start_line": 5,
+                          "end_line": 7,
+                          "label": "return base64.urlsafe_b64decode(part[\"body\"][\"data\"]).decode(\n                        \"utf-8\"\n                    )",
+                          "successors": []
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "id": 6,
+                  "start_line": 8,
+                  "end_line": 8,
+                  "label": "elif msg[\"payload\"][\"mimeType\"] == \"text/plain\":",
+                  "successors": [
+                    {
+                      "id": 7,
+                      "start_line": 9,
+                      "end_line": 11,
+                      "label": "return base64.urlsafe_b64decode(msg[\"payload\"][\"body\"][\"data\"]).decode(\n                \"utf-8\"\n            )",
+                      "successors": []
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": 8,
+              "start_line": 12,
+              "end_line": 12,
+              "label": "return \"This email does not contain a text body.\"",
+              "successors": []
+            }
+          ]
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "_get_attachments",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 1,
+          "start_line": 1,
+          "end_line": 2,
+          "label": "def _get_attachments(self, service, message):\n        attachments = []",
+          "successors": [
+            {
+              "id": 2,
+              "start_line": 3,
+              "end_line": 3,
+              "label": "if \"parts\" in message[\"payload\"]:",
+              "successors": [
+                {
+                  "id": 3,
+                  "start_line": 4,
+                  "end_line": 4,
+                  "label": "for part in message[\"payload\"][\"parts\"]:",
+                  "successors": [
+                    {
+                      "id": 4,
+                      "start_line": 5,
+                      "end_line": 5,
+                      "label": "if part[\"filename\"]:",
+                      "successors": [
+                        {
+                          "id": 5,
+                          "start_line": 6,
+                          "end_line": 11,
+                          "label": "attachment = Attachment(\n                        filename=part[\"filename\"],\n                        content_type=part[\"mimeType\"],\n                        size=int(part[\"body\"].get(\"size\", 0)),\n                        attachment_id=part[\"body\"][\"attachmentId\"],\n                    )",
+                          "successors": [
+                            {
+                              "id": 6,
+                              "start_line": 12,
+                              "end_line": 12,
+                              "label": "attachments.append(attachment)",
+                              "successors": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "id": 7,
+                  "start_line": 13,
+                  "end_line": 13,
+                  "label": "return attachments",
+                  "successors": []
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "download_attachment",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 1,
+          "start_line": 1,
+          "end_line": 1,
+          "label": "def download_attachment(self, service, message_id: str, attachment_id: str):",
+          "successors": [
+            {
+              "id": 2,
+              "start_line": 2,
+              "end_line": 8,
+              "label": "attachment = (\n            service.users()\n            .messages()\n            .attachments()\n            .get(userId=\"me\", messageId=message_id, id=attachment_id)\n            .execute()\n        )",
+              "successors": [
+                {
+                  "id": 3,
+                  "start_line": 9,
+                  "end_line": 9,
+                  "label": "file_data = base64.urlsafe_b64decode(attachment[\"data\"].encode(\"UTF-8\"))",
+                  "successors": [
+                    {
+                      "id": 4,
+                      "start_line": 10,
+                      "end_line": 10,
+                      "label": "return file_data",
+                      "successors": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "run",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 1,
+          "start_line": 1,
+          "end_line": 3,
+          "label": "def run(\n        self, input_data: Input, *, credentials: GoogleCredentials, **kwargs\n    ) -> BlockOutput:",
+          "successors": [
+            {
+              "id": 2,
+              "start_line": 4,
+              "end_line": 4,
+              "label": "service = GmailReadBlock._build_service(credentials, **kwargs)",
+              "successors": [
+                {
+                  "id": 3,
+                  "start_line": 5,
+                  "end_line": 7,
+                  "label": "send_result = self._send_email(\n            service, input_data.to, input_data.subject, input_data.body\n        )",
+                  "successors": [
+                    {
+                      "id": 4,
+                      "start_line": 8,
+                      "end_line": 8,
+                      "label": "yield \"result\", send_result",
+                      "successors": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "_send_email",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 1,
+          "start_line": 1,
+          "end_line": 1,
+          "label": "def _send_email(self, service, to: str, subject: str, body: str) -> dict:",
+          "successors": [
+            {
+              "id": 2,
+              "start_line": 2,
+              "end_line": 2,
+              "label": "if not to or not subject or not body:",
+              "successors": [
+                {
+                  "id": 3,
+                  "start_line": 3,
+                  "end_line": 3,
+                  "label": "raise ValueError(\"To, subject, and body are required for sending an email\")",
+                  "successors": []
+                },
+                {
+                  "id": 4,
+                  "start_line": 4,
+                  "end_line": 8,
+                  "label": "message = self._create_message(to, subject, body)\n        sent_message = (\n            service.users().messages().send(userId=\"me\", body=message).execute()\n        )\n        return {\"id\": sent_message[\"id\"], \"status\": \"sent\"}",
+                  "successors": []
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "_create_message",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 1,
+          "start_line": 1,
+          "end_line": 1,
+          "label": "def _create_message(self, to: str, subject: str, body: str) -> dict:",
+          "successors": [
+            {
+              "id": 2,
+              "start_line": 2,
+              "end_line": 8,
+              "label": "import base64\n        from email.mime.text import MIMEText\n        message = MIMEText(body)\n        message[\"to\"] = to\n        message[\"subject\"] = subject\n        raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode(\"utf-8\")\n        return {\"raw\": raw_message}",
+              "successors": []
+            }
+          ]
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "run",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 1,
+          "start_line": 1,
+          "end_line": 3,
+          "label": "def run(\n        self, input_data: Input, *, credentials: GoogleCredentials, **kwargs\n    ) -> BlockOutput:",
+          "successors": [
+            {
+              "id": 2,
+              "start_line": 4,
+              "end_line": 4,
+              "label": "service = GmailReadBlock._build_service(credentials, **kwargs)",
+              "successors": [
+                {
+                  "id": 3,
+                  "start_line": 5,
+                  "end_line": 5,
+                  "label": "labels = self._list_labels(service)",
+                  "successors": [
+                    {
+                      "id": 4,
+                      "start_line": 6,
+                      "end_line": 6,
+                      "label": "yield \"result\", labels",
+                      "successors": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "_list_labels",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 1,
+          "start_line": 1,
+          "end_line": 1,
+          "label": "def _list_labels(self, service) -> list[dict]:",
+          "successors": [
+            {
+              "id": 2,
+              "start_line": 2,
+              "end_line": 2,
+              "label": "results = service.users().labels().list(userId=\"me\").execute()",
+              "successors": [
+                {
+                  "id": 3,
+                  "start_line": 3,
+                  "end_line": 3,
+                  "label": "labels = results.get(\"labels\", [])",
+                  "successors": [
+                    {
+                      "id": 4,
+                      "start_line": 4,
+                      "end_line": 4,
+                      "label": "return [{\"id\": label[\"id\"], \"name\": label[\"name\"]} for label in labels]",
+                      "successors": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "run",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 1,
+          "start_line": 1,
+          "end_line": 3,
+          "label": "def run(\n        self, input_data: Input, *, credentials: GoogleCredentials, **kwargs\n    ) -> BlockOutput:",
+          "successors": [
+            {
+              "id": 2,
+              "start_line": 4,
+              "end_line": 4,
+              "label": "service = GmailReadBlock._build_service(credentials, **kwargs)",
+              "successors": [
+                {
+                  "id": 3,
+                  "start_line": 5,
+                  "end_line": 5,
+                  "label": "result = self._add_label(service, input_data.message_id, input_data.label_name)",
+                  "successors": [
+                    {
+                      "id": 4,
+                      "start_line": 6,
+                      "end_line": 6,
+                      "label": "yield \"result\", result",
+                      "successors": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "_add_label",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 1,
+          "start_line": 1,
+          "end_line": 1,
+          "label": "def _add_label(self, service, message_id: str, label_name: str) -> dict:",
+          "successors": [
+            {
+              "id": 2,
+              "start_line": 2,
+              "end_line": 2,
+              "label": "label_id = self._get_or_create_label(service, label_name)",
+              "successors": [
+                {
+                  "id": 3,
+                  "start_line": 3,
+                  "end_line": 5,
+                  "label": "service.users().messages().modify(\n            userId=\"me\", id=message_id, body={\"addLabelIds\": [label_id]}\n        ).execute()",
+                  "successors": [
+                    {
+                      "id": 4,
+                      "start_line": 6,
+                      "end_line": 6,
+                      "label": "return {\"status\": \"Label added successfully\", \"label_id\": label_id}",
+                      "successors": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "_get_or_create_label",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 1,
+          "start_line": 1,
+          "end_line": 2,
+          "label": "def _get_or_create_label(self, service, label_name: str) -> str:\n        label_id = self._get_label_id(service, label_name)",
+          "successors": [
+            {
+              "id": 2,
+              "start_line": 3,
+              "end_line": 3,
+              "label": "if not label_id:",
+              "successors": [
+                {
+                  "id": 3,
+                  "start_line": 4,
+                  "end_line": 10,
+                  "label": "label = (\n                service.users()\n                .labels()\n                .create(userId=\"me\", body={\"name\": label_name})\n                .execute()\n            )\n            label_id = label[\"id\"]",
+                  "successors": [
+                    {
+                      "id": 4,
+                      "start_line": 11,
+                      "end_line": 11,
+                      "label": "return label_id",
+                      "successors": []
+                    }
+                  ]
+                },
+                {
+                  "id": 4,
+                  "start_line": 11,
+                  "end_line": 11,
+                  "label": "return label_id",
+                  "successors": []
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "_get_label_id",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 1,
+          "start_line": 1,
+          "end_line": 3,
+          "label": "def _get_label_id(self, service, label_name: str) -> str | None:\n        results = service.users().labels().list(userId=\"me\").execute()\n        labels = results.get(\"labels\", [])",
+          "successors": [
+            {
+              "id": 2,
+              "start_line": 4,
+              "end_line": 4,
+              "label": "for label in labels:",
+              "successors": [
+                {
+                  "id": 3,
+                  "start_line": 5,
+                  "end_line": 5,
+                  "label": "if label[\"name\"] == label_name:",
+                  "successors": [
+                    {
+                      "id": 4,
+                      "start_line": 6,
+                      "end_line": 6,
+                      "label": "return label[\"id\"]",
+                      "successors": []
+                    }
+                  ]
+                },
+                {
+                  "id": 5,
+                  "start_line": 7,
+                  "end_line": 7,
+                  "label": "return None",
+                  "successors": []
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "run",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 1,
+          "start_line": 1,
+          "end_line": 3,
+          "label": "def run(\n        self, input_data: Input, *, credentials: GoogleCredentials, **kwargs\n    ) -> BlockOutput:",
+          "successors": [
+            {
+              "id": 2,
+              "start_line": 4,
+              "end_line": 4,
+              "label": "service = GmailReadBlock._build_service(credentials, **kwargs)",
+              "successors": [
+                {
+                  "id": 3,
+                  "start_line": 5,
+                  "end_line": 7,
+                  "label": "result = self._remove_label(\n            service, input_data.message_id, input_data.label_name\n        )",
+                  "successors": [
+                    {
+                      "id": 4,
+                      "start_line": 8,
+                      "end_line": 8,
+                      "label": "yield \"result\", result",
+                      "successors": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "_remove_label",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 1,
+          "start_line": 1,
+          "end_line": 2,
+          "label": "def _remove_label(self, service, message_id: str, label_name: str) -> dict:\n        label_id = self._get_label_id(service, label_name)",
+          "successors": [
+            {
+              "id": 2,
+              "start_line": 3,
+              "end_line": 3,
+              "label": "if label_id:",
+              "successors": [
+                {
+                  "id": 3,
+                  "start_line": 4,
+                  "end_line": 7,
+                  "label": "service.users().messages().modify(\n                userId=\"me\", id=message_id, body={\"removeLabelIds\": [label_id]}\n            ).execute()\n            return {\"status\": \"Label removed successfully\", \"label_id\": label_id}",
+                  "successors": []
+                },
+                {
+                  "id": 4,
+                  "start_line": 8,
+                  "end_line": 9,
+                  "label": "else:\n            return {\"status\": \"Label not found\", \"label_name\": label_name}",
+                  "successors": []
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "_get_label_id",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 1,
+          "start_line": 1,
+          "end_line": 1,
+          "label": "def _get_label_id(self, service, label_name: str) -> str | None:",
+          "successors": [
+            {
+              "id": 2,
+              "start_line": 2,
+              "end_line": 3,
+              "label": "results = service.users().labels().list(userId=\"me\").execute()\n        labels = results.get(\"labels\", [])",
+              "successors": [
+                {
+                  "id": 3,
+                  "start_line": 4,
+                  "end_line": 4,
+                  "label": "for label in labels:",
+                  "successors": [
+                    {
+                      "id": 4,
+                      "start_line": 5,
+                      "end_line": 5,
+                      "label": "if label[\"name\"] == label_name:",
+                      "successors": [
+                        {
+                          "id": 5,
+                          "start_line": 6,
+                          "end_line": 6,
+                          "label": "return label[\"id\"]",
+                          "successors": []
+                        }
+                      ]
+                    },
+                    {
+                      "id": 6,
+                      "start_line": 7,
+                      "end_line": 7,
+                      "label": "return None",
+                      "successors": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "functions": [],
+      "classes": []
+    }
+  ],
+  "classes": [
+    {
+      "name": "Attachment",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 1,
+          "start_line": 1,
+          "end_line": 5,
+          "label": "class Attachment(BaseModel):\n    filename: str\n    content_type: str\n    size: int\n    attachment_id: str",
+          "successors": []
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "Email",
+      "type": "CFG",
+      "blocks": [],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "GmailReadBlock",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 1,
+          "start_line": 1,
+          "end_line": 1,
+          "label": "class GmailReadBlock(Block):",
+          "successors": [
+            {
+              "id": 2,
+              "start_line": 2,
+              "end_line": 2,
+              "label": "@staticmethod",
+              "successors": [
+                {
+                  "id": 3,
+                  "start_line": 3,
+                  "end_line": 3,
+                  "label": "# Add a new method to download attachment content",
+                  "successors": []
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "functions": [
+        {
+          "name": "__init__",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 1,
+              "label": "def __init__(self):",
+              "successors": [
+                {
+                  "id": 2,
+                  "start_line": 2,
+                  "end_line": 63,
+                  "label": "super().__init__(\n            id=\"25310c70-b89b-43ba-b25c-4dfa7e2a481c\",\n            description=\"This block reads emails from Gmail.\",\n            categories={BlockCategory.COMMUNICATION},\n            disabled=not GOOGLE_OAUTH_IS_CONFIGURED,\n            input_schema=GmailReadBlock.Input,\n            output_schema=GmailReadBlock.Output,\n            test_input={\n                \"query\": \"is:unread\",\n                \"max_results\": 5,\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[\n                (\n                    \"email\",\n                    {\n                        \"id\": \"1\",\n                        \"subject\": \"Test Email\",\n                        \"snippet\": \"This is a test email\",\n                        \"from_\": \"test@example.com\",\n                        \"to\": \"recipient@example.com\",\n                        \"date\": \"2024-01-01\",\n                        \"body\": \"This is a test email\",\n                        \"sizeEstimate\": 100,\n                        \"attachments\": [],\n                    },\n                ),\n                (\n                    \"emails\",\n                    [\n                        {\n                            \"id\": \"1\",\n                            \"subject\": \"Test Email\",\n                            \"snippet\": \"This is a test email\",\n                            \"from_\": \"test@example.com\",\n                            \"to\": \"recipient@example.com\",\n                            \"date\": \"2024-01-01\",\n                            \"body\": \"This is a test email\",\n                            \"sizeEstimate\": 100,\n                            \"attachments\": [],\n                        }\n                    ],\n                ),\n            ],\n            test_mock={\n                \"_read_emails\": lambda *args, **kwargs: [\n                    {\n                        \"id\": \"1\",\n                        \"subject\": \"Test Email\",\n                        \"snippet\": \"This is a test email\",\n                        \"from_\": \"test@example.com\",\n                        \"to\": \"recipient@example.com\",\n                        \"date\": \"2024-01-01\",\n                        \"body\": \"This is a test email\",\n                        \"sizeEstimate\": 100,\n                        \"attachments\": [],\n                    }\n                ],\n                \"_send_email\": lambda *args, **kwargs: {\"id\": \"1\", \"status\": \"sent\"},\n            },\n        )",
+                  "successors": []
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "run",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 3,
+              "label": "def run(\n        self, input_data: Input, *, credentials: GoogleCredentials, **kwargs\n    ) -> BlockOutput:",
+              "successors": [
+                {
+                  "id": 2,
+                  "start_line": 4,
+                  "end_line": 4,
+                  "label": "service = self._build_service(credentials, **kwargs)",
+                  "successors": [
+                    {
+                      "id": 3,
+                      "start_line": 5,
+                      "end_line": 5,
+                      "label": "messages = self._read_emails(service, input_data.query, input_data.max_results)",
+                      "successors": [
+                        {
+                          "id": 4,
+                          "start_line": 6,
+                          "end_line": 6,
+                          "label": "for email in messages:",
+                          "successors": [
+                            {
+                              "id": 5,
+                              "start_line": 7,
+                              "end_line": 7,
+                              "label": "yield \"email\", email",
+                              "successors": []
+                            }
+                          ]
+                        },
+                        {
+                          "id": 6,
+                          "start_line": 8,
+                          "end_line": 8,
+                          "label": "yield \"emails\", messages",
+                          "successors": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "_build_service",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 1,
+              "label": "def _build_service(credentials: GoogleCredentials, **kwargs):",
+              "successors": [
+                {
+                  "id": 2,
+                  "start_line": 2,
+                  "end_line": 17,
+                  "label": "creds = Credentials(\n            token=(\n                credentials.access_token.get_secret_value()\n                if credentials.access_token\n                else None\n            ),\n            refresh_token=(\n                credentials.refresh_token.get_secret_value()\n                if credentials.refresh_token\n                else None\n            ),\n            token_uri=\"https://oauth2.googleapis.com/token\",\n            client_id=kwargs.get(\"client_id\"),\n            client_secret=kwargs.get(\"client_secret\"),\n            scopes=credentials.scopes,\n        )",
+                  "successors": [
+                    {
+                      "id": 3,
+                      "start_line": 18,
+                      "end_line": 18,
+                      "label": "return build(\"gmail\", \"v1\", credentials=creds)",
+                      "successors": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "_read_emails",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 3,
+              "label": "def _read_emails(\n        self, service, query: str | None, max_results: int | None\n    ) -> list[Email]:",
+              "successors": [
+                {
+                  "id": 2,
+                  "start_line": 4,
+                  "end_line": 9,
+                  "label": "results = (\n            service.users()\n            .messages()\n            .list(userId=\"me\", q=query or \"\", maxResults=max_results or 10)\n            .execute()\n        )",
+                  "successors": [
+                    {
+                      "id": 3,
+                      "start_line": 10,
+                      "end_line": 10,
+                      "label": "messages = results.get(\"messages\", [])",
+                      "successors": [
+                        {
+                          "id": 4,
+                          "start_line": 11,
+                          "end_line": 11,
+                          "label": "email_data = []",
+                          "successors": [
+                            {
+                              "id": 5,
+                              "start_line": 12,
+                              "end_line": 12,
+                              "label": "for message in messages:",
+                              "successors": [
+                                {
+                                  "id": 6,
+                                  "start_line": 13,
+                                  "end_line": 18,
+                                  "label": "msg = (\n                service.users()\n                .messages()\n                .get(userId=\"me\", id=message[\"id\"], format=\"full\")\n                .execute()\n            )",
+                                  "successors": [
+                                    {
+                                      "id": 7,
+                                      "start_line": 19,
+                                      "end_line": 22,
+                                      "label": "headers = {\n                header[\"name\"].lower(): header[\"value\"]\n                for header in msg[\"payload\"][\"headers\"]\n            }",
+                                      "successors": [
+                                        {
+                                          "id": 8,
+                                          "start_line": 23,
+                                          "end_line": 23,
+                                          "label": "attachments = self._get_attachments(service, msg)",
+                                          "successors": [
+                                            {
+                                              "id": 9,
+                                              "start_line": 24,
+                                              "end_line": 34,
+                                              "label": "email = Email(\n                id=msg[\"id\"],\n                subject=headers.get(\"subject\", \"No Subject\"),\n                snippet=msg[\"snippet\"],\n                from_=parseaddr(headers.get(\"from\", \"\"))[1],\n                to=parseaddr(headers.get(\"to\", \"\"))[1],\n                date=headers.get(\"date\", \"\"),\n                body=self._get_email_body(msg),\n                sizeEstimate=msg[\"sizeEstimate\"],\n                attachments=attachments,\n            )",
+                                              "successors": [
+                                                {
+                                                  "id": 10,
+                                                  "start_line": 35,
+                                                  "end_line": 35,
+                                                  "label": "email_data.append(email)",
+                                                  "successors": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": 11,
+              "start_line": 36,
+              "end_line": 36,
+              "label": "return email_data",
+              "successors": []
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "_get_email_body",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 1,
+              "label": "def _get_email_body(self, msg):",
+              "successors": [
+                {
+                  "id": 2,
+                  "start_line": 2,
+                  "end_line": 2,
+                  "label": "if \"parts\" in msg[\"payload\"]:",
+                  "successors": [
+                    {
+                      "id": 3,
+                      "start_line": 3,
+                      "end_line": 3,
+                      "label": "for part in msg[\"payload\"][\"parts\"]:",
+                      "successors": [
+                        {
+                          "id": 4,
+                          "start_line": 4,
+                          "end_line": 4,
+                          "label": "if part[\"mimeType\"] == \"text/plain\":",
+                          "successors": [
+                            {
+                              "id": 5,
+                              "start_line": 5,
+                              "end_line": 7,
+                              "label": "return base64.urlsafe_b64decode(part[\"body\"][\"data\"]).decode(\n                        \"utf-8\"\n                    )",
+                              "successors": []
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "id": 6,
+                      "start_line": 8,
+                      "end_line": 8,
+                      "label": "elif msg[\"payload\"][\"mimeType\"] == \"text/plain\":",
+                      "successors": [
+                        {
+                          "id": 7,
+                          "start_line": 9,
+                          "end_line": 11,
+                          "label": "return base64.urlsafe_b64decode(msg[\"payload\"][\"body\"][\"data\"]).decode(\n                \"utf-8\"\n            )",
+                          "successors": []
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "id": 8,
+                  "start_line": 12,
+                  "end_line": 12,
+                  "label": "return \"This email does not contain a text body.\"",
+                  "successors": []
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "_get_attachments",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 2,
+              "label": "def _get_attachments(self, service, message):\n        attachments = []",
+              "successors": [
+                {
+                  "id": 2,
+                  "start_line": 3,
+                  "end_line": 3,
+                  "label": "if \"parts\" in message[\"payload\"]:",
+                  "successors": [
+                    {
+                      "id": 3,
+                      "start_line": 4,
+                      "end_line": 4,
+                      "label": "for part in message[\"payload\"][\"parts\"]:",
+                      "successors": [
+                        {
+                          "id": 4,
+                          "start_line": 5,
+                          "end_line": 5,
+                          "label": "if part[\"filename\"]:",
+                          "successors": [
+                            {
+                              "id": 5,
+                              "start_line": 6,
+                              "end_line": 11,
+                              "label": "attachment = Attachment(\n                        filename=part[\"filename\"],\n                        content_type=part[\"mimeType\"],\n                        size=int(part[\"body\"].get(\"size\", 0)),\n                        attachment_id=part[\"body\"][\"attachmentId\"],\n                    )",
+                              "successors": [
+                                {
+                                  "id": 6,
+                                  "start_line": 12,
+                                  "end_line": 12,
+                                  "label": "attachments.append(attachment)",
+                                  "successors": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "id": 7,
+                      "start_line": 13,
+                      "end_line": 13,
+                      "label": "return attachments",
+                      "successors": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "download_attachment",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 1,
+              "label": "def download_attachment(self, service, message_id: str, attachment_id: str):",
+              "successors": [
+                {
+                  "id": 2,
+                  "start_line": 2,
+                  "end_line": 8,
+                  "label": "attachment = (\n            service.users()\n            .messages()\n            .attachments()\n            .get(userId=\"me\", messageId=message_id, id=attachment_id)\n            .execute()\n        )",
+                  "successors": [
+                    {
+                      "id": 3,
+                      "start_line": 9,
+                      "end_line": 9,
+                      "label": "file_data = base64.urlsafe_b64decode(attachment[\"data\"].encode(\"UTF-8\"))",
+                      "successors": [
+                        {
+                          "id": 4,
+                          "start_line": 10,
+                          "end_line": 10,
+                          "label": "return file_data",
+                          "successors": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        }
+      ],
+      "classes": [
+        {
+          "name": "Input",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 12,
+              "label": "class Input(BlockSchema):\n        credentials: GoogleCredentialsInput = GoogleCredentialsField(\n            [\"https://www.googleapis.com/auth/gmail.readonly\"]\n        )\n        query: str = SchemaField(\n            description=\"Search query for reading emails\",\n            default=\"is:unread\",\n        )\n        max_results: int = SchemaField(\n            description=\"Maximum number of emails to retrieve\",\n            default=10,\n        )",
+              "successors": []
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "Output",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 10,
+              "label": "class Output(BlockSchema):\n        email: Email = SchemaField(\n            description=\"Email data\",\n        )\n        emails: list[Email] = SchemaField(\n            description=\"List of email data\",\n        )\n        error: str = SchemaField(\n            description=\"Error message if any\",\n        )",
+              "successors": []
+            }
+          ],
+          "functions": [],
+          "classes": []
+        }
+      ]
+    },
+    {
+      "name": "GmailSendBlock",
+      "type": "CFG",
+      "blocks": [],
+      "functions": [
+        {
+          "name": "__init__",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 1,
+              "label": "def __init__(self):",
+              "successors": [
+                {
+                  "id": 2,
+                  "start_line": 2,
+                  "end_line": 22,
+                  "label": "super().__init__(\n            id=\"6c27abc2-e51d-499e-a85f-5a0041ba94f0\",\n            description=\"This block sends an email using Gmail.\",\n            categories={BlockCategory.COMMUNICATION},\n            input_schema=GmailSendBlock.Input,\n            output_schema=GmailSendBlock.Output,\n            disabled=not GOOGLE_OAUTH_IS_CONFIGURED,\n            test_input={\n                \"to\": \"recipient@example.com\",\n                \"subject\": \"Test Email\",\n                \"body\": \"This is a test email sent from GmailSendBlock.\",\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[\n                (\"result\", {\"id\": \"1\", \"status\": \"sent\"}),\n            ],\n            test_mock={\n                \"_send_email\": lambda *args, **kwargs: {\"id\": \"1\", \"status\": \"sent\"},\n            },\n        )",
+                  "successors": []
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "run",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 3,
+              "label": "def run(\n        self, input_data: Input, *, credentials: GoogleCredentials, **kwargs\n    ) -> BlockOutput:",
+              "successors": [
+                {
+                  "id": 2,
+                  "start_line": 4,
+                  "end_line": 4,
+                  "label": "service = GmailReadBlock._build_service(credentials, **kwargs)",
+                  "successors": [
+                    {
+                      "id": 3,
+                      "start_line": 5,
+                      "end_line": 7,
+                      "label": "send_result = self._send_email(\n            service, input_data.to, input_data.subject, input_data.body\n        )",
+                      "successors": [
+                        {
+                          "id": 4,
+                          "start_line": 8,
+                          "end_line": 8,
+                          "label": "yield \"result\", send_result",
+                          "successors": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "_send_email",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 1,
+              "label": "def _send_email(self, service, to: str, subject: str, body: str) -> dict:",
+              "successors": [
+                {
+                  "id": 2,
+                  "start_line": 2,
+                  "end_line": 2,
+                  "label": "if not to or not subject or not body:",
+                  "successors": [
+                    {
+                      "id": 3,
+                      "start_line": 3,
+                      "end_line": 3,
+                      "label": "raise ValueError(\"To, subject, and body are required for sending an email\")",
+                      "successors": []
+                    },
+                    {
+                      "id": 4,
+                      "start_line": 4,
+                      "end_line": 8,
+                      "label": "message = self._create_message(to, subject, body)\n        sent_message = (\n            service.users().messages().send(userId=\"me\", body=message).execute()\n        )\n        return {\"id\": sent_message[\"id\"], \"status\": \"sent\"}",
+                      "successors": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "_create_message",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 1,
+              "label": "def _create_message(self, to: str, subject: str, body: str) -> dict:",
+              "successors": [
+                {
+                  "id": 2,
+                  "start_line": 2,
+                  "end_line": 2,
+                  "label": "import base64",
+                  "successors": [
+                    {
+                      "id": 3,
+                      "start_line": 3,
+                      "end_line": 3,
+                      "label": "from email.mime.text import MIMEText",
+                      "successors": [
+                        {
+                          "id": 4,
+                          "start_line": 4,
+                          "end_line": 4,
+                          "label": "message = MIMEText(body)",
+                          "successors": [
+                            {
+                              "id": 5,
+                              "start_line": 5,
+                              "end_line": 5,
+                              "label": "message[\"to\"] = to",
+                              "successors": [
+                                {
+                                  "id": 6,
+                                  "start_line": 6,
+                                  "end_line": 6,
+                                  "label": "message[\"subject\"] = subject",
+                                  "successors": [
+                                    {
+                                      "id": 7,
+                                      "start_line": 7,
+                                      "end_line": 7,
+                                      "label": "raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode(\"utf-8\")",
+                                      "successors": [
+                                        {
+                                          "id": 8,
+                                          "start_line": 8,
+                                          "end_line": 8,
+                                          "label": "return {\"raw\": raw_message}",
+                                          "successors": []
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        }
+      ],
+      "classes": [
+        {
+          "name": "Input",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 13,
+              "label": "class Input(BlockSchema):\n        credentials: GoogleCredentialsInput = GoogleCredentialsField(\n            [\"https://www.googleapis.com/auth/gmail.send\"]\n        )\n        to: str = SchemaField(\n            description=\"Recipient email address\",\n        )\n        subject: str = SchemaField(\n            description=\"Email subject\",\n        )\n        body: str = SchemaField(\n            description=\"Email body\",\n        )",
+              "successors": []
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "Output",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 7,
+              "label": "class Output(BlockSchema):\n        result: dict = SchemaField(\n            description=\"Send confirmation\",\n        )\n        error: str = SchemaField(\n            description=\"Error message if any\",\n        )",
+              "successors": []
+            }
+          ],
+          "functions": [],
+          "classes": []
+        }
+      ]
+    },
+    {
+      "name": "GmailListLabelsBlock",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 1,
+          "start_line": 1,
+          "end_line": 1,
+          "label": "class GmailListLabelsBlock(Block):",
+          "successors": []
+        }
+      ],
+      "functions": [
+        {
+          "name": "__init__",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 1,
+              "label": "def __init__(self):",
+              "successors": [
+                {
+                  "id": 2,
+                  "start_line": 2,
+                  "end_line": 28,
+                  "label": "super().__init__(\n            id=\"3e1c2c1c-c689-4520-b956-1f3bf4e02bb7\",\n            description=\"This block lists all labels in Gmail.\",\n            categories={BlockCategory.COMMUNICATION},\n            input_schema=GmailListLabelsBlock.Input,\n            output_schema=GmailListLabelsBlock.Output,\n            disabled=not GOOGLE_OAUTH_IS_CONFIGURED,\n            test_input={\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[\n                (\n                    \"result\",\n                    [\n                        {\"id\": \"Label_1\", \"name\": \"Important\"},\n                        {\"id\": \"Label_2\", \"name\": \"Work\"},\n                    ],\n                ),\n            ],\n            test_mock={\n                \"_list_labels\": lambda *args, **kwargs: [\n                    {\"id\": \"Label_1\", \"name\": \"Important\"},\n                    {\"id\": \"Label_2\", \"name\": \"Work\"},\n                ],\n            },\n        )",
+                  "successors": []
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "run",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 3,
+              "label": "def run(\n        self, input_data: Input, *, credentials: GoogleCredentials, **kwargs\n    ) -> BlockOutput:",
+              "successors": [
+                {
+                  "id": 2,
+                  "start_line": 4,
+                  "end_line": 4,
+                  "label": "service = GmailReadBlock._build_service(credentials, **kwargs)",
+                  "successors": [
+                    {
+                      "id": 3,
+                      "start_line": 5,
+                      "end_line": 5,
+                      "label": "labels = self._list_labels(service)",
+                      "successors": [
+                        {
+                          "id": 4,
+                          "start_line": 6,
+                          "end_line": 6,
+                          "label": "yield \"result\", labels",
+                          "successors": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "_list_labels",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 1,
+              "label": "def _list_labels(self, service) -> list[dict]:",
+              "successors": [
+                {
+                  "id": 2,
+                  "start_line": 2,
+                  "end_line": 2,
+                  "label": "results = service.users().labels().list(userId=\"me\").execute()",
+                  "successors": [
+                    {
+                      "id": 3,
+                      "start_line": 3,
+                      "end_line": 3,
+                      "label": "labels = results.get(\"labels\", [])",
+                      "successors": [
+                        {
+                          "id": 4,
+                          "start_line": 4,
+                          "end_line": 4,
+                          "label": "return [{\"id\": label[\"id\"], \"name\": label[\"name\"]} for label in labels]",
+                          "successors": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        }
+      ],
+      "classes": [
+        {
+          "name": "Input",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 4,
+              "label": "class Input(BlockSchema):\n        credentials: GoogleCredentialsInput = GoogleCredentialsField(\n            [\"https://www.googleapis.com/auth/gmail.labels\"]\n        )",
+              "successors": []
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "Output",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 7,
+              "label": "class Output(BlockSchema):\n        result: list[dict] = SchemaField(\n            description=\"List of labels\",\n        )\n        error: str = SchemaField(\n            description=\"Error message if any\",\n        )",
+              "successors": []
+            }
+          ],
+          "functions": [],
+          "classes": []
+        }
+      ]
+    },
+    {
+      "name": "GmailAddLabelBlock",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 1,
+          "start_line": 1,
+          "end_line": 1,
+          "label": "class GmailAddLabelBlock(Block):",
+          "successors": []
+        }
+      ],
+      "functions": [
+        {
+          "name": "__init__",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 1,
+              "label": "def __init__(self):",
+              "successors": [
+                {
+                  "id": 2,
+                  "start_line": 2,
+                  "end_line": 27,
+                  "label": "super().__init__(\n            id=\"f884b2fb-04f4-4265-9658-14f433926ac9\",\n            description=\"This block adds a label to a Gmail message.\",\n            categories={BlockCategory.COMMUNICATION},\n            input_schema=GmailAddLabelBlock.Input,\n            output_schema=GmailAddLabelBlock.Output,\n            disabled=not GOOGLE_OAUTH_IS_CONFIGURED,\n            test_input={\n                \"message_id\": \"12345\",\n                \"label_name\": \"Important\",\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[\n                (\n                    \"result\",\n                    {\"status\": \"Label added successfully\", \"label_id\": \"Label_1\"},\n                ),\n            ],\n            test_mock={\n                \"_add_label\": lambda *args, **kwargs: {\n                    \"status\": \"Label added successfully\",\n                    \"label_id\": \"Label_1\",\n                },\n            },\n        )",
+                  "successors": []
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "run",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 3,
+              "label": "def run(\n        self, input_data: Input, *, credentials: GoogleCredentials, **kwargs\n    ) -> BlockOutput:",
+              "successors": [
+                {
+                  "id": 2,
+                  "start_line": 4,
+                  "end_line": 4,
+                  "label": "service = GmailReadBlock._build_service(credentials, **kwargs)",
+                  "successors": [
+                    {
+                      "id": 3,
+                      "start_line": 5,
+                      "end_line": 5,
+                      "label": "result = self._add_label(service, input_data.message_id, input_data.label_name)",
+                      "successors": [
+                        {
+                          "id": 4,
+                          "start_line": 6,
+                          "end_line": 6,
+                          "label": "yield \"result\", result",
+                          "successors": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "_add_label",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 1,
+              "label": "def _add_label(self, service, message_id: str, label_name: str) -> dict:",
+              "successors": [
+                {
+                  "id": 2,
+                  "start_line": 2,
+                  "end_line": 2,
+                  "label": "label_id = self._get_or_create_label(service, label_name)",
+                  "successors": [
+                    {
+                      "id": 3,
+                      "start_line": 3,
+                      "end_line": 5,
+                      "label": "service.users().messages().modify(\n            userId=\"me\", id=message_id, body={\"addLabelIds\": [label_id]}\n        ).execute()",
+                      "successors": [
+                        {
+                          "id": 4,
+                          "start_line": 6,
+                          "end_line": 6,
+                          "label": "return {\"status\": \"Label added successfully\", \"label_id\": label_id}",
+                          "successors": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "_get_or_create_label",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 2,
+              "label": "def _get_or_create_label(self, service, label_name: str) -> str:\n        label_id = self._get_label_id(service, label_name)",
+              "successors": [
+                {
+                  "id": 2,
+                  "start_line": 3,
+                  "end_line": 3,
+                  "label": "if not label_id:",
+                  "successors": [
+                    {
+                      "id": 3,
+                      "start_line": 4,
+                      "end_line": 10,
+                      "label": "label = (\n                service.users()\n                .labels()\n                .create(userId=\"me\", body={\"name\": label_name})\n                .execute()\n            )\n            label_id = label[\"id\"]",
+                      "successors": [
+                        {
+                          "id": 4,
+                          "start_line": 11,
+                          "end_line": 11,
+                          "label": "return label_id",
+                          "successors": []
+                        }
+                      ]
+                    },
+                    {
+                      "id": 4,
+                      "start_line": 11,
+                      "end_line": 11,
+                      "label": "return label_id",
+                      "successors": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "_get_label_id",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 3,
+              "label": "def _get_label_id(self, service, label_name: str) -> str | None:\n        results = service.users().labels().list(userId=\"me\").execute()\n        labels = results.get(\"labels\", [])",
+              "successors": [
+                {
+                  "id": 2,
+                  "start_line": 4,
+                  "end_line": 4,
+                  "label": "for label in labels:",
+                  "successors": [
+                    {
+                      "id": 3,
+                      "start_line": 5,
+                      "end_line": 5,
+                      "label": "if label[\"name\"] == label_name:",
+                      "successors": [
+                        {
+                          "id": 4,
+                          "start_line": 6,
+                          "end_line": 6,
+                          "label": "return label[\"id\"]",
+                          "successors": []
+                        }
+                      ]
+                    },
+                    {
+                      "id": 5,
+                      "start_line": 7,
+                      "end_line": 7,
+                      "label": "return None",
+                      "successors": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        }
+      ],
+      "classes": [
+        {
+          "name": "Input",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 1,
+              "label": "class Input(BlockSchema):",
+              "successors": [
+                {
+                  "id": 2,
+                  "start_line": 2,
+                  "end_line": 4,
+                  "label": "credentials: GoogleCredentialsInput = GoogleCredentialsField(\n            [\"https://www.googleapis.com/auth/gmail.modify\"]\n        )",
+                  "successors": [
+                    {
+                      "id": 3,
+                      "start_line": 5,
+                      "end_line": 7,
+                      "label": "message_id: str = SchemaField(\n            description=\"Message ID to add label to\",\n        )",
+                      "successors": [
+                        {
+                          "id": 4,
+                          "start_line": 8,
+                          "end_line": 10,
+                          "label": "label_name: str = SchemaField(\n            description=\"Label name to add\",\n        )",
+                          "successors": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "Output",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 7,
+              "label": "class Output(BlockSchema):\n        result: dict = SchemaField(\n            description=\"Label addition result\",\n        )\n        error: str = SchemaField(\n            description=\"Error message if any\",\n        )",
+              "successors": []
+            }
+          ],
+          "functions": [],
+          "classes": []
+        }
+      ]
+    },
+    {
+      "name": "GmailRemoveLabelBlock",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 1,
+          "start_line": 1,
+          "end_line": 1,
+          "label": "class GmailRemoveLabelBlock(Block):",
+          "successors": []
+        }
+      ],
+      "functions": [
+        {
+          "name": "__init__",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 1,
+              "label": "def __init__(self):",
+              "successors": [
+                {
+                  "id": 2,
+                  "start_line": 2,
+                  "end_line": 27,
+                  "label": "super().__init__(\n            id=\"0afc0526-aba1-4b2b-888e-a22b7c3f359d\",\n            description=\"This block removes a label from a Gmail message.\",\n            categories={BlockCategory.COMMUNICATION},\n            input_schema=GmailRemoveLabelBlock.Input,\n            output_schema=GmailRemoveLabelBlock.Output,\n            disabled=not GOOGLE_OAUTH_IS_CONFIGURED,\n            test_input={\n                \"message_id\": \"12345\",\n                \"label_name\": \"Important\",\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[\n                (\n                    \"result\",\n                    {\"status\": \"Label removed successfully\", \"label_id\": \"Label_1\"},\n                ),\n            ],\n            test_mock={\n                \"_remove_label\": lambda *args, **kwargs: {\n                    \"status\": \"Label removed successfully\",\n                    \"label_id\": \"Label_1\",\n                },\n            },\n        )",
+                  "successors": []
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "run",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 3,
+              "label": "def run(\n        self, input_data: Input, *, credentials: GoogleCredentials, **kwargs\n    ) -> BlockOutput:",
+              "successors": [
+                {
+                  "id": 2,
+                  "start_line": 4,
+                  "end_line": 4,
+                  "label": "service = GmailReadBlock._build_service(credentials, **kwargs)",
+                  "successors": [
+                    {
+                      "id": 3,
+                      "start_line": 5,
+                      "end_line": 7,
+                      "label": "result = self._remove_label(\n            service, input_data.message_id, input_data.label_name\n        )",
+                      "successors": [
+                        {
+                          "id": 4,
+                          "start_line": 8,
+                          "end_line": 8,
+                          "label": "yield \"result\", result",
+                          "successors": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "_remove_label",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 2,
+              "label": "def _remove_label(self, service, message_id: str, label_name: str) -> dict:\n        label_id = self._get_label_id(service, label_name)",
+              "successors": [
+                {
+                  "id": 2,
+                  "start_line": 3,
+                  "end_line": 3,
+                  "label": "if label_id:",
+                  "successors": [
+                    {
+                      "id": 3,
+                      "start_line": 4,
+                      "end_line": 7,
+                      "label": "service.users().messages().modify(\n                userId=\"me\", id=message_id, body={\"removeLabelIds\": [label_id]}\n            ).execute()\n            return {\"status\": \"Label removed successfully\", \"label_id\": label_id}",
+                      "successors": []
+                    },
+                    {
+                      "id": 4,
+                      "start_line": 8,
+                      "end_line": 9,
+                      "label": "else:\n            return {\"status\": \"Label not found\", \"label_name\": label_name}",
+                      "successors": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "_get_label_id",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 3,
+              "label": "def _get_label_id(self, service, label_name: str) -> str | None:\n        results = service.users().labels().list(userId=\"me\").execute()\n        labels = results.get(\"labels\", [])",
+              "successors": [
+                {
+                  "id": 2,
+                  "start_line": 4,
+                  "end_line": 4,
+                  "label": "for label in labels:",
+                  "successors": [
+                    {
+                      "id": 3,
+                      "start_line": 5,
+                      "end_line": 5,
+                      "label": "if label[\"name\"] == label_name:",
+                      "successors": [
+                        {
+                          "id": 4,
+                          "start_line": 6,
+                          "end_line": 6,
+                          "label": "return label[\"id\"]",
+                          "successors": []
+                        }
+                      ]
+                    },
+                    {
+                      "id": 5,
+                      "start_line": 7,
+                      "end_line": 7,
+                      "label": "return None",
+                      "successors": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        }
+      ],
+      "classes": [
+        {
+          "name": "Input",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 10,
+              "label": "class Input(BlockSchema):\n        credentials: GoogleCredentialsInput = GoogleCredentialsField(\n            [\"https://www.googleapis.com/auth/gmail.modify\"]\n        )\n        message_id: str = SchemaField(\n            description=\"Message ID to remove label from\",\n        )\n        label_name: str = SchemaField(\n            description=\"Label name to remove\",\n        )",
+              "successors": []
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "Output",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 7,
+              "label": "class Output(BlockSchema):\n        result: dict = SchemaField(\n            description=\"Label removal result\",\n        )\n        error: str = SchemaField(\n            description=\"Error message if any\",\n        )",
+              "successors": []
+            }
+          ],
+          "functions": [],
+          "classes": []
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,3372 @@
+{
+  "name": "example_script",
+  "type": "CFG",
+  "start_line": 1,
+  "end_line": 960,
+  "functions": [
+    {
+      "name": "execute_node",
+      "type": "function",
+      "start_line": 102,
+      "end_line": 245,
+      "functions": [
+        {
+          "name": "update_execution",
+          "type": "function",
+          "start_line": 127,
+          "end_line": 130,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "    def update_execution(status: ExecutionStatus) -> ExecutionResult:\n        exec_update = db_client.update_execution_status(node_exec_id, status)\n        db_client.send_execution_update(exec_update)\n        return exec_update",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "def update_execution(status: ExecutionStatus) -> ExecutionResult:",
+              "successors": [
+                2
+              ]
+            },
+            {
+              "id": 2,
+              "label": "exec_update = db_client.update_execution_status(node_exec_id, status)",
+              "successors": [
+                3
+              ]
+            },
+            {
+              "id": 3,
+              "label": "db_client.send_execution_update(exec_update)",
+              "successors": [
+                4
+              ]
+            },
+            {
+              "id": 4,
+              "label": "return exec_update",
+              "successors": []
+            }
+          ]
+        }
+      ],
+      "classes": [],
+      "simplified_code": "def execute_node(\n    db_client: \"DatabaseManager\",\n    creds_manager: IntegrationCredentialsManager,\n    data: NodeExecutionEntry,\n    execution_stats: dict[str, Any] | None = None,\n) -> ExecutionStream:\n    \"\"\"\n    Execute a node in the graph. This will trigger a block execution on a node,\n    persist the execution result, and return the subsequent node to be executed.\n\n    Args:\n        db_client: The client to send execution updates to the server.\n        creds_manager: The manager to acquire and release credentials.\n        data: The execution data for executing the current node.\n        execution_stats: The execution statistics to be updated.\n\n    Returns:\n        The subsequent node to be enqueued, or None if there is no subsequent node.\n    \"\"\"\n    user_id = data.user_id\n    graph_exec_id = data.graph_exec_id\n    graph_id = data.graph_id\n    node_exec_id = data.node_exec_id\n    node_id = data.node_id\n\n        return exec_update\n\n    node = db_client.get_node(node_id)\n\n    node_block = get_block(node.block_id)\n    if not node_block:\n        logger.error(f\"Block {node.block_id} not found.\")\n        return\n\n    log_metadata = LogMetadata(\n        user_id=user_id,\n        graph_eid=graph_exec_id,\n        graph_id=graph_id,\n        node_eid=node_exec_id,\n        node_id=node_id,\n        block_name=node_block.name,\n    )\n\n    # Sanity check: validate the execution input.\n    input_data, error = validate_exec(node, data.data, resolve_input=False)\n    if input_data is None:\n        log_metadata.error(f\"Skip execution, input validation error: {error}\")\n        db_client.upsert_execution_output(node_exec_id, \"error\", error)\n        update_execution(ExecutionStatus.FAILED)\n        return\n\n    # Re-shape the input data for agent block.\n    # AgentExecutorBlock specially separate the node input_data & its input_default.\n    if isinstance(node_block, AgentExecutorBlock):\n        input_data = {**node.input_default, \"data\": input_data}\n\n    # Execute the node\n    input_data_str = json.dumps(input_data)\n    input_size = len(input_data_str)\n    log_metadata.info(\"Executed node with input\", input=input_data_str)\n    update_execution(ExecutionStatus.RUNNING)\n\n    extra_exec_kwargs = {}\n    # Last-minute fetch credentials + acquire a system-wide read-write lock to prevent\n    # changes during execution. \u26a0\ufe0f This means a set of credentials can only be used by\n    # one (running) block at a time; simultaneous execution of blocks using same\n    # credentials is not supported.\n    creds_lock = None\n    if CREDENTIALS_FIELD_NAME in input_data:\n        credentials_meta = CredentialsMetaInput(**input_data[CREDENTIALS_FIELD_NAME])\n        credentials, creds_lock = creds_manager.acquire(user_id, credentials_meta.id)\n        extra_exec_kwargs[\"credentials\"] = credentials\n\n    output_size = 0\n    end_status = ExecutionStatus.COMPLETED\n    credit = db_client.get_or_refill_credit(user_id)\n    if credit < 0:\n        raise ValueError(f\"Insufficient credit: {credit}\")\n\n    try:\n        for output_name, output_data in node_block.execute(\n            input_data, **extra_exec_kwargs\n        ):\n            output_size += len(json.dumps(output_data))\n            log_metadata.info(\"Node produced output\", **{output_name: output_data})\n            db_client.upsert_execution_output(node_exec_id, output_name, output_data)\n\n            for execution in _enqueue_next_nodes(\n                db_client=db_client,\n                node=node,\n                output=(output_name, output_data),\n                user_id=user_id,\n                graph_exec_id=graph_exec_id,\n                graph_id=graph_id,\n                log_metadata=log_metadata,\n            ):\n                yield execution\n\n    except Exception as e:\n        end_status = ExecutionStatus.FAILED\n        error_msg = str(e)\n        log_metadata.exception(f\"Node execution failed with error {error_msg}\")\n        db_client.upsert_execution_output(node_exec_id, \"error\", error_msg)\n\n        for execution in _enqueue_next_nodes(\n            db_client=db_client,\n            node=node,\n            output=(\"error\", error_msg),\n            user_id=user_id,\n            graph_exec_id=graph_exec_id,\n            graph_id=graph_id,\n            log_metadata=log_metadata,\n        ):\n            yield execution\n\n        raise e\n    finally:\n        # Ensure credentials are released even if execution fails\n        if creds_lock:\n            try:\n                creds_lock.release()\n            except Exception as e:\n                log_metadata.error(f\"Failed to release credentials lock: {e}\")\n\n        # Update execution status and spend credits\n        res = update_execution(end_status)\n        if end_status == ExecutionStatus.COMPLETED:\n            s = input_size + output_size\n            t = (\n                (res.end_time - res.start_time).total_seconds()\n                if res.end_time and res.start_time\n                else 0\n            )\n            db_client.spend_credits(user_id, credit, node_block.id, input_data, s, t)\n\n        # Update execution stats\n        if execution_stats is not None:\n            execution_stats.update(node_block.execution_stats)\n            execution_stats[\"input_size\"] = input_size\n            execution_stats[\"output_size\"] = output_size\n",
+      "blocks": [
+        {
+          "id": 1,
+          "label": "def execute_node(...):",
+          "successors": [
+            2
+          ]
+        },
+        {
+          "id": 2,
+          "label": "user_id = data.user_id",
+          "successors": [
+            3
+          ]
+        },
+        {
+          "id": 3,
+          "label": "graph_exec_id = data.graph_exec_id",
+          "successors": [
+            4
+          ]
+        },
+        {
+          "id": 4,
+          "label": "graph_id = data.graph_id",
+          "successors": [
+            5
+          ]
+        },
+        {
+          "id": 5,
+          "label": "node_exec_id = data.node_exec_id",
+          "successors": [
+            6
+          ]
+        },
+        {
+          "id": 6,
+          "label": "node_id = data.node_id",
+          "successors": [
+            7
+          ]
+        },
+        {
+          "id": 7,
+          "label": "node = db_client.get_node(node_id)",
+          "successors": [
+            8
+          ]
+        },
+        {
+          "id": 8,
+          "label": "node_block = get_block(node.block_id)",
+          "successors": [
+            9
+          ]
+        },
+        {
+          "id": 9,
+          "label": "if not node_block:",
+          "successors": [
+            10,
+            11
+          ]
+        },
+        {
+          "id": 10,
+          "label": "logger.error(f\"Block {node.block_id} not found.\")",
+          "successors": [
+            11
+          ]
+        },
+        {
+          "id": 11,
+          "label": "log_metadata = LogMetadata(...)",
+          "successors": [
+            12
+          ]
+        },
+        {
+          "id": 12,
+          "label": "input_data, error = validate_exec(node, data.data, resolve_input=False)",
+          "successors": [
+            13
+          ]
+        },
+        {
+          "id": 13,
+          "label": "if input_data is None:",
+          "successors": [
+            14,
+            15
+          ]
+        },
+        {
+          "id": 14,
+          "label": "log_metadata.error(f\"Skip execution, input validation error: {error}\")",
+          "successors": [
+            15
+          ]
+        },
+        {
+          "id": 15,
+          "label": "db_client.upsert_execution_output(node_exec_id, \"error\", error)",
+          "successors": [
+            16
+          ]
+        },
+        {
+          "id": 16,
+          "label": "update_execution(ExecutionStatus.FAILED)",
+          "successors": [
+            17
+          ]
+        },
+        {
+          "id": 17,
+          "label": "if isinstance(node_block, AgentExecutorBlock):",
+          "successors": [
+            18,
+            19
+          ]
+        },
+        {
+          "id": 18,
+          "label": "input_data = {**node.input_default, \"data\": input_data}",
+          "successors": [
+            19
+          ]
+        },
+        {
+          "id": 19,
+          "label": "input_data_str = json.dumps(input_data)",
+          "successors": [
+            20
+          ]
+        },
+        {
+          "id": 20,
+          "label": "input_size = len(input_data_str)",
+          "successors": [
+            21
+          ]
+        },
+        {
+          "id": 21,
+          "label": "log_metadata.info(\"Executed node with input\", input=input_data_str)",
+          "successors": [
+            22
+          ]
+        },
+        {
+          "id": 22,
+          "label": "update_execution(ExecutionStatus.RUNNING)",
+          "successors": [
+            23
+          ]
+        },
+        {
+          "id": 23,
+          "label": "extra_exec_kwargs = {}",
+          "successors": [
+            24
+          ]
+        },
+        {
+          "id": 24,
+          "label": "if CREDENTIALS_FIELD_NAME in input_data:",
+          "successors": [
+            25,
+            26
+          ]
+        },
+        {
+          "id": 25,
+          "label": "credentials_meta = CredentialsMetaInput(**input_data[CREDENTIALS_FIELD_NAME])",
+          "successors": [
+            26
+          ]
+        },
+        {
+          "id": 26,
+          "label": "credentials, creds_lock = creds_manager.acquire(user_id, credentials_meta.id)",
+          "successors": [
+            27
+          ]
+        },
+        {
+          "id": 27,
+          "label": "extra_exec_kwargs[\"credentials\"] = credentials",
+          "successors": [
+            28
+          ]
+        },
+        {
+          "id": 28,
+          "label": "output_size = 0",
+          "successors": [
+            29
+          ]
+        },
+        {
+          "id": 29,
+          "label": "end_status = ExecutionStatus.COMPLETED",
+          "successors": [
+            30
+          ]
+        },
+        {
+          "id": 30,
+          "label": "credit = db_client.get_or_refill_credit(user_id)",
+          "successors": [
+            31
+          ]
+        },
+        {
+          "id": 31,
+          "label": "if credit < 0:",
+          "successors": [
+            32,
+            33
+          ]
+        },
+        {
+          "id": 32,
+          "label": "raise ValueError(f\"Insufficient credit: {credit}\")",
+          "successors": []
+        },
+        {
+          "id": 33,
+          "label": "try:",
+          "successors": [
+            34
+          ]
+        },
+        {
+          "id": 34,
+          "label": "for output_name, output_data in node_block.execute(input_data, **extra_exec_kwargs):",
+          "successors": [
+            35,
+            36
+          ]
+        },
+        {
+          "id": 35,
+          "label": "output_size += len(json.dumps(output_data))",
+          "successors": [
+            36
+          ]
+        },
+        {
+          "id": 36,
+          "label": "log_metadata.info(\"Node produced output\", **{output_name: output_data})",
+          "successors": [
+            37
+          ]
+        },
+        {
+          "id": 37,
+          "label": "db_client.upsert_execution_output(node_exec_id, output_name, output_data)",
+          "successors": [
+            38
+          ]
+        },
+        {
+          "id": 38,
+          "label": "for execution in _enqueue_next_nodes(...):",
+          "successors": [
+            39
+          ]
+        },
+        {
+          "id": 39,
+          "label": "yield execution",
+          "successors": [
+            34
+          ]
+        },
+        {
+          "id": 40,
+          "label": "except Exception as e:",
+          "successors": [
+            41
+          ]
+        },
+        {
+          "id": 41,
+          "label": "end_status = ExecutionStatus.FAILED",
+          "successors": [
+            42
+          ]
+        },
+        {
+          "id": 42,
+          "label": "error_msg = str(e)",
+          "successors": [
+            43
+          ]
+        },
+        {
+          "id": 43,
+          "label": "log_metadata.exception(f\"Node execution failed with error {error_msg}\")",
+          "successors": [
+            44
+          ]
+        },
+        {
+          "id": 44,
+          "label": "db_client.upsert_execution_output(node_exec_id, \"error\", error_msg)",
+          "successors": [
+            45
+          ]
+        },
+        {
+          "id": 45,
+          "label": "for execution in _enqueue_next_nodes(...):",
+          "successors": [
+            46
+          ]
+        },
+        {
+          "id": 46,
+          "label": "yield execution",
+          "successors": [
+            47
+          ]
+        },
+        {
+          "id": 47,
+          "label": "raise e",
+          "successors": [
+            48
+          ]
+        },
+        {
+          "id": 48,
+          "label": "finally:",
+          "successors": [
+            49
+          ]
+        },
+        {
+          "id": 49,
+          "label": "if creds_lock:",
+          "successors": [
+            50,
+            51
+          ]
+        },
+        {
+          "id": 50,
+          "label": "try:",
+          "successors": [
+            52
+          ]
+        },
+        {
+          "id": 52,
+          "label": "creds_lock.release()",
+          "successors": [
+            53
+          ]
+        },
+        {
+          "id": 53,
+          "label": "except Exception as e:",
+          "successors": [
+            54
+          ]
+        },
+        {
+          "id": 54,
+          "label": "log_metadata.error(f\"Failed to release credentials lock: {e}\")",
+          "successors": [
+            51
+          ]
+        },
+        {
+          "id": 51,
+          "label": "res = update_execution(end_status)",
+          "successors": [
+            55
+          ]
+        },
+        {
+          "id": 55,
+          "label": "if end_status == ExecutionStatus.COMPLETED:",
+          "successors": [
+            56,
+            57
+          ]
+        },
+        {
+          "id": 56,
+          "label": "s = input_size + output_size",
+          "successors": [
+            57
+          ]
+        },
+        {
+          "id": 57,
+          "label": "t = ((res.end_time - res.start_time).total_seconds() if res.end_time and res.start_time else 0)",
+          "successors": [
+            58
+          ]
+        },
+        {
+          "id": 58,
+          "label": "db_client.spend_credits(user_id, credit, node_block.id, input_data, s, t)",
+          "successors": [
+            59
+          ]
+        },
+        {
+          "id": 59,
+          "label": "if execution_stats is not None:",
+          "successors": [
+            60,
+            61
+          ]
+        },
+        {
+          "id": 60,
+          "label": "execution_stats.update(node_block.execution_stats)",
+          "successors": [
+            61
+          ]
+        },
+        {
+          "id": 61,
+          "label": "execution_stats[\"input_size\"] = input_size",
+          "successors": [
+            62
+          ]
+        },
+        {
+          "id": 62,
+          "label": "execution_stats[\"output_size\"] = output_size",
+          "successors": []
+        }
+      ]
+    },
+    {
+      "name": "_enqueue_next_nodes",
+      "type": "function",
+      "start_line": 247,
+      "end_line": 360,
+      "functions": [
+        {
+          "name": "add_enqueued_execution",
+          "type": "function",
+          "start_line": 256,
+          "end_line": 263,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "    def add_enqueued_execution(\n        node_exec_id: str, node_id: str, data: BlockInput\n    ) -> NodeExecutionEntry:\n        exec_update = db_client.update_execution_status(\n            node_exec_id, ExecutionStatus.QUEUED, data\n        )\n        db_client.send_execution_update(exec_update)\n        return NodeExecutionEntry(",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "def add_enqueued_execution(node_exec_id: str, node_id: str, data: BlockInput) -> NodeExecutionEntry:",
+              "successors": [
+                2
+              ]
+            },
+            {
+              "id": 2,
+              "label": "exec_update = db_client.update_execution_status(node_exec_id, ExecutionStatus.QUEUED, data)",
+              "successors": [
+                3
+              ]
+            },
+            {
+              "id": 3,
+              "label": "db_client.send_execution_update(exec_update)",
+              "successors": [
+                4
+              ]
+            },
+            {
+              "id": 4,
+              "label": "return NodeExecutionEntry(",
+              "successors": []
+            }
+          ]
+        },
+        {
+          "name": "register_next_executions",
+          "type": "function",
+          "start_line": 272,
+          "end_line": 354,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "    def register_next_executions(node_link: Link) -> list[NodeExecutionEntry]:\n        enqueued_executions = []\n        next_output_name = node_link.source_name\n        next_input_name = node_link.sink_name\n        next_node_id = node_link.sink_id\n\n        next_data = parse_execution_output(output, next_output_name)\n        if next_data is None:\n            return enqueued_executions\n\n        next_node = db_client.get_node(next_node_id)\n\n        # Multiple node can register the same next node, we need this to be atomic\n        # To avoid same execution to be enqueued multiple times,\n        # Or the same input to be consumed multiple times.\n        with synchronized(f\"upsert_input-{next_node_id}-{graph_exec_id}\"):\n            # Add output data to the earliest incomplete execution, or create a new one.\n            next_node_exec_id, next_node_input = db_client.upsert_execution_input(\n                node_id=next_node_id,\n                graph_exec_id=graph_exec_id,\n                input_name=next_input_name,\n                input_data=next_data,\n            )\n\n            # Complete missing static input pins data using the last execution input.\n            static_link_names = {\n                link.sink_name\n                for link in next_node.input_links\n                if link.is_static and link.sink_name not in next_node_input\n            }\n            if static_link_names and (\n                latest_execution := db_client.get_latest_execution(\n                    next_node_id, graph_exec_id\n                )\n            ):\n                for name in static_link_names:\n                    next_node_input[name] = latest_execution.input_data.get(name)\n\n            # Validate the input data for the next node.\n            next_node_input, validation_msg = validate_exec(next_node, next_node_input)\n            suffix = f\"{next_output_name}>{next_input_name}~{next_node_exec_id}:{validation_msg}\"\n\n            # Incomplete input data, skip queueing the execution.\n            if not next_node_input:\n                log_metadata.warning(f\"Skipped queueing {suffix}\")\n                return enqueued_executions\n\n            # Input is complete, enqueue the execution.\n            log_metadata.info(f\"Enqueued {suffix}\")\n            enqueued_executions.append(\n                add_enqueued_execution(next_node_exec_id, next_node_id, next_node_input)\n            )\n\n            # Next execution stops here if the link is not static.\n            if not node_link.is_static:\n                return enqueued_executions\n\n            # If link is static, there could be some incomplete executions waiting for it.\n            # Load and complete the input missing input data, and try to re-enqueue them.\n            for iexec in db_client.get_incomplete_executions(\n                next_node_id, graph_exec_id\n            ):\n                idata = iexec.input_data\n                ineid = iexec.node_exec_id\n\n                static_link_names = {\n                    link.sink_name\n                    for link in next_node.input_links\n                    if link.is_static and link.sink_name not in idata\n                }\n                for input_name in static_link_names:\n                    idata[input_name] = next_node_input[input_name]\n\n                idata, msg = validate_exec(next_node, idata)\n                suffix = f\"{next_output_name}>{next_input_name}~{ineid}:{msg}\"\n                if not idata:\n                    log_metadata.info(f\"Enqueueing static-link skipped: {suffix}\")\n                    continue\n                log_metadata.info(f\"Enqueueing static-link execution {suffix}\")\n                enqueued_executions.append(\n                    add_enqueued_execution(iexec.node_exec_id, next_node_id, idata)\n                )\n            return enqueued_executions",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "next_data = parse_execution_output(output, next_output_name)",
+              "successors": [
+                2
+              ]
+            },
+            {
+              "id": 2,
+              "label": "if next_data is None:",
+              "successors": [
+                3,
+                4
+              ]
+            },
+            {
+              "id": 3,
+              "label": "return enqueued_executions",
+              "successors": []
+            },
+            {
+              "id": 4,
+              "label": "next_node = db_client.get_node(next_node_id)",
+              "successors": [
+                5
+              ]
+            },
+            {
+              "id": 5,
+              "label": "with synchronized(f\"upsert_input-{next_node_id}-{graph_exec_id}\"):",
+              "successors": [
+                6
+              ]
+            },
+            {
+              "id": 6,
+              "label": "next_node_exec_id, next_node_input = db_client.upsert_execution_input(node_id=next_node_id, graph_exec_id=graph_exec_id, input_name=next_input_name, input_data=next_data)",
+              "successors": [
+                7
+              ]
+            },
+            {
+              "id": 7,
+              "label": "static_link_names = {link.sink_name for link in next_node.input_links if link.is_static and link.sink_name not in next_node_input}",
+              "successors": [
+                8
+              ]
+            },
+            {
+              "id": 8,
+              "label": "if static_link_names and (latest_execution := db_client.get_latest_execution(next_node_id, graph_exec_id)):",
+              "successors": [
+                9,
+                10
+              ]
+            },
+            {
+              "id": 9,
+              "label": "for name in static_link_names: next_node_input[name] = latest_execution.input_data.get(name)",
+              "successors": [
+                10
+              ]
+            },
+            {
+              "id": 10,
+              "label": "next_node_input, validation_msg = validate_exec(next_node, next_node_input)",
+              "successors": [
+                11
+              ]
+            },
+            {
+              "id": 11,
+              "label": "suffix = f\"{next_output_name}>{next_input_name}~{next_node_exec_id}:{validation_msg}\"",
+              "successors": [
+                12
+              ]
+            },
+            {
+              "id": 12,
+              "label": "if not next_node_input:",
+              "successors": [
+                13,
+                14
+              ]
+            },
+            {
+              "id": 13,
+              "label": "log_metadata.warning(f\"Skipped queueing {suffix}\")",
+              "successors": [
+                14
+              ]
+            },
+            {
+              "id": 14,
+              "label": "return enqueued_executions",
+              "successors": []
+            },
+            {
+              "id": 15,
+              "label": "log_metadata.info(f\"Enqueued {suffix}\")",
+              "successors": [
+                16
+              ]
+            },
+            {
+              "id": 16,
+              "label": "enqueued_executions.append(add_enqueued_execution(next_node_exec_id, next_node_id, next_node_input))",
+              "successors": [
+                17
+              ]
+            },
+            {
+              "id": 17,
+              "label": "if not node_link.is_static:",
+              "successors": [
+                18,
+                19
+              ]
+            },
+            {
+              "id": 18,
+              "label": "return enqueued_executions",
+              "successors": []
+            },
+            {
+              "id": 19,
+              "label": "for iexec in db_client.get_incomplete_executions(next_node_id, graph_exec_id):",
+              "successors": [
+                20
+              ]
+            },
+            {
+              "id": 20,
+              "label": "idata = iexec.input_data",
+              "successors": [
+                21
+              ]
+            },
+            {
+              "id": 21,
+              "label": "ineid = iexec.node_exec_id",
+              "successors": [
+                22
+              ]
+            },
+            {
+              "id": 22,
+              "label": "static_link_names = {link.sink_name for link in next_node.input_links if link.is_static and link.sink_name not in idata}",
+              "successors": [
+                23
+              ]
+            },
+            {
+              "id": 23,
+              "label": "for input_name in static_link_names: idata[input_name] = next_node_input[input_name]",
+              "successors": [
+                24
+              ]
+            },
+            {
+              "id": 24,
+              "label": "idata, msg = validate_exec(next_node, idata)",
+              "successors": [
+                25
+              ]
+            },
+            {
+              "id": 25,
+              "label": "suffix = f\"{next_output_name}>{next_input_name}~{ineid}:{msg}\"",
+              "successors": [
+                26
+              ]
+            },
+            {
+              "id": 26,
+              "label": "if not idata:",
+              "successors": [
+                27,
+                28
+              ]
+            },
+            {
+              "id": 27,
+              "label": "log_metadata.info(f\"Enqueueing static-link skipped: {suffix}\")",
+              "successors": [
+                28
+              ]
+            },
+            {
+              "id": 28,
+              "label": "continue",
+              "successors": [
+                19
+              ]
+            },
+            {
+              "id": 29,
+              "label": "log_metadata.info(f\"Enqueueing static-link execution {suffix}\")",
+              "successors": [
+                30
+              ]
+            },
+            {
+              "id": 30,
+              "label": "enqueued_executions.append(add_enqueued_execution(iexec.node_exec_id, next_node_id, idata))",
+              "successors": [
+                19
+              ]
+            }
+          ]
+        }
+      ],
+      "classes": [],
+      "simplified_code": "def _enqueue_next_nodes(\n    db_client: \"DatabaseManager\",\n    node: Node,\n    output: BlockData,\n    user_id: str,\n    graph_exec_id: str,\n    graph_id: str,\n    log_metadata: LogMetadata,\n) -> list[NodeExecutionEntry]:\n        return NodeExecutionEntry(\n            user_id=user_id,\n            graph_exec_id=graph_exec_id,\n            graph_id=graph_id,\n            node_exec_id=node_exec_id,\n            node_id=node_id,\n            data=data,\n        )\n\n            return enqueued_executions\n\n    return [\n        execution\n        for link in node.output_links\n        for execution in register_next_executions(link)\n    ]",
+      "blocks": [
+        {
+          "id": 1,
+          "label": "def _enqueue_next_nodes(...):",
+          "successors": [
+            2
+          ]
+        },
+        {
+          "id": 2,
+          "label": "return NodeExecutionEntry(...)",
+          "successors": [
+            3
+          ]
+        },
+        {
+          "id": 3,
+          "label": "return enqueued_executions",
+          "successors": [
+            4
+          ]
+        },
+        {
+          "id": 4,
+          "label": "return [execution for link in node.output_links for execution in register_next_executions(link)]",
+          "successors": []
+        }
+      ]
+    },
+    {
+      "name": "validate_exec",
+      "type": "function",
+      "start_line": 363,
+      "end_line": 430,
+      "functions": [],
+      "classes": [],
+      "simplified_code": "def validate_exec(\n    node: Node,\n    data: BlockInput,\n    resolve_input: bool = True,\n) -> tuple[BlockInput | None, str]:\n    \"\"\"\n    Validate the input data for a node execution.\n\n    Args:\n        node: The node to execute.\n        data: The input data for the node execution.\n        resolve_input: Whether to resolve dynamic pins into dict/list/object.\n\n    Returns:\n        A tuple of the validated data and the block name.\n        If the data is invalid, the first element will be None, and the second element\n        will be an error message.\n        If the data is valid, the first element will be the resolved input data, and\n        the second element will be the block name.\n    \"\"\"\n    node_block: Block | None = get_block(node.block_id)\n    if not node_block:\n        return None, f\"Block for {node.block_id} not found.\"\n\n    if isinstance(node_block, AgentExecutorBlock):\n        # Validate the execution metadata for the agent executor block.\n        try:\n            exec_data = AgentExecutorBlock.Input(**node.input_default)\n        except Exception as e:\n            return None, f\"Input data doesn't match {node_block.name}: {str(e)}\"\n\n        # Validation input\n        input_schema = exec_data.input_schema\n        required_fields = set(input_schema[\"required\"])\n        input_default = exec_data.data\n    else:\n        # Convert non-matching data types to the expected input schema.\n        for name, data_type in node_block.input_schema.__annotations__.items():\n            if (value := data.get(name)) and (type(value) is not data_type):\n                data[name] = convert(value, data_type)\n\n        # Validation input\n        input_schema = node_block.input_schema.jsonschema()\n        required_fields = node_block.input_schema.get_required_fields()\n        input_default = node.input_default\n\n    # Input data (without default values) should contain all required fields.\n    error_prefix = f\"Input data missing or mismatch for `{node_block.name}`:\"\n    input_fields_from_nodes = {link.sink_name for link in node.input_links}\n    if not input_fields_from_nodes.issubset(data):\n        return None, f\"{error_prefix} {input_fields_from_nodes - set(data)}\"\n\n    # Merge input data with default values and resolve dynamic dict/list/object pins.\n    data = {**input_default, **data}\n    if resolve_input:\n        data = merge_execution_input(data)\n\n    # Input data post-merge should contain all required fields from the schema.\n    if not required_fields.issubset(data):\n        return None, f\"{error_prefix} {required_fields - set(data)}\"\n\n    # Last validation: Validate the input values against the schema.\n    if error := json.validate_with_jsonschema(schema=input_schema, data=data):\n        error_message = f\"{error_prefix} {error}\"\n        logger.error(error_message)\n        return None, error_message\n\n    return data, node_block.name",
+      "blocks": [
+        {
+          "id": 1,
+          "label": "node_block: Block | None = get_block(node.block_id)",
+          "successors": [
+            2
+          ]
+        },
+        {
+          "id": 2,
+          "label": "if not node_block:",
+          "successors": [
+            3,
+            4
+          ]
+        },
+        {
+          "id": 3,
+          "label": "return None, f\"Block for {node.block_id} not found.\"",
+          "successors": []
+        },
+        {
+          "id": 4,
+          "label": "if isinstance(node_block, AgentExecutorBlock):",
+          "successors": [
+            5,
+            6
+          ]
+        },
+        {
+          "id": 5,
+          "label": "try:\n            exec_data = AgentExecutorBlock.Input(**node.input_default)\n        except Exception as e:\n            return None, f\"Input data doesn't match {node_block.name}: {str(e)}\"",
+          "successors": [
+            7
+          ]
+        },
+        {
+          "id": 6,
+          "label": "for name, data_type in node_block.input_schema.__annotations__.items():\n            if (value := data.get(name)) and (type(value) is not data_type):\n                data[name] = convert(value, data_type)",
+          "successors": [
+            7
+          ]
+        },
+        {
+          "id": 7,
+          "label": "input_schema = exec_data.input_schema if isinstance(node_block, AgentExecutorBlock) else node_block.input_schema.jsonschema()\n    required_fields = set(input_schema[\"required\"]) if isinstance(node_block, AgentExecutorBlock) else node_block.input_schema.get_required_fields()\n    input_default = exec_data.data if isinstance(node_block, AgentExecutorBlock) else node.input_default",
+          "successors": [
+            8
+          ]
+        },
+        {
+          "id": 8,
+          "label": "error_prefix = f\"Input data missing or mismatch for `{node_block.name}`:\"\n    input_fields_from_nodes = {link.sink_name for link in node.input_links}\n    if not input_fields_from_nodes.issubset(data):\n        return None, f\"{error_prefix} {input_fields_from_nodes - set(data)}\"",
+          "successors": [
+            9
+          ]
+        },
+        {
+          "id": 9,
+          "label": "data = {**input_default, **data}\n    if resolve_input:\n        data = merge_execution_input(data)",
+          "successors": [
+            10
+          ]
+        },
+        {
+          "id": 10,
+          "label": "if not required_fields.issubset(data):\n        return None, f\"{error_prefix} {required_fields - set(data)}\"",
+          "successors": [
+            11
+          ]
+        },
+        {
+          "id": 11,
+          "label": "if error := json.validate_with_jsonschema(schema=input_schema, data=data):\n        error_message = f\"{error_prefix} {error}\"\n        logger.error(error_message)\n        return None, error_message",
+          "successors": [
+            12
+          ]
+        },
+        {
+          "id": 12,
+          "label": "return data, node_block.name",
+          "successors": []
+        }
+      ]
+    },
+    {
+      "name": "get_db_client",
+      "type": "function",
+      "start_line": 937,
+      "end_line": 940,
+      "functions": [],
+      "classes": [],
+      "simplified_code": "def get_db_client() -> \"DatabaseManager\":\n    from backend.executor import DatabaseManager\n\n    return get_service_client(DatabaseManager)",
+      "blocks": [
+        {
+          "id": 1,
+          "label": "def get_db_client() -> \"DatabaseManager\":",
+          "successors": [
+            2
+          ]
+        },
+        {
+          "id": 2,
+          "label": "from backend.executor import DatabaseManager",
+          "successors": [
+            3
+          ]
+        },
+        {
+          "id": 3,
+          "label": "return get_service_client(DatabaseManager)",
+          "successors": []
+        }
+      ]
+    },
+    {
+      "name": "synchronized",
+      "type": "function",
+      "start_line": 943,
+      "end_line": 951,
+      "functions": [],
+      "classes": [],
+      "simplified_code": "@contextmanager\ndef synchronized(key: str, timeout: int = 60):\n    lock: RedisLock = redis.get_redis().lock(f\"lock:{key}\", timeout=timeout)\n    try:\n        lock.acquire()\n        yield\n    finally:\n        if lock.locked():\n            lock.release()",
+      "blocks": [
+        {
+          "id": 1,
+          "label": "lock: RedisLock = redis.get_redis().lock(f\"lock:{key}\", timeout=timeout)",
+          "successors": [
+            2
+          ]
+        },
+        {
+          "id": 2,
+          "label": "try:",
+          "successors": [
+            3
+          ]
+        },
+        {
+          "id": 3,
+          "label": "lock.acquire()",
+          "successors": [
+            4
+          ]
+        },
+        {
+          "id": 4,
+          "label": "yield",
+          "successors": [
+            5
+          ]
+        },
+        {
+          "id": 5,
+          "label": "finally:",
+          "successors": [
+            6
+          ]
+        },
+        {
+          "id": 6,
+          "label": "if lock.locked():",
+          "successors": [
+            7,
+            8
+          ]
+        },
+        {
+          "id": 7,
+          "label": "lock.release()",
+          "successors": [
+            8
+          ]
+        },
+        {
+          "id": 8,
+          "label": "end",
+          "successors": []
+        }
+      ]
+    },
+    {
+      "name": "llprint",
+      "type": "function",
+      "start_line": 954,
+      "end_line": 960,
+      "functions": [],
+      "classes": [],
+      "simplified_code": "def llprint(message: str):\n    \"\"\"\n    Low-level print/log helper function for use in signal handlers.\n    Regular log/print statements are not allowed in signal handlers.\n    \"\"\"\n    if logger.getEffectiveLevel() == logging.DEBUG:\n        os.write(sys.stdout.fileno(), (message + \"\\n\").encode())",
+      "blocks": [
+        {
+          "id": 1,
+          "label": "def llprint(message: str):",
+          "successors": [
+            2
+          ]
+        },
+        {
+          "id": 2,
+          "label": "if logger.getEffectiveLevel() == logging.DEBUG:",
+          "successors": [
+            3,
+            4
+          ]
+        },
+        {
+          "id": 3,
+          "label": "os.write(sys.stdout.fileno(), (message + \"\\n\").encode())",
+          "successors": [
+            4
+          ]
+        },
+        {
+          "id": 4,
+          "label": "End of function",
+          "successors": []
+        }
+      ]
+    }
+  ],
+  "classes": [
+    {
+      "name": "LogMetadata",
+      "type": "class",
+      "start_line": 53,
+      "end_line": 95,
+      "functions": [
+        {
+          "name": "__init__",
+          "type": "function",
+          "start_line": 54,
+          "end_line": 72,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "    def __init__(\n        self,\n        user_id: str,\n        graph_eid: str,\n        graph_id: str,\n        node_eid: str,\n        node_id: str,\n        block_name: str,\n    ):\n        self.metadata = {\n            \"component\": \"ExecutionManager\",\n            \"user_id\": user_id,\n            \"graph_eid\": graph_eid,\n            \"graph_id\": graph_id,\n            \"node_eid\": node_eid,\n            \"node_id\": node_id,\n            \"block_name\": block_name,\n        }\n        self.prefix = f\"[ExecutionManager|uid:{user_id}|gid:{graph_id}|nid:{node_id}]|geid:{graph_eid}|nid:{node_eid}|{block_name}]\"",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "def __init__(self, user_id: str, graph_eid: str, graph_id: str, node_eid: str, node_id: str, block_name: str):",
+              "successors": [
+                2
+              ]
+            },
+            {
+              "id": 2,
+              "label": "self.metadata = {\"component\": \"ExecutionManager\", \"user_id\": user_id, \"graph_eid\": graph_eid, \"graph_id\": graph_id, \"node_eid\": node_eid, \"node_id\": node_id, \"block_name\": block_name}",
+              "successors": [
+                3
+              ]
+            },
+            {
+              "id": 3,
+              "label": "self.prefix = f\"[ExecutionManager|uid:{user_id}|gid:{graph_id}|nid:{node_id}]|geid:{graph_eid}|nid:{node_eid}|{block_name}]\"",
+              "successors": []
+            }
+          ]
+        },
+        {
+          "name": "info",
+          "type": "function",
+          "start_line": 74,
+          "end_line": 76,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "    def info(self, msg: str, **extra):\n        msg = self._wrap(msg, **extra)\n        logger.info(msg, extra={\"json_fields\": {**self.metadata, **extra}})",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "def info(self, msg: str, **extra):",
+              "successors": [
+                2
+              ]
+            },
+            {
+              "id": 2,
+              "label": "msg = self._wrap(msg, **extra)",
+              "successors": [
+                3
+              ]
+            },
+            {
+              "id": 3,
+              "label": "logger.info(msg, extra={\"json_fields\": {**self.metadata, **extra}})",
+              "successors": []
+            }
+          ]
+        },
+        {
+          "name": "warning",
+          "type": "function",
+          "start_line": 78,
+          "end_line": 80,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "    def warning(self, msg: str, **extra):\n        msg = self._wrap(msg, **extra)\n        logger.warning(msg, extra={\"json_fields\": {**self.metadata, **extra}})",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "def warning(self, msg: str, **extra):",
+              "successors": [
+                2
+              ]
+            },
+            {
+              "id": 2,
+              "label": "msg = self._wrap(msg, **extra)",
+              "successors": [
+                3
+              ]
+            },
+            {
+              "id": 3,
+              "label": "logger.warning(msg, extra={\"json_fields\": {**self.metadata, **extra}})",
+              "successors": []
+            }
+          ]
+        },
+        {
+          "name": "error",
+          "type": "function",
+          "start_line": 82,
+          "end_line": 84,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "    def error(self, msg: str, **extra):\n        msg = self._wrap(msg, **extra)\n        logger.error(msg, extra={\"json_fields\": {**self.metadata, **extra}})",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "def error(self, msg: str, **extra):",
+              "successors": [
+                2
+              ]
+            },
+            {
+              "id": 2,
+              "label": "msg = self._wrap(msg, **extra)",
+              "successors": [
+                3
+              ]
+            },
+            {
+              "id": 3,
+              "label": "logger.error(msg, extra={\"json_fields\": {**self.metadata, **extra}})",
+              "successors": []
+            }
+          ]
+        },
+        {
+          "name": "debug",
+          "type": "function",
+          "start_line": 86,
+          "end_line": 88,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "    def debug(self, msg: str, **extra):\n        msg = self._wrap(msg, **extra)\n        logger.debug(msg, extra={\"json_fields\": {**self.metadata, **extra}})",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "def debug(self, msg: str, **extra):",
+              "successors": [
+                2
+              ]
+            },
+            {
+              "id": 2,
+              "label": "msg = self._wrap(msg, **extra)",
+              "successors": [
+                3
+              ]
+            },
+            {
+              "id": 3,
+              "label": "logger.debug(msg, extra={\"json_fields\": {**self.metadata, **extra}})",
+              "successors": []
+            }
+          ]
+        },
+        {
+          "name": "exception",
+          "type": "function",
+          "start_line": 90,
+          "end_line": 92,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "    def exception(self, msg: str, **extra):\n        msg = self._wrap(msg, **extra)\n        logger.exception(msg, extra={\"json_fields\": {**self.metadata, **extra}})",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "def exception(self, msg: str, **extra):",
+              "successors": [
+                2
+              ]
+            },
+            {
+              "id": 2,
+              "label": "msg = self._wrap(msg, **extra)",
+              "successors": [
+                3
+              ]
+            },
+            {
+              "id": 3,
+              "label": "logger.exception(msg, extra={\"json_fields\": {**self.metadata, **extra}})",
+              "successors": []
+            }
+          ]
+        },
+        {
+          "name": "_wrap",
+          "type": "function",
+          "start_line": 94,
+          "end_line": 95,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "    def _wrap(self, msg: str, **extra):\n        return f\"{self.prefix} {msg} {extra}\"",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "def _wrap(self, msg: str, **extra):",
+              "successors": [
+                2
+              ]
+            },
+            {
+              "id": 2,
+              "label": "return f\"{self.prefix} {msg} {extra}\"",
+              "successors": []
+            }
+          ]
+        }
+      ],
+      "classes": [],
+      "simplified_code": "class LogMetadata:\n        self.prefix = f\"[ExecutionManager|uid:{user_id}|gid:{graph_id}|nid:{node_id}]|geid:{graph_eid}|nid:{node_eid}|{block_name}]\"\n\n        logger.info(msg, extra={\"json_fields\": {**self.metadata, **extra}})\n\n        logger.warning(msg, extra={\"json_fields\": {**self.metadata, **extra}})\n\n        logger.error(msg, extra={\"json_fields\": {**self.metadata, **extra}})\n\n        logger.debug(msg, extra={\"json_fields\": {**self.metadata, **extra}})\n\n        logger.exception(msg, extra={\"json_fields\": {**self.metadata, **extra}})\n\n        return f\"{self.prefix} {msg} {extra}\"",
+      "blocks": [
+        {
+          "id": 1,
+          "label": "class LogMetadata:",
+          "successors": [
+            2
+          ]
+        },
+        {
+          "id": 2,
+          "label": "self.prefix = f\"[ExecutionManager|uid:{user_id}|gid:{graph_id}|nid:{node_id}]|geid:{graph_eid}|nid:{node_eid}|{block_name}]\"",
+          "successors": [
+            3
+          ]
+        },
+        {
+          "id": 3,
+          "label": "logger.info(msg, extra={\"json_fields\": {**self.metadata, **extra}})",
+          "successors": [
+            4
+          ]
+        },
+        {
+          "id": 4,
+          "label": "logger.warning(msg, extra={\"json_fields\": {**self.metadata, **extra}})",
+          "successors": [
+            5
+          ]
+        },
+        {
+          "id": 5,
+          "label": "logger.error(msg, extra={\"json_fields\": {**self.metadata, **extra}})",
+          "successors": [
+            6
+          ]
+        },
+        {
+          "id": 6,
+          "label": "logger.debug(msg, extra={\"json_fields\": {**self.metadata, **extra}})",
+          "successors": [
+            7
+          ]
+        },
+        {
+          "id": 7,
+          "label": "logger.exception(msg, extra={\"json_fields\": {**self.metadata, **extra}})",
+          "successors": [
+            8
+          ]
+        },
+        {
+          "id": 8,
+          "label": "return f\"{self.prefix} {msg} {extra}\"",
+          "successors": []
+        }
+      ]
+    },
+    {
+      "name": "Executor",
+      "type": "class",
+      "start_line": 433,
+      "end_line": 713,
+      "functions": [
+        {
+          "name": "on_node_executor_start",
+          "type": "function",
+          "start_line": 459,
+          "end_line": 472,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "    def on_node_executor_start(cls):\n        configure_logging()\n        set_service_name(\"NodeExecutor\")\n        redis.connect()\n        cls.pid = os.getpid()\n        cls.db_client = get_db_client()\n        cls.creds_manager = IntegrationCredentialsManager()\n\n        # Set up shutdown handlers\n        cls.shutdown_lock = threading.Lock()\n        atexit.register(cls.on_node_executor_stop)  # handle regular shutdown\n        signal.signal(  # handle termination\n            signal.SIGTERM, lambda _, __: cls.on_node_executor_sigterm()\n        )",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "def on_node_executor_start(cls):",
+              "successors": [
+                2
+              ]
+            },
+            {
+              "id": 2,
+              "label": "configure_logging()",
+              "successors": [
+                3
+              ]
+            },
+            {
+              "id": 3,
+              "label": "set_service_name(\"NodeExecutor\")",
+              "successors": [
+                4
+              ]
+            },
+            {
+              "id": 4,
+              "label": "redis.connect()",
+              "successors": [
+                5
+              ]
+            },
+            {
+              "id": 5,
+              "label": "cls.pid = os.getpid()",
+              "successors": [
+                6
+              ]
+            },
+            {
+              "id": 6,
+              "label": "cls.db_client = get_db_client()",
+              "successors": [
+                7
+              ]
+            },
+            {
+              "id": 7,
+              "label": "cls.creds_manager = IntegrationCredentialsManager()",
+              "successors": [
+                8
+              ]
+            },
+            {
+              "id": 8,
+              "label": "cls.shutdown_lock = threading.Lock()",
+              "successors": [
+                9
+              ]
+            },
+            {
+              "id": 9,
+              "label": "atexit.register(cls.on_node_executor_stop)",
+              "successors": [
+                10
+              ]
+            },
+            {
+              "id": 10,
+              "label": "signal.signal(signal.SIGTERM, lambda _, __: cls.on_node_executor_sigterm())",
+              "successors": []
+            }
+          ]
+        },
+        {
+          "name": "on_node_executor_stop",
+          "type": "function",
+          "start_line": 475,
+          "end_line": 485,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "    def on_node_executor_stop(cls):\n        if not cls.shutdown_lock.acquire(blocking=False):\n            return  # already shutting down\n\n        logger.info(f\"[on_node_executor_stop {cls.pid}] \u23f3 Releasing locks...\")\n        cls.creds_manager.release_all_locks()\n        logger.info(f\"[on_node_executor_stop {cls.pid}] \u23f3 Disconnecting Redis...\")\n        redis.disconnect()\n        logger.info(f\"[on_node_executor_stop {cls.pid}] \u23f3 Disconnecting DB manager...\")\n        close_service_client(cls.db_client)\n        logger.info(f\"[on_node_executor_stop {cls.pid}] \u2705 Finished cleanup\")",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "if not cls.shutdown_lock.acquire(blocking=False):",
+              "successors": [
+                2,
+                3
+              ]
+            },
+            {
+              "id": 2,
+              "label": "return",
+              "successors": []
+            },
+            {
+              "id": 3,
+              "label": "logger.info(f\"[on_node_executor_stop {cls.pid}] \u23f3 Releasing locks...\")",
+              "successors": [
+                4
+              ]
+            },
+            {
+              "id": 4,
+              "label": "cls.creds_manager.release_all_locks()",
+              "successors": [
+                5
+              ]
+            },
+            {
+              "id": 5,
+              "label": "logger.info(f\"[on_node_executor_stop {cls.pid}] \u23f3 Disconnecting Redis...\")",
+              "successors": [
+                6
+              ]
+            },
+            {
+              "id": 6,
+              "label": "redis.disconnect()",
+              "successors": [
+                7
+              ]
+            },
+            {
+              "id": 7,
+              "label": "logger.info(f\"[on_node_executor_stop {cls.pid}] \u23f3 Disconnecting DB manager...\")",
+              "successors": [
+                8
+              ]
+            },
+            {
+              "id": 8,
+              "label": "close_service_client(cls.db_client)",
+              "successors": [
+                9
+              ]
+            },
+            {
+              "id": 9,
+              "label": "logger.info(f\"[on_node_executor_stop {cls.pid}] \u2705 Finished cleanup\")",
+              "successors": []
+            }
+          ]
+        },
+        {
+          "name": "on_node_executor_sigterm",
+          "type": "function",
+          "start_line": 488,
+          "end_line": 498,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "    def on_node_executor_sigterm(cls):\n        llprint(f\"[on_node_executor_sigterm {cls.pid}] \u26a0\ufe0f SIGTERM received\")\n        if not cls.shutdown_lock.acquire(blocking=False):\n            return  # already shutting down\n\n        llprint(f\"[on_node_executor_stop {cls.pid}] \u23f3 Releasing locks...\")\n        cls.creds_manager.release_all_locks()\n        llprint(f\"[on_node_executor_stop {cls.pid}] \u23f3 Disconnecting Redis...\")\n        redis.disconnect()\n        llprint(f\"[on_node_executor_stop {cls.pid}] \u2705 Finished cleanup\")\n        sys.exit(0)",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "llprint(f\"[on_node_executor_sigterm {cls.pid}] \u26a0\ufe0f SIGTERM received\")",
+              "successors": [
+                2
+              ]
+            },
+            {
+              "id": 2,
+              "label": "if not cls.shutdown_lock.acquire(blocking=False):",
+              "successors": [
+                3,
+                4
+              ]
+            },
+            {
+              "id": 3,
+              "label": "return",
+              "successors": []
+            },
+            {
+              "id": 4,
+              "label": "llprint(f\"[on_node_executor_stop {cls.pid}] \u23f3 Releasing locks...\")",
+              "successors": [
+                5
+              ]
+            },
+            {
+              "id": 5,
+              "label": "cls.creds_manager.release_all_locks()",
+              "successors": [
+                6
+              ]
+            },
+            {
+              "id": 6,
+              "label": "llprint(f\"[on_node_executor_stop {cls.pid}] \u23f3 Disconnecting Redis...\")",
+              "successors": [
+                7
+              ]
+            },
+            {
+              "id": 7,
+              "label": "redis.disconnect()",
+              "successors": [
+                8
+              ]
+            },
+            {
+              "id": 8,
+              "label": "llprint(f\"[on_node_executor_stop {cls.pid}] \u2705 Finished cleanup\")",
+              "successors": [
+                9
+              ]
+            },
+            {
+              "id": 9,
+              "label": "sys.exit(0)",
+              "successors": []
+            }
+          ]
+        },
+        {
+          "name": "on_node_execution",
+          "type": "function",
+          "start_line": 502,
+          "end_line": 526,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "    def on_node_execution(\n        cls,\n        q: ExecutionQueue[NodeExecutionEntry],\n        node_exec: NodeExecutionEntry,\n    ) -> dict[str, Any]:\n        log_metadata = LogMetadata(\n            user_id=node_exec.user_id,\n            graph_eid=node_exec.graph_exec_id,\n            graph_id=node_exec.graph_id,\n            node_eid=node_exec.node_exec_id,\n            node_id=node_exec.node_id,\n            block_name=\"-\",\n        )\n\n        execution_stats = {}\n        timing_info, _ = cls._on_node_execution(\n            q, node_exec, log_metadata, execution_stats\n        )\n        execution_stats[\"walltime\"] = timing_info.wall_time\n        execution_stats[\"cputime\"] = timing_info.cpu_time\n\n        cls.db_client.update_node_execution_stats(\n            node_exec.node_exec_id, execution_stats\n        )\n        return execution_stats",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "def on_node_execution(cls, q: ExecutionQueue[NodeExecutionEntry], node_exec: NodeExecutionEntry) -> dict[str, Any]:",
+              "successors": [
+                2
+              ]
+            },
+            {
+              "id": 2,
+              "label": "log_metadata = LogMetadata(user_id=node_exec.user_id, graph_eid=node_exec.graph_exec_id, graph_id=node_exec.graph_id, node_eid=node_exec.node_exec_id, node_id=node_exec.node_id, block_name=\"-\")",
+              "successors": [
+                3
+              ]
+            },
+            {
+              "id": 3,
+              "label": "execution_stats = {}",
+              "successors": [
+                4
+              ]
+            },
+            {
+              "id": 4,
+              "label": "timing_info, _ = cls._on_node_execution(q, node_exec, log_metadata, execution_stats)",
+              "successors": [
+                5
+              ]
+            },
+            {
+              "id": 5,
+              "label": "execution_stats[\"walltime\"] = timing_info.wall_time",
+              "successors": [
+                6
+              ]
+            },
+            {
+              "id": 6,
+              "label": "execution_stats[\"cputime\"] = timing_info.cpu_time",
+              "successors": [
+                7
+              ]
+            },
+            {
+              "id": 7,
+              "label": "cls.db_client.update_node_execution_stats(node_exec.node_exec_id, execution_stats)",
+              "successors": [
+                8
+              ]
+            },
+            {
+              "id": 8,
+              "label": "return execution_stats",
+              "successors": []
+            }
+          ]
+        },
+        {
+          "name": "_on_node_execution",
+          "type": "function",
+          "start_line": 530,
+          "end_line": 547,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "    def _on_node_execution(\n        cls,\n        q: ExecutionQueue[NodeExecutionEntry],\n        node_exec: NodeExecutionEntry,\n        log_metadata: LogMetadata,\n        stats: dict[str, Any] | None = None,\n    ):\n        try:\n            log_metadata.info(f\"Start node execution {node_exec.node_exec_id}\")\n            for execution in execute_node(\n                cls.db_client, cls.creds_manager, node_exec, stats\n            ):\n                q.add(execution)\n            log_metadata.info(f\"Finished node execution {node_exec.node_exec_id}\")\n        except Exception as e:\n            log_metadata.exception(\n                f\"Failed node execution {node_exec.node_exec_id}: {e}\"\n            )",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "try:",
+              "successors": [
+                2
+              ]
+            },
+            {
+              "id": 2,
+              "label": "log_metadata.info(f\"Start node execution {node_exec.node_exec_id}\")",
+              "successors": [
+                3
+              ]
+            },
+            {
+              "id": 3,
+              "label": "for execution in execute_node(cls.db_client, cls.creds_manager, node_exec, stats):",
+              "successors": [
+                4,
+                5
+              ]
+            },
+            {
+              "id": 4,
+              "label": "q.add(execution)",
+              "successors": [
+                3
+              ]
+            },
+            {
+              "id": 5,
+              "label": "log_metadata.info(f\"Finished node execution {node_exec.node_exec_id}\")",
+              "successors": [
+                6
+              ]
+            },
+            {
+              "id": 6,
+              "label": "except Exception as e:",
+              "successors": [
+                7
+              ]
+            },
+            {
+              "id": 7,
+              "label": "log_metadata.exception(f\"Failed node execution {node_exec.node_exec_id}: {e}\")",
+              "successors": []
+            }
+          ]
+        },
+        {
+          "name": "on_graph_executor_start",
+          "type": "function",
+          "start_line": 550,
+          "end_line": 563,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "    def on_graph_executor_start(cls):\n        configure_logging()\n        set_service_name(\"GraphExecutor\")\n\n        cls.db_client = get_db_client()\n        cls.pool_size = settings.config.num_node_workers\n        cls.pid = os.getpid()\n        cls._init_node_executor_pool()\n        logger.info(\n            f\"Graph executor {cls.pid} started with {cls.pool_size} node workers\"\n        )\n\n        # Set up shutdown handler\n        atexit.register(cls.on_graph_executor_stop)",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "def on_graph_executor_start(cls):",
+              "successors": [
+                2
+              ]
+            },
+            {
+              "id": 2,
+              "label": "configure_logging()",
+              "successors": [
+                3
+              ]
+            },
+            {
+              "id": 3,
+              "label": "set_service_name(\"GraphExecutor\")",
+              "successors": [
+                4
+              ]
+            },
+            {
+              "id": 4,
+              "label": "cls.db_client = get_db_client()",
+              "successors": [
+                5
+              ]
+            },
+            {
+              "id": 5,
+              "label": "cls.pool_size = settings.config.num_node_workers",
+              "successors": [
+                6
+              ]
+            },
+            {
+              "id": 6,
+              "label": "cls.pid = os.getpid()",
+              "successors": [
+                7
+              ]
+            },
+            {
+              "id": 7,
+              "label": "cls._init_node_executor_pool()",
+              "successors": [
+                8
+              ]
+            },
+            {
+              "id": 8,
+              "label": "logger.info(f\"Graph executor {cls.pid} started with {cls.pool_size} node workers\")",
+              "successors": [
+                9
+              ]
+            },
+            {
+              "id": 9,
+              "label": "atexit.register(cls.on_graph_executor_stop)",
+              "successors": []
+            }
+          ]
+        },
+        {
+          "name": "on_graph_executor_stop",
+          "type": "function",
+          "start_line": 566,
+          "end_line": 572,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "    def on_graph_executor_stop(cls):\n        prefix = f\"[on_graph_executor_stop {cls.pid}]\"\n        logger.info(f\"{prefix} \u23f3 Terminating node executor pool...\")\n        cls.executor.terminate()\n        logger.info(f\"{prefix} \u23f3 Disconnecting DB manager...\")\n        close_service_client(cls.db_client)\n        logger.info(f\"{prefix} \u2705 Finished cleanup\")",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "def on_graph_executor_stop(cls):",
+              "successors": [
+                2
+              ]
+            },
+            {
+              "id": 2,
+              "label": "prefix = f\"[on_graph_executor_stop {cls.pid}]\"",
+              "successors": [
+                3
+              ]
+            },
+            {
+              "id": 3,
+              "label": "logger.info(f\"{prefix} \u23f3 Terminating node executor pool...\")",
+              "successors": [
+                4
+              ]
+            },
+            {
+              "id": 4,
+              "label": "cls.executor.terminate()",
+              "successors": [
+                5
+              ]
+            },
+            {
+              "id": 5,
+              "label": "logger.info(f\"{prefix} \u23f3 Disconnecting DB manager...\")",
+              "successors": [
+                6
+              ]
+            },
+            {
+              "id": 6,
+              "label": "close_service_client(cls.db_client)",
+              "successors": [
+                7
+              ]
+            },
+            {
+              "id": 7,
+              "label": "logger.info(f\"{prefix} \u2705 Finished cleanup\")",
+              "successors": []
+            }
+          ]
+        },
+        {
+          "name": "_init_node_executor_pool",
+          "type": "function",
+          "start_line": 575,
+          "end_line": 579,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "    def _init_node_executor_pool(cls):\n        cls.executor = Pool(\n            processes=cls.pool_size,\n            initializer=cls.on_node_executor_start,\n        )",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "def _init_node_executor_pool(cls):",
+              "successors": [
+                2
+              ]
+            },
+            {
+              "id": 2,
+              "label": "cls.executor = Pool(processes=cls.pool_size, initializer=cls.on_node_executor_start,)",
+              "successors": []
+            }
+          ]
+        },
+        {
+          "name": "on_graph_execution",
+          "type": "function",
+          "start_line": 583,
+          "end_line": 604,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "    def on_graph_execution(\n        cls, graph_exec: GraphExecutionEntry, cancel: threading.Event\n    ):\n        log_metadata = LogMetadata(\n            user_id=graph_exec.user_id,\n            graph_eid=graph_exec.graph_exec_id,\n            graph_id=graph_exec.graph_id,\n            node_id=\"*\",\n            node_eid=\"*\",\n            block_name=\"-\",\n        )\n        timing_info, (exec_stats, error) = cls._on_graph_execution(\n            graph_exec, cancel, log_metadata\n        )\n        exec_stats[\"walltime\"] = timing_info.wall_time\n        exec_stats[\"cputime\"] = timing_info.cpu_time\n        exec_stats[\"error\"] = str(error) if error else None\n        result = cls.db_client.update_graph_execution_stats(\n            graph_exec_id=graph_exec.graph_exec_id,\n            stats=exec_stats,\n        )\n        cls.db_client.send_execution_update(result)",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "def on_graph_execution(cls, graph_exec: GraphExecutionEntry, cancel: threading.Event):",
+              "successors": [
+                2
+              ]
+            },
+            {
+              "id": 2,
+              "label": "log_metadata = LogMetadata(user_id=graph_exec.user_id, graph_eid=graph_exec.graph_exec_id, graph_id=graph_exec.graph_id, node_id=\"*\", node_eid=\"*\", block_name=\"-\")",
+              "successors": [
+                3
+              ]
+            },
+            {
+              "id": 3,
+              "label": "timing_info, (exec_stats, error) = cls._on_graph_execution(graph_exec, cancel, log_metadata)",
+              "successors": [
+                4
+              ]
+            },
+            {
+              "id": 4,
+              "label": "exec_stats[\"walltime\"] = timing_info.wall_time",
+              "successors": [
+                5
+              ]
+            },
+            {
+              "id": 5,
+              "label": "exec_stats[\"cputime\"] = timing_info.cpu_time",
+              "successors": [
+                6
+              ]
+            },
+            {
+              "id": 6,
+              "label": "exec_stats[\"error\"] = str(error) if error else None",
+              "successors": [
+                7
+              ]
+            },
+            {
+              "id": 7,
+              "label": "result = cls.db_client.update_graph_execution_stats(graph_exec_id=graph_exec.graph_exec_id, stats=exec_stats)",
+              "successors": [
+                8
+              ]
+            },
+            {
+              "id": 8,
+              "label": "cls.db_client.send_execution_update(result)",
+              "successors": []
+            }
+          ]
+        },
+        {
+          "name": "_on_graph_execution",
+          "type": "function",
+          "start_line": 608,
+          "end_line": 713,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "    def _on_graph_execution(\n        cls,\n        graph_exec: GraphExecutionEntry,\n        cancel: threading.Event,\n        log_metadata: LogMetadata,\n    ) -> tuple[dict[str, Any], Exception | None]:\n        \"\"\"\n        Returns:\n            The execution statistics of the graph execution.\n            The error that occurred during the execution.\n        \"\"\"\n        log_metadata.info(f\"Start graph execution {graph_exec.graph_exec_id}\")\n        exec_stats = {\n            \"nodes_walltime\": 0,\n            \"nodes_cputime\": 0,\n            \"node_count\": 0,\n        }\n        error = None\n        finished = False\n\n        def cancel_handler():\n            while not cancel.is_set():\n                cancel.wait(1)\n            if finished:\n                return\n            cls.executor.terminate()\n            log_metadata.info(f\"Terminated graph execution {graph_exec.graph_exec_id}\")\n            cls._init_node_executor_pool()\n\n        cancel_thread = threading.Thread(target=cancel_handler)\n        cancel_thread.start()\n\n        try:\n            queue = ExecutionQueue[NodeExecutionEntry]()\n            for node_exec in graph_exec.start_node_execs:\n                queue.add(node_exec)\n\n            running_executions: dict[str, AsyncResult] = {}\n\n            def make_exec_callback(exec_data: NodeExecutionEntry):\n                node_id = exec_data.node_id\n\n                def callback(result: object):\n                    running_executions.pop(node_id)\n                    nonlocal exec_stats\n                    if isinstance(result, dict):\n                        exec_stats[\"node_count\"] += 1\n                        exec_stats[\"nodes_cputime\"] += result.get(\"cputime\", 0)\n                        exec_stats[\"nodes_walltime\"] += result.get(\"walltime\", 0)\n\n                return callback\n\n            while not queue.empty():\n                if cancel.is_set():\n                    error = RuntimeError(\"Execution is cancelled\")\n                    return exec_stats, error\n\n                exec_data = queue.get()\n\n                # Avoid parallel execution of the same node.\n                execution = running_executions.get(exec_data.node_id)\n                if execution and not execution.ready():\n                    # TODO (performance improvement):\n                    #   Wait for the completion of the same node execution is blocking.\n                    #   To improve this we need a separate queue for each node.\n                    #   Re-enqueueing the data back to the queue will disrupt the order.\n                    execution.wait()\n\n                log_metadata.debug(\n                    f\"Dispatching node execution {exec_data.node_exec_id} \"\n                    f\"for node {exec_data.node_id}\",\n                )\n                running_executions[exec_data.node_id] = cls.executor.apply_async(\n                    cls.on_node_execution,\n                    (queue, exec_data),\n                    callback=make_exec_callback(exec_data),\n                )\n\n                # Avoid terminating graph execution when some nodes are still running.\n                while queue.empty() and running_executions:\n                    log_metadata.debug(\n                        f\"Queue empty; running nodes: {list(running_executions.keys())}\"\n                    )\n                    for node_id, execution in list(running_executions.items()):\n                        if cancel.is_set():\n                            error = RuntimeError(\"Execution is cancelled\")\n                            return exec_stats, error\n\n                        if not queue.empty():\n                            break  # yield to parent loop to execute new queue items\n\n                        log_metadata.debug(f\"Waiting on execution of node {node_id}\")\n                        execution.wait(3)\n\n            log_metadata.info(f\"Finished graph execution {graph_exec.graph_exec_id}\")\n        except Exception as e:\n            log_metadata.exception(\n                f\"Failed graph execution {graph_exec.graph_exec_id}: {e}\"\n            )\n            error = e\n        finally:\n            if not cancel.is_set():\n                finished = True\n                cancel.set()\n            cancel_thread.join()\n            return exec_stats, error",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "log_metadata.info(f\"Start graph execution {graph_exec.graph_exec_id}\")",
+              "successors": [
+                2
+              ]
+            },
+            {
+              "id": 2,
+              "label": "exec_stats = {\n            \"nodes_walltime\": 0,\n            \"nodes_cputime\": 0,\n            \"node_count\": 0,\n        }",
+              "successors": [
+                3
+              ]
+            },
+            {
+              "id": 3,
+              "label": "error = None",
+              "successors": [
+                4
+              ]
+            },
+            {
+              "id": 4,
+              "label": "finished = False",
+              "successors": [
+                5
+              ]
+            },
+            {
+              "id": 5,
+              "label": "def cancel_handler():",
+              "successors": [
+                6
+              ]
+            },
+            {
+              "id": 6,
+              "label": "while not cancel.is_set():",
+              "successors": [
+                7,
+                8
+              ]
+            },
+            {
+              "id": 7,
+              "label": "cancel.wait(1)",
+              "successors": [
+                6
+              ]
+            },
+            {
+              "id": 8,
+              "label": "if finished:",
+              "successors": [
+                9,
+                10
+              ]
+            },
+            {
+              "id": 9,
+              "label": "return",
+              "successors": []
+            },
+            {
+              "id": 10,
+              "label": "cls.executor.terminate()",
+              "successors": [
+                11
+              ]
+            },
+            {
+              "id": 11,
+              "label": "log_metadata.info(f\"Terminated graph execution {graph_exec.graph_exec_id}\")",
+              "successors": [
+                12
+              ]
+            },
+            {
+              "id": 12,
+              "label": "cls._init_node_executor_pool()",
+              "successors": []
+            },
+            {
+              "id": 13,
+              "label": "cancel_thread = threading.Thread(target=cancel_handler)",
+              "successors": [
+                14
+              ]
+            },
+            {
+              "id": 14,
+              "label": "cancel_thread.start()",
+              "successors": [
+                15
+              ]
+            },
+            {
+              "id": 15,
+              "label": "try:",
+              "successors": [
+                16
+              ]
+            },
+            {
+              "id": 16,
+              "label": "queue = ExecutionQueue[NodeExecutionEntry]()",
+              "successors": [
+                17
+              ]
+            },
+            {
+              "id": 17,
+              "label": "for node_exec in graph_exec.start_node_execs:",
+              "successors": [
+                18,
+                19
+              ]
+            },
+            {
+              "id": 18,
+              "label": "queue.add(node_exec)",
+              "successors": [
+                17
+              ]
+            },
+            {
+              "id": 19,
+              "label": "running_executions: dict[str, AsyncResult] = {}",
+              "successors": [
+                20
+              ]
+            },
+            {
+              "id": 20,
+              "label": "def make_exec_callback(exec_data: NodeExecutionEntry):",
+              "successors": [
+                21
+              ]
+            },
+            {
+              "id": 21,
+              "label": "node_id = exec_data.node_id",
+              "successors": [
+                22
+              ]
+            },
+            {
+              "id": 22,
+              "label": "def callback(result: object):",
+              "successors": [
+                23
+              ]
+            },
+            {
+              "id": 23,
+              "label": "running_executions.pop(node_id)",
+              "successors": [
+                24
+              ]
+            },
+            {
+              "id": 24,
+              "label": "nonlocal exec_stats",
+              "successors": [
+                25
+              ]
+            },
+            {
+              "id": 25,
+              "label": "if isinstance(result, dict):",
+              "successors": [
+                26,
+                27
+              ]
+            },
+            {
+              "id": 26,
+              "label": "exec_stats[\"node_count\"] += 1",
+              "successors": [
+                28
+              ]
+            },
+            {
+              "id": 27,
+              "label": "return",
+              "successors": []
+            },
+            {
+              "id": 28,
+              "label": "exec_stats[\"nodes_cputime\"] += result.get(\"cputime\", 0)",
+              "successors": [
+                29
+              ]
+            },
+            {
+              "id": 29,
+              "label": "exec_stats[\"nodes_walltime\"] += result.get(\"walltime\", 0)",
+              "successors": []
+            },
+            {
+              "id": 30,
+              "label": "while not queue.empty():",
+              "successors": [
+                31,
+                32
+              ]
+            },
+            {
+              "id": 31,
+              "label": "if cancel.is_set():",
+              "successors": [
+                33,
+                34
+              ]
+            },
+            {
+              "id": 32,
+              "label": "exec_data = queue.get()",
+              "successors": [
+                35
+              ]
+            },
+            {
+              "id": 33,
+              "label": "error = RuntimeError(\"Execution is cancelled\")",
+              "successors": [
+                34
+              ]
+            },
+            {
+              "id": 34,
+              "label": "return exec_stats, error",
+              "successors": []
+            },
+            {
+              "id": 35,
+              "label": "execution = running_executions.get(exec_data.node_id)",
+              "successors": [
+                36
+              ]
+            },
+            {
+              "id": 36,
+              "label": "if execution and not execution.ready():",
+              "successors": [
+                37,
+                38
+              ]
+            },
+            {
+              "id": 37,
+              "label": "execution.wait()",
+              "successors": [
+                38
+              ]
+            },
+            {
+              "id": 38,
+              "label": "log_metadata.debug(\n                    f\"Dispatching node execution {exec_data.node_exec_id} \"\n                    f\"for node {exec_data.node_id}\",\n                )",
+              "successors": [
+                39
+              ]
+            },
+            {
+              "id": 39,
+              "label": "running_executions[exec_data.node_id] = cls.executor.apply_async(\n                    cls.on_node_execution,\n                    (queue, exec_data),\n                    callback=make_exec_callback(exec_data),\n                )",
+              "successors": [
+                40
+              ]
+            },
+            {
+              "id": 40,
+              "label": "while queue.empty() and running_executions:",
+              "successors": [
+                41,
+                42
+              ]
+            },
+            {
+              "id": 41,
+              "label": "log_metadata.debug(\n                        f\"Queue empty; running nodes: {list(running_executions.keys())}\"\n                    )",
+              "successors": [
+                43
+              ]
+            },
+            {
+              "id": 42,
+              "label": "break",
+              "successors": []
+            },
+            {
+              "id": 43,
+              "label": "for node_id, execution in list(running_executions.items()):",
+              "successors": [
+                44,
+                45
+              ]
+            },
+            {
+              "id": 44,
+              "label": "if cancel.is_set():",
+              "successors": [
+                46,
+                47
+              ]
+            },
+            {
+              "id": 45,
+              "label": "if not queue.empty():",
+              "successors": [
+                48,
+                49
+              ]
+            },
+            {
+              "id": 46,
+              "label": "error = RuntimeError(\"Execution is cancelled\")",
+              "successors": [
+                47
+              ]
+            },
+            {
+              "id": 47,
+              "label": "return exec_stats, error",
+              "successors": []
+            },
+            {
+              "id": 48,
+              "label": "break",
+              "successors": []
+            },
+            {
+              "id": 49,
+              "label": "log_metadata.debug(f\"Waiting on execution of node {node_id}\")",
+              "successors": [
+                50
+              ]
+            },
+            {
+              "id": 50,
+              "label": "execution.wait(3)",
+              "successors": [
+                43
+              ]
+            },
+            {
+              "id": 51,
+              "label": "log_metadata.info(f\"Finished graph execution {graph_exec.graph_exec_id}\")",
+              "successors": [
+                52
+              ]
+            },
+            {
+              "id": 52,
+              "label": "except Exception as e:",
+              "successors": [
+                53
+              ]
+            },
+            {
+              "id": 53,
+              "label": "log_metadata.exception(\n                f\"Failed graph execution {graph_exec.graph_exec_id}: {e}\"\n            )",
+              "successors": [
+                54
+              ]
+            },
+            {
+              "id": 54,
+              "label": "error = e",
+              "successors": [
+                55
+              ]
+            },
+            {
+              "id": 55,
+              "label": "finally:",
+              "successors": [
+                56
+              ]
+            },
+            {
+              "id": 56,
+              "label": "if not cancel.is_set():",
+              "successors": [
+                57,
+                58
+              ]
+            },
+            {
+              "id": 57,
+              "label": "finished = True",
+              "successors": [
+                58
+              ]
+            },
+            {
+              "id": 58,
+              "label": "cancel.set()",
+              "successors": [
+                59
+              ]
+            },
+            {
+              "id": 59,
+              "label": "cancel_thread.join()",
+              "successors": [
+                60
+              ]
+            },
+            {
+              "id": 60,
+              "label": "return exec_stats, error",
+              "successors": []
+            }
+          ]
+        }
+      ],
+      "classes": [],
+      "simplified_code": "class Executor:\n    \"\"\"\n    This class contains event handlers for the process pool executor events.\n\n    The main events are:\n        on_node_executor_start: Initialize the process that executes the node.\n        on_node_execution: Execution logic for a node.\n\n        on_graph_executor_start: Initialize the process that executes the graph.\n        on_graph_execution: Execution logic for a graph.\n\n    The execution flow:\n        1. Graph execution request is added to the queue.\n        2. Graph executor loop picks the request from the queue.\n        3. Graph executor loop submits the graph execution request to the executor pool.\n      [on_graph_execution]\n        4. Graph executor initialize the node execution queue.\n        5. Graph executor adds the starting nodes to the node execution queue.\n        6. Graph executor waits for all nodes to be executed.\n      [on_node_execution]\n        7. Node executor picks the node execution request from the queue.\n        8. Node executor executes the node.\n        9. Node executor enqueues the next executed nodes to the node execution queue.\n    \"\"\"\n\n    @classmethod\n        )\n\n    @classmethod\n        logger.info(f\"[on_node_executor_stop {cls.pid}] \u2705 Finished cleanup\")\n\n    @classmethod\n        sys.exit(0)\n\n    @classmethod\n    @error_logged\n        return execution_stats\n\n    @classmethod\n    @time_measured\n            )\n\n    @classmethod\n        atexit.register(cls.on_graph_executor_stop)\n\n    @classmethod\n        logger.info(f\"{prefix} \u2705 Finished cleanup\")\n\n    @classmethod\n        )\n\n    @classmethod\n    @error_logged\n        cls.db_client.send_execution_update(result)\n\n    @classmethod\n    @time_measured\n            return exec_stats, error",
+      "blocks": [
+        {
+          "id": 1,
+          "label": "class Executor:",
+          "successors": [
+            2
+          ]
+        },
+        {
+          "id": 2,
+          "label": "@classmethod",
+          "successors": [
+            3
+          ]
+        },
+        {
+          "id": 3,
+          "label": "logger.info(f\"[on_node_executor_stop {cls.pid}] \u2705 Finished cleanup\")",
+          "successors": [
+            4
+          ]
+        },
+        {
+          "id": 4,
+          "label": "sys.exit(0)",
+          "successors": []
+        },
+        {
+          "id": 5,
+          "label": "@classmethod",
+          "successors": [
+            6
+          ]
+        },
+        {
+          "id": 6,
+          "label": "@error_logged",
+          "successors": [
+            7
+          ]
+        },
+        {
+          "id": 7,
+          "label": "return execution_stats",
+          "successors": []
+        },
+        {
+          "id": 8,
+          "label": "@classmethod",
+          "successors": [
+            9
+          ]
+        },
+        {
+          "id": 9,
+          "label": "@time_measured",
+          "successors": [
+            10
+          ]
+        },
+        {
+          "id": 10,
+          "label": "atexit.register(cls.on_graph_executor_stop)",
+          "successors": [
+            11
+          ]
+        },
+        {
+          "id": 11,
+          "label": "logger.info(f\"{prefix} \u2705 Finished cleanup\")",
+          "successors": [
+            12
+          ]
+        },
+        {
+          "id": 12,
+          "label": "@classmethod",
+          "successors": [
+            13
+          ]
+        },
+        {
+          "id": 13,
+          "label": "@error_logged",
+          "successors": [
+            14
+          ]
+        },
+        {
+          "id": 14,
+          "label": "cls.db_client.send_execution_update(result)",
+          "successors": [
+            15
+          ]
+        },
+        {
+          "id": 15,
+          "label": "@classmethod",
+          "successors": [
+            16
+          ]
+        },
+        {
+          "id": 16,
+          "label": "@time_measured",
+          "successors": [
+            17
+          ]
+        },
+        {
+          "id": 17,
+          "label": "return exec_stats, error",
+          "successors": []
+        }
+      ]
+    },
+    {
+      "name": "ExecutionManager",
+      "type": "class",
+      "start_line": 716,
+      "end_line": 930,
+      "functions": [
+        {
+          "name": "__init__",
+          "type": "function",
+          "start_line": 717,
+          "end_line": 723,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "    def __init__(self):\n        super().__init__()\n        self.use_redis = True\n        self.use_supabase = True\n        self.pool_size = settings.config.num_graph_workers\n        self.queue = ExecutionQueue[GraphExecutionEntry]()\n        self.active_graph_runs: dict[str, tuple[Future, threading.Event]] = {}",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "def __init__(self):",
+              "successors": [
+                2
+              ]
+            },
+            {
+              "id": 2,
+              "label": "super().__init__()",
+              "successors": [
+                3
+              ]
+            },
+            {
+              "id": 3,
+              "label": "self.use_redis = True",
+              "successors": [
+                4
+              ]
+            },
+            {
+              "id": 4,
+              "label": "self.use_supabase = True",
+              "successors": [
+                5
+              ]
+            },
+            {
+              "id": 5,
+              "label": "self.pool_size = settings.config.num_graph_workers",
+              "successors": [
+                6
+              ]
+            },
+            {
+              "id": 6,
+              "label": "self.queue = ExecutionQueue[GraphExecutionEntry]()",
+              "successors": [
+                7
+              ]
+            },
+            {
+              "id": 7,
+              "label": "self.active_graph_runs: dict[str, tuple[Future, threading.Event]] = {}",
+              "successors": []
+            }
+          ]
+        },
+        {
+          "name": "get_port",
+          "type": "function",
+          "start_line": 726,
+          "end_line": 727,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "    def get_port(cls) -> int:\n        return settings.config.execution_manager_port",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "def get_port(cls) -> int:",
+              "successors": [
+                2
+              ]
+            },
+            {
+              "id": 2,
+              "label": "return settings.config.execution_manager_port",
+              "successors": []
+            }
+          ]
+        },
+        {
+          "name": "run_service",
+          "type": "function",
+          "start_line": 729,
+          "end_line": 754,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "    def run_service(self):\n        from backend.integrations.credentials_store import IntegrationCredentialsStore\n\n        self.credentials_store = IntegrationCredentialsStore()\n        self.executor = ProcessPoolExecutor(\n            max_workers=self.pool_size,\n            initializer=Executor.on_graph_executor_start,\n        )\n        sync_manager = multiprocessing.Manager()\n        logger.info(\n            f\"[{self.service_name}] Started with max-{self.pool_size} graph workers\"\n        )\n        while True:\n            graph_exec_data = self.queue.get()\n            graph_exec_id = graph_exec_data.graph_exec_id\n            logger.debug(\n                f\"[ExecutionManager] Dispatching graph execution {graph_exec_id}\"\n            )\n            cancel_event = sync_manager.Event()\n            future = self.executor.submit(\n                Executor.on_graph_execution, graph_exec_data, cancel_event\n            )\n            self.active_graph_runs[graph_exec_id] = (future, cancel_event)\n            future.add_done_callback(\n                lambda _: self.active_graph_runs.pop(graph_exec_id, None)\n            )",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "def run_service(self):",
+              "successors": [
+                2
+              ]
+            },
+            {
+              "id": 2,
+              "label": "from backend.integrations.credentials_store import IntegrationCredentialsStore",
+              "successors": [
+                3
+              ]
+            },
+            {
+              "id": 3,
+              "label": "self.credentials_store = IntegrationCredentialsStore()",
+              "successors": [
+                4
+              ]
+            },
+            {
+              "id": 4,
+              "label": "self.executor = ProcessPoolExecutor(max_workers=self.pool_size, initializer=Executor.on_graph_executor_start)",
+              "successors": [
+                5
+              ]
+            },
+            {
+              "id": 5,
+              "label": "sync_manager = multiprocessing.Manager()",
+              "successors": [
+                6
+              ]
+            },
+            {
+              "id": 6,
+              "label": "logger.info(f\"[{self.service_name}] Started with max-{self.pool_size} graph workers\")",
+              "successors": [
+                7
+              ]
+            },
+            {
+              "id": 7,
+              "label": "while True:",
+              "successors": [
+                8
+              ]
+            },
+            {
+              "id": 8,
+              "label": "graph_exec_data = self.queue.get()",
+              "successors": [
+                9
+              ]
+            },
+            {
+              "id": 9,
+              "label": "graph_exec_id = graph_exec_data.graph_exec_id",
+              "successors": [
+                10
+              ]
+            },
+            {
+              "id": 10,
+              "label": "logger.debug(f\"[ExecutionManager] Dispatching graph execution {graph_exec_id}\")",
+              "successors": [
+                11
+              ]
+            },
+            {
+              "id": 11,
+              "label": "cancel_event = sync_manager.Event()",
+              "successors": [
+                12
+              ]
+            },
+            {
+              "id": 12,
+              "label": "future = self.executor.submit(Executor.on_graph_execution, graph_exec_data, cancel_event)",
+              "successors": [
+                13
+              ]
+            },
+            {
+              "id": 13,
+              "label": "self.active_graph_runs[graph_exec_id] = (future, cancel_event)",
+              "successors": [
+                14
+              ]
+            },
+            {
+              "id": 14,
+              "label": "future.add_done_callback(lambda _: self.active_graph_runs.pop(graph_exec_id, None))",
+              "successors": [
+                7
+              ]
+            }
+          ]
+        },
+        {
+          "name": "cleanup",
+          "type": "function",
+          "start_line": 756,
+          "end_line": 760,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "    def cleanup(self):\n        logger.info(f\"[{__class__.__name__}] \u23f3 Shutting down graph executor pool...\")\n        self.executor.shutdown(cancel_futures=True)\n\n        super().cleanup()",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "logger.info(f\"[{__class__.__name__}] \u23f3 Shutting down graph executor pool...\")",
+              "successors": [
+                2
+              ]
+            },
+            {
+              "id": 2,
+              "label": "self.executor.shutdown(cancel_futures=True)",
+              "successors": [
+                3
+              ]
+            },
+            {
+              "id": 3,
+              "label": "super().cleanup()",
+              "successors": []
+            }
+          ]
+        },
+        {
+          "name": "db_client",
+          "type": "function",
+          "start_line": 763,
+          "end_line": 764,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "    def db_client(self) -> \"DatabaseManager\":\n        return get_db_client()",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "def db_client(self) -> \"DatabaseManager\":",
+              "successors": [
+                2
+              ]
+            },
+            {
+              "id": 2,
+              "label": "return get_db_client()",
+              "successors": []
+            }
+          ]
+        },
+        {
+          "name": "add_execution",
+          "type": "function",
+          "start_line": 767,
+          "end_line": 848,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "    def add_execution(\n        self,\n        graph_id: str,\n        data: BlockInput,\n        user_id: str,\n        graph_version: int | None = None,\n    ) -> GraphExecutionEntry:\n        graph: GraphModel | None = self.db_client.get_graph(\n            graph_id=graph_id, user_id=user_id, version=graph_version\n        )\n        if not graph:\n            raise ValueError(f\"Graph #{graph_id} not found.\")\n\n        graph.validate_graph(for_run=True)\n        self._validate_node_input_credentials(graph, user_id)\n\n        nodes_input = []\n        for node in graph.starting_nodes:\n            input_data = {}\n            block = get_block(node.block_id)\n\n            # Invalid block & Note block should never be executed.\n            if not block or block.block_type == BlockType.NOTE:\n                continue\n\n            # Extract request input data, and assign it to the input pin.\n            if block.block_type == BlockType.INPUT:\n                name = node.input_default.get(\"name\")\n                if name and name in data:\n                    input_data = {\"value\": data[name]}\n\n            # Extract webhook payload, and assign it to the input pin\n            webhook_payload_key = f\"webhook_{node.webhook_id}_payload\"\n            if (\n                block.block_type in (BlockType.WEBHOOK, BlockType.WEBHOOK_MANUAL)\n                and node.webhook_id\n            ):\n                if webhook_payload_key not in data:\n                    raise ValueError(\n                        f\"Node {block.name} #{node.id} webhook payload is missing\"\n                    )\n                input_data = {\"payload\": data[webhook_payload_key]}\n\n            input_data, error = validate_exec(node, input_data)\n            if input_data is None:\n                raise ValueError(error)\n            else:\n                nodes_input.append((node.id, input_data))\n\n        graph_exec_id, node_execs = self.db_client.create_graph_execution(\n            graph_id=graph_id,\n            graph_version=graph.version,\n            nodes_input=nodes_input,\n            user_id=user_id,\n        )\n\n        starting_node_execs = []\n        for node_exec in node_execs:\n            starting_node_execs.append(\n                NodeExecutionEntry(\n                    user_id=user_id,\n                    graph_exec_id=node_exec.graph_exec_id,\n                    graph_id=node_exec.graph_id,\n                    node_exec_id=node_exec.node_exec_id,\n                    node_id=node_exec.node_id,\n                    data=node_exec.input_data,\n                )\n            )\n            exec_update = self.db_client.update_execution_status(\n                node_exec.node_exec_id, ExecutionStatus.QUEUED, node_exec.input_data\n            )\n            self.db_client.send_execution_update(exec_update)\n\n        graph_exec = GraphExecutionEntry(\n            user_id=user_id,\n            graph_id=graph_id,\n            graph_exec_id=graph_exec_id,\n            start_node_execs=starting_node_execs,\n        )\n        self.queue.add(graph_exec)\n\n        return graph_exec",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "graph: GraphModel | None = self.db_client.get_graph(graph_id=graph_id, user_id=user_id, version=graph_version)",
+              "successors": [
+                2
+              ]
+            },
+            {
+              "id": 2,
+              "label": "if not graph:",
+              "successors": [
+                3,
+                4
+              ]
+            },
+            {
+              "id": 3,
+              "label": "raise ValueError(f\"Graph #{graph_id} not found.\")",
+              "successors": []
+            },
+            {
+              "id": 4,
+              "label": "graph.validate_graph(for_run=True)",
+              "successors": [
+                5
+              ]
+            },
+            {
+              "id": 5,
+              "label": "self._validate_node_input_credentials(graph, user_id)",
+              "successors": [
+                6
+              ]
+            },
+            {
+              "id": 6,
+              "label": "nodes_input = []",
+              "successors": [
+                7
+              ]
+            },
+            {
+              "id": 7,
+              "label": "for node in graph.starting_nodes:",
+              "successors": [
+                8,
+                19
+              ]
+            },
+            {
+              "id": 8,
+              "label": "input_data = {}",
+              "successors": [
+                9
+              ]
+            },
+            {
+              "id": 9,
+              "label": "block = get_block(node.block_id)",
+              "successors": [
+                10
+              ]
+            },
+            {
+              "id": 10,
+              "label": "if not block or block.block_type == BlockType.NOTE:",
+              "successors": [
+                11,
+                12
+              ]
+            },
+            {
+              "id": 11,
+              "label": "continue",
+              "successors": [
+                7
+              ]
+            },
+            {
+              "id": 12,
+              "label": "if block.block_type == BlockType.INPUT:",
+              "successors": [
+                13,
+                14
+              ]
+            },
+            {
+              "id": 13,
+              "label": "name = node.input_default.get(\"name\")",
+              "successors": [
+                14
+              ]
+            },
+            {
+              "id": 14,
+              "label": "if name and name in data:",
+              "successors": [
+                15,
+                16
+              ]
+            },
+            {
+              "id": 15,
+              "label": "input_data = {\"value\": data[name]}",
+              "successors": [
+                16
+              ]
+            },
+            {
+              "id": 16,
+              "label": "webhook_payload_key = f\"webhook_{node.webhook_id}_payload\"",
+              "successors": [
+                17
+              ]
+            },
+            {
+              "id": 17,
+              "label": "if (block.block_type in (BlockType.WEBHOOK, BlockType.WEBHOOK_MANUAL) and node.webhook_id):",
+              "successors": [
+                18,
+                19
+              ]
+            },
+            {
+              "id": 18,
+              "label": "if webhook_payload_key not in data:",
+              "successors": [
+                19,
+                20
+              ]
+            },
+            {
+              "id": 19,
+              "label": "input_data, error = validate_exec(node, input_data)",
+              "successors": [
+                21
+              ]
+            },
+            {
+              "id": 20,
+              "label": "raise ValueError(f\"Node {block.name} #{node.id} webhook payload is missing\")",
+              "successors": []
+            },
+            {
+              "id": 21,
+              "label": "if input_data is None:",
+              "successors": [
+                22,
+                23
+              ]
+            },
+            {
+              "id": 22,
+              "label": "raise ValueError(error)",
+              "successors": []
+            },
+            {
+              "id": 23,
+              "label": "nodes_input.append((node.id, input_data))",
+              "successors": [
+                7
+              ]
+            },
+            {
+              "id": 24,
+              "label": "graph_exec_id, node_execs = self.db_client.create_graph_execution(graph_id=graph_id, graph_version=graph.version, nodes_input=nodes_input, user_id=user_id)",
+              "successors": [
+                25
+              ]
+            },
+            {
+              "id": 25,
+              "label": "starting_node_execs = []",
+              "successors": [
+                26
+              ]
+            },
+            {
+              "id": 26,
+              "label": "for node_exec in node_execs:",
+              "successors": [
+                27,
+                28
+              ]
+            },
+            {
+              "id": 27,
+              "label": "starting_node_execs.append(NodeExecutionEntry(user_id=user_id, graph_exec_id=node_exec.graph_exec_id, graph_id=node_exec.graph_id, node_exec_id=node_exec.node_exec_id, node_id=node_exec.node_id, data=node_exec.input_data))",
+              "successors": [
+                28
+              ]
+            },
+            {
+              "id": 28,
+              "label": "exec_update = self.db_client.update_execution_status(node_exec.node_exec_id, ExecutionStatus.QUEUED, node_exec.input_data)",
+              "successors": [
+                29
+              ]
+            },
+            {
+              "id": 29,
+              "label": "self.db_client.send_execution_update(exec_update)",
+              "successors": [
+                26
+              ]
+            },
+            {
+              "id": 30,
+              "label": "graph_exec = GraphExecutionEntry(user_id=user_id, graph_id=graph_id, graph_exec_id=graph_exec_id, start_node_execs=starting_node_execs)",
+              "successors": [
+                31
+              ]
+            },
+            {
+              "id": 31,
+              "label": "self.queue.add(graph_exec)",
+              "successors": [
+                32
+              ]
+            },
+            {
+              "id": 32,
+              "label": "return graph_exec",
+              "successors": []
+            }
+          ]
+        },
+        {
+          "name": "cancel_execution",
+          "type": "function",
+          "start_line": 851,
+          "end_line": 885,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "    def cancel_execution(self, graph_exec_id: str) -> None:\n        \"\"\"\n        Mechanism:\n        1. Set the cancel event\n        2. Graph executor's cancel handler thread detects the event, terminates workers,\n           reinitializes worker pool, and returns.\n        3. Update execution statuses in DB and set `error` outputs to `\"TERMINATED\"`.\n        \"\"\"\n        if graph_exec_id not in self.active_graph_runs:\n            raise Exception(\n                f\"Graph execution #{graph_exec_id} not active/running: \"\n                \"possibly already completed/cancelled.\"\n            )\n\n        future, cancel_event = self.active_graph_runs[graph_exec_id]\n        if cancel_event.is_set():\n            return\n\n        cancel_event.set()\n        future.result()\n\n        # Update the status of the unfinished node executions\n        node_execs = self.db_client.get_execution_results(graph_exec_id)\n        for node_exec in node_execs:\n            if node_exec.status not in (\n                ExecutionStatus.COMPLETED,\n                ExecutionStatus.FAILED,\n            ):\n                self.db_client.upsert_execution_output(\n                    node_exec.node_exec_id, \"error\", \"TERMINATED\"\n                )\n                exec_update = self.db_client.update_execution_status(\n                    node_exec.node_exec_id, ExecutionStatus.FAILED\n                )\n                self.db_client.send_execution_update(exec_update)",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "if graph_exec_id not in self.active_graph_runs:",
+              "successors": [
+                2,
+                3
+              ]
+            },
+            {
+              "id": 2,
+              "label": "raise Exception(...)",
+              "successors": []
+            },
+            {
+              "id": 3,
+              "label": "future, cancel_event = self.active_graph_runs[graph_exec_id]",
+              "successors": [
+                4
+              ]
+            },
+            {
+              "id": 4,
+              "label": "if cancel_event.is_set():",
+              "successors": [
+                5,
+                6
+              ]
+            },
+            {
+              "id": 5,
+              "label": "return",
+              "successors": []
+            },
+            {
+              "id": 6,
+              "label": "cancel_event.set()",
+              "successors": [
+                7
+              ]
+            },
+            {
+              "id": 7,
+              "label": "future.result()",
+              "successors": [
+                8
+              ]
+            },
+            {
+              "id": 8,
+              "label": "node_execs = self.db_client.get_execution_results(graph_exec_id)",
+              "successors": [
+                9
+              ]
+            },
+            {
+              "id": 9,
+              "label": "for node_exec in node_execs:",
+              "successors": [
+                10,
+                13
+              ]
+            },
+            {
+              "id": 10,
+              "label": "if node_exec.status not in (ExecutionStatus.COMPLETED, ExecutionStatus.FAILED):",
+              "successors": [
+                11,
+                12
+              ]
+            },
+            {
+              "id": 11,
+              "label": "self.db_client.upsert_execution_output(node_exec.node_exec_id, \"error\", \"TERMINATED\")",
+              "successors": [
+                12
+              ]
+            },
+            {
+              "id": 12,
+              "label": "exec_update = self.db_client.update_execution_status(node_exec.node_exec_id, ExecutionStatus.FAILED)",
+              "successors": [
+                13
+              ]
+            },
+            {
+              "id": 13,
+              "label": "self.db_client.send_execution_update(exec_update)",
+              "successors": []
+            }
+          ]
+        },
+        {
+          "name": "_validate_node_input_credentials",
+          "type": "function",
+          "start_line": 887,
+          "end_line": 930,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "    def _validate_node_input_credentials(self, graph: GraphModel, user_id: str):\n        \"\"\"Checks all credentials for all nodes of the graph\"\"\"\n\n        for node in graph.nodes:\n            block = get_block(node.block_id)\n            if not block:\n                raise ValueError(f\"Unknown block {node.block_id} for node #{node.id}\")\n\n            # Find any fields of type CredentialsMetaInput\n            model_fields = cast(type[BaseModel], block.input_schema).model_fields\n            if CREDENTIALS_FIELD_NAME not in model_fields:\n                continue\n\n            field = model_fields[CREDENTIALS_FIELD_NAME]\n\n            # The BlockSchema class enforces that a `credentials` field is always a\n            # `CredentialsMetaInput`, so we can safely assume this here.\n            credentials_meta_type = cast(CredentialsMetaInput, field.annotation)\n            credentials_meta = credentials_meta_type.model_validate(\n                node.input_default[CREDENTIALS_FIELD_NAME]\n            )\n            # Fetch the corresponding Credentials and perform sanity checks\n            credentials = self.credentials_store.get_creds_by_id(\n                user_id, credentials_meta.id\n            )\n            if not credentials:\n                raise ValueError(\n                    f\"Unknown credentials #{credentials_meta.id} \"\n                    f\"for node #{node.id}\"\n                )\n            if (\n                credentials.provider != credentials_meta.provider\n                or credentials.type != credentials_meta.type\n            ):\n                logger.warning(\n                    f\"Invalid credentials #{credentials.id} for node #{node.id}: \"\n                    \"type/provider mismatch: \"\n                    f\"{credentials_meta.type}<>{credentials.type};\"\n                    f\"{credentials_meta.provider}<>{credentials.provider}\"\n                )\n                raise ValueError(\n                    f\"Invalid credentials #{credentials.id} for node #{node.id}: \"\n                    \"type/provider mismatch\"\n                )",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "for node in graph.nodes:",
+              "successors": [
+                2
+              ]
+            },
+            {
+              "id": 2,
+              "label": "block = get_block(node.block_id)",
+              "successors": [
+                3
+              ]
+            },
+            {
+              "id": 3,
+              "label": "if not block:",
+              "successors": [
+                4,
+                5
+              ]
+            },
+            {
+              "id": 4,
+              "label": "raise ValueError(f\"Unknown block {node.block_id} for node #{node.id}\")",
+              "successors": []
+            },
+            {
+              "id": 5,
+              "label": "model_fields = cast(type[BaseModel], block.input_schema).model_fields",
+              "successors": [
+                6
+              ]
+            },
+            {
+              "id": 6,
+              "label": "if CREDENTIALS_FIELD_NAME not in model_fields:",
+              "successors": [
+                7,
+                8
+              ]
+            },
+            {
+              "id": 7,
+              "label": "continue",
+              "successors": [
+                1
+              ]
+            },
+            {
+              "id": 8,
+              "label": "field = model_fields[CREDENTIALS_FIELD_NAME]",
+              "successors": [
+                9
+              ]
+            },
+            {
+              "id": 9,
+              "label": "credentials_meta_type = cast(CredentialsMetaInput, field.annotation)",
+              "successors": [
+                10
+              ]
+            },
+            {
+              "id": 10,
+              "label": "credentials_meta = credentials_meta_type.model_validate(node.input_default[CREDENTIALS_FIELD_NAME])",
+              "successors": [
+                11
+              ]
+            },
+            {
+              "id": 11,
+              "label": "credentials = self.credentials_store.get_creds_by_id(user_id, credentials_meta.id)",
+              "successors": [
+                12
+              ]
+            },
+            {
+              "id": 12,
+              "label": "if not credentials:",
+              "successors": [
+                13,
+                14
+              ]
+            },
+            {
+              "id": 13,
+              "label": "raise ValueError(f\"Unknown credentials #{credentials_meta.id} for node #{node.id}\")",
+              "successors": []
+            },
+            {
+              "id": 14,
+              "label": "if (credentials.provider != credentials_meta.provider or credentials.type != credentials_meta.type):",
+              "successors": [
+                15,
+                16
+              ]
+            },
+            {
+              "id": 15,
+              "label": "logger.warning(f\"Invalid credentials #{credentials.id} for node #{node.id}: type/provider mismatch: {credentials_meta.type}<>{credentials.type};{credentials_meta.provider}<>{credentials.provider}\")",
+              "successors": [
+                16
+              ]
+            },
+            {
+              "id": 16,
+              "label": "raise ValueError(f\"Invalid credentials #{credentials.id} for node #{node.id}: type/provider mismatch\")",
+              "successors": []
+            }
+          ]
+        }
+      ],
+      "classes": [],
+      "simplified_code": "class ExecutionManager(AppService):\n        self.active_graph_runs: dict[str, tuple[Future, threading.Event]] = {}\n\n    @classmethod\n        return settings.config.execution_manager_port\n\n            )\n\n        super().cleanup()\n\n    @property\n        return get_db_client()\n\n    @expose\n        return graph_exec\n\n    @expose\n                self.db_client.send_execution_update(exec_update)\n\n                )",
+      "blocks": [
+        {
+          "id": 1,
+          "label": "class ExecutionManager(AppService):",
+          "successors": [
+            2
+          ]
+        },
+        {
+          "id": 2,
+          "label": "self.active_graph_runs: dict[str, tuple[Future, threading.Event]] = {}",
+          "successors": [
+            3
+          ]
+        },
+        {
+          "id": 3,
+          "label": "@classmethod",
+          "successors": [
+            4
+          ]
+        },
+        {
+          "id": 4,
+          "label": "return settings.config.execution_manager_port",
+          "successors": [
+            5
+          ]
+        },
+        {
+          "id": 5,
+          "label": "super().cleanup()",
+          "successors": [
+            6
+          ]
+        },
+        {
+          "id": 6,
+          "label": "@property",
+          "successors": [
+            7
+          ]
+        },
+        {
+          "id": 7,
+          "label": "return get_db_client()",
+          "successors": [
+            8
+          ]
+        },
+        {
+          "id": 8,
+          "label": "@expose",
+          "successors": [
+            9
+          ]
+        },
+        {
+          "id": 9,
+          "label": "return graph_exec",
+          "successors": [
+            10
+          ]
+        },
+        {
+          "id": 10,
+          "label": "@expose",
+          "successors": [
+            11
+          ]
+        },
+        {
+          "id": 11,
+          "label": "self.db_client.send_execution_update(exec_update)",
+          "successors": []
+        }
+      ]
+    }
+  ],
+  "simplified_code": "import atexit\nimport logging\nimport multiprocessing\nimport os\nimport signal\nimport sys\nimport threading\nfrom concurrent.futures import Future, ProcessPoolExecutor\nfrom contextlib import contextmanager\nfrom multiprocessing.pool import AsyncResult, Pool\nfrom typing import TYPE_CHECKING, Any, Generator, TypeVar, cast\n\nfrom pydantic import BaseModel\nfrom redis.lock import Lock as RedisLock\n\nif TYPE_CHECKING:\n    from backend.executor import DatabaseManager\n\nfrom autogpt_libs.utils.cache import thread_cached\n\nfrom backend.blocks.agent import AgentExecutorBlock\nfrom backend.data import redis\nfrom backend.data.block import Block, BlockData, BlockInput, BlockType, get_block\nfrom backend.data.execution import (\n    ExecutionQueue,\n    ExecutionResult,\n    ExecutionStatus,\n    GraphExecutionEntry,\n    NodeExecutionEntry,\n    merge_execution_input,\n    parse_execution_output,\n)\nfrom backend.data.graph import GraphModel, Link, Node\nfrom backend.data.model import CREDENTIALS_FIELD_NAME, CredentialsMetaInput\nfrom backend.integrations.creds_manager import IntegrationCredentialsManager\nfrom backend.util import json\nfrom backend.util.decorator import error_logged, time_measured\nfrom backend.util.logging import configure_logging\nfrom backend.util.process import set_service_name\nfrom backend.util.service import (\n    AppService,\n    close_service_client,\n    expose,\n    get_service_client,\n)\nfrom backend.util.settings import Settings\nfrom backend.util.type import convert\n\nlogger = logging.getLogger(__name__)\nsettings = Settings()\n\n\n        return f\"{self.prefix} {msg} {extra}\"\n\n\nT = TypeVar(\"T\")\nExecutionStream = Generator[NodeExecutionEntry, None, None]\n\n\n\n\n    ]\n\n\n    return data, node_block.name\n\n\n            return exec_stats, error\n\n\n                )\n\n\n# ------- UTILITIES ------- #\n\n\n@thread_cached\n    return get_service_client(DatabaseManager)\n\n\n            lock.release()\n\n\n        os.write(sys.stdout.fileno(), (message + \"\\n\").encode())",
+  "blocks": [
+    {
+      "id": 1,
+      "label": "import statements",
+      "successors": [
+        2
+      ]
+    },
+    {
+      "id": 2,
+      "label": "if TYPE_CHECKING:",
+      "successors": [
+        3
+      ]
+    },
+    {
+      "id": 3,
+      "label": "from autogpt_libs.utils.cache import thread_cached",
+      "successors": [
+        4
+      ]
+    },
+    {
+      "id": 4,
+      "label": "from backend.blocks.agent import AgentExecutorBlock",
+      "successors": [
+        5
+      ]
+    },
+    {
+      "id": 5,
+      "label": "from backend.data import redis",
+      "successors": [
+        6
+      ]
+    },
+    {
+      "id": 6,
+      "label": "from backend.data.block import Block, BlockData, BlockInput, BlockType, get_block",
+      "successors": [
+        7
+      ]
+    },
+    {
+      "id": 7,
+      "label": "from backend.data.execution import ( ExecutionQueue, ExecutionResult, ExecutionStatus, GraphExecutionEntry, NodeExecutionEntry, merge_execution_input, parse_execution_output )",
+      "successors": [
+        8
+      ]
+    },
+    {
+      "id": 8,
+      "label": "from backend.data.graph import GraphModel, Link, Node",
+      "successors": [
+        9
+      ]
+    },
+    {
+      "id": 9,
+      "label": "from backend.data.model import CREDENTIALS_FIELD_NAME, CredentialsMetaInput",
+      "successors": [
+        10
+      ]
+    },
+    {
+      "id": 10,
+      "label": "from backend.integrations.creds_manager import IntegrationCredentialsManager",
+      "successors": [
+        11
+      ]
+    },
+    {
+      "id": 11,
+      "label": "from backend.util import json",
+      "successors": [
+        12
+      ]
+    },
+    {
+      "id": 12,
+      "label": "from backend.util.decorator import error_logged, time_measured",
+      "successors": [
+        13
+      ]
+    },
+    {
+      "id": 13,
+      "label": "from backend.util.logging import configure_logging",
+      "successors": [
+        14
+      ]
+    },
+    {
+      "id": 14,
+      "label": "from backend.util.process import set_service_name",
+      "successors": [
+        15
+      ]
+    },
+    {
+      "id": 15,
+      "label": "from backend.util.service import ( AppService, close_service_client, expose, get_service_client )",
+      "successors": [
+        16
+      ]
+    },
+    {
+      "id": 16,
+      "label": "from backend.util.settings import Settings",
+      "successors": [
+        17
+      ]
+    },
+    {
+      "id": 17,
+      "label": "from backend.util.type import convert",
+      "successors": [
+        18
+      ]
+    },
+    {
+      "id": 18,
+      "label": "logger = logging.getLogger(__name__)",
+      "successors": [
+        19
+      ]
+    },
+    {
+      "id": 19,
+      "label": "settings = Settings()",
+      "successors": [
+        20
+      ]
+    },
+    {
+      "id": 20,
+      "label": "return f\"{self.prefix} {msg} {extra}\"",
+      "successors": [
+        21
+      ]
+    },
+    {
+      "id": 21,
+      "label": "T = TypeVar(\"T\")",
+      "successors": [
+        22
+      ]
+    },
+    {
+      "id": 22,
+      "label": "ExecutionStream = Generator[NodeExecutionEntry, None, None]",
+      "successors": [
+        23
+      ]
+    },
+    {
+      "id": 23,
+      "label": "return data, node_block.name",
+      "successors": [
+        24
+      ]
+    },
+    {
+      "id": 24,
+      "label": "return exec_stats, error",
+      "successors": [
+        25
+      ]
+    },
+    {
+      "id": 25,
+      "label": "lock.release()",
+      "successors": [
+        26
+      ]
+    },
+    {
+      "id": 26,
+      "label": "os.write(sys.stdout.fileno(), (message + \"\\n\").encode())",
+      "successors": []
+    }
+  ]
+}

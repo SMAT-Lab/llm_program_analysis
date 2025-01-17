@@ -1,0 +1,537 @@
+{
+  "name": "171.py",
+  "type": "CFG",
+  "blocks": [
+    {
+      "id": 1,
+      "label": "#1\nimport asyncio\nimport builtins\nimport logging\nimport os\nimport threading\nimport time\nimport typing\nfrom abc import ABC, abstractmethod\nfrom enum import Enum\nfrom types import NoneType, UnionType\nfrom typing import Annotated, Any, Awaitable, Callable, Coroutine, Dict, FrozenSet, Iterator, List, Set, Tuple, Type, TypeVar, Union, cast, get_args, get_origin\nimport Pyro5.api\nfrom pydantic import BaseModel\nfrom Pyro5 import api as pyro\nfrom Pyro5 import config as pyro_config\nfrom backend.data import db, redis\nfrom backend.util.process import AppProcess\nfrom backend.util.retry import conn_retry\nfrom backend.util.settings import Config, Secrets\nlogger = logging.getLogger(__name__)\nT = TypeVar('T')\nC = TypeVar('C', bound=Callable)\nconfig = Config()\npyro_host = config.pyro_host\npyro_config.MAX_RETRIES = config.pyro_client_comm_retry\npyro_config.COMMTIMEOUT = config.pyro_client_comm_timeout\nAS = TypeVar('AS', bound=AppService)\nbuiltin_types = [*vars(builtins).values(), NoneType, Enum]",
+      "successors": []
+    }
+  ],
+  "functions": [
+    {
+      "name": "expose",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 3,
+          "label": "#3\n\"\"\"\n    Decorator to mark a method or class to be exposed for remote calls.\n\n    ## \u26a0\ufe0f Gotcha\n    Aside from \"simple\" types, only Pydantic models are passed unscathed *if annotated*.\n    Any other passed or returned class objects are converted to dictionaries by Pyro.\n    \"\"\"\nregister_pydantic_serializers(func)\nreturn pyro.expose(wrapper)",
+          "successors": []
+        }
+      ],
+      "functions": [
+        {
+          "name": "wrapper",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 5,
+              "label": "#5\ntry:",
+              "successors": [
+                {
+                  "id": 6,
+                  "label": "#6\nreturn func(*args, **kwargs)",
+                  "successors": []
+                },
+                {
+                  "id": 7,
+                  "label": "#7\nmsg = f'Error in {func.__name__}: {e.__str__()}'\nlogger.exception(msg)\nraise",
+                  "successors": []
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        }
+      ],
+      "classes": []
+    },
+    {
+      "name": "register_pydantic_serializers",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 15,
+          "label": "#15\n\"\"\"Register custom serializers and deserializers for annotated Pydantic models\"\"\"",
+          "successors": [
+            {
+              "id": 16,
+              "label": "#16\nfor name, annotation in func.__annotations__.items():",
+              "successors": [
+                {
+                  "id": 17,
+                  "label": "#17\ntry:",
+                  "successors": [
+                    {
+                      "id": 19,
+                      "label": "#19\npydantic_types = _pydantic_models_from_type_annotation(annotation)",
+                      "successors": [
+                        {
+                          "id": 21,
+                          "label": "#21\nfor model in pydantic_types:",
+                          "successors": [
+                            {
+                              "id": 23,
+                              "label": "#23\nlogger.debug(\n    f\"Registering Pyro (de)serializers for {func.__name__} annotation '{name}': {model.__qualname__}\"\n    )\npyro.register_class_to_dict(model, _make_custom_serializer(model))\npyro.register_dict_to_class(model.__qualname__, _make_custom_deserializer(\n    model))",
+                              "successors": []
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "id": 20,
+                      "label": "#20\nraise TypeError(f'Error while exposing {func.__name__}: {e.__str__()}')",
+                      "successors": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "_make_custom_serializer",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 27,
+          "label": "#27\nreturn custom_class_to_dict",
+          "successors": []
+        }
+      ],
+      "functions": [
+        {
+          "name": "custom_class_to_dict",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 29,
+              "label": "#29\ndata = {'__class__': obj.__class__.__qualname__, **obj.model_dump()}\nlogger.debug(f'Serializing {obj.__class__.__qualname__} with data: {data}')\nreturn data",
+              "successors": []
+            }
+          ],
+          "functions": [],
+          "classes": []
+        }
+      ],
+      "classes": []
+    },
+    {
+      "name": "_make_custom_deserializer",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 35,
+          "label": "#35\nreturn custom_dict_to_class",
+          "successors": []
+        }
+      ],
+      "functions": [
+        {
+          "name": "custom_dict_to_class",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 37,
+              "label": "#37\nlogger.debug(f'Deserializing {model.__qualname__} from data: {data}')\nreturn model(**data)",
+              "successors": []
+            }
+          ],
+          "functions": [],
+          "classes": []
+        }
+      ],
+      "classes": []
+    },
+    {
+      "name": "close_service_client",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 94,
+          "label": "#94\nif isinstance(client, PyroClient):",
+          "successors": [
+            {
+              "id": 95,
+              "label": "#95\nclient.proxy._pyroRelease()",
+              "successors": []
+            },
+            {
+              "id": 97,
+              "label": "#97\nraise RuntimeError(f'Client {client.__class__} is not a Pyro client.')",
+              "successors": []
+            }
+          ]
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "get_service_client",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 101,
+          "label": "#101\nservice_name = service_type.service_name\nreturn cast(AS, DynamicClient())",
+          "successors": []
+        }
+      ],
+      "functions": [],
+      "classes": [
+        {
+          "name": "DynamicClient",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 103,
+              "label": "#103",
+              "successors": []
+            }
+          ],
+          "functions": [
+            {
+              "name": "__init__",
+              "type": "CFG",
+              "blocks": [
+                {
+                  "id": 105,
+                  "label": "#105\nhost = os.environ.get(f'{service_name.upper()}_HOST', pyro_host)\nuri = f'PYRO:{service_type.service_name}@{host}:{service_type.get_port()}'\nlogger.debug(f'Connecting to service [{service_name}]. URI = {uri}')\nself.proxy = Pyro5.api.Proxy(uri)\nself.proxy._pyroBind()\nlogger.debug(f'Successfully connected to service [{service_name}]')",
+                  "successors": []
+                }
+              ],
+              "functions": [],
+              "classes": []
+            },
+            {
+              "name": "__getattr__",
+              "type": "CFG",
+              "blocks": [
+                {
+                  "id": 108,
+                  "label": "#108\nres = getattr(self.proxy, name)\nreturn res",
+                  "successors": []
+                }
+              ],
+              "functions": [],
+              "classes": []
+            }
+          ],
+          "classes": []
+        }
+      ]
+    },
+    {
+      "name": "_pydantic_models_from_type_annotation",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 115,
+          "label": "#115\nif (origin := get_origin(annotation)) and origin is Annotated:",
+          "successors": [
+            {
+              "id": 116,
+              "label": "#116\nannotation = get_args(annotation)[0]",
+              "successors": [
+                {
+                  "id": 117,
+                  "label": "#117\norigin = get_origin(annotation)\nargs = get_args(annotation)\nif origin in (Union, UnionType, list, List, tuple, Tuple, set, Set,",
+                  "successors": [
+                    {
+                      "id": 118,
+                      "label": "#118\nfor arg in args:",
+                      "successors": [
+                        {
+                          "id": 136,
+                          "label": "#136\nyield from _pydantic_models_from_type_annotation(arg)",
+                          "successors": []
+                        }
+                      ]
+                    },
+                    {
+                      "id": 120,
+                      "label": "#120\nif origin in (dict, Dict):",
+                      "successors": [
+                        {
+                          "id": 121,
+                          "label": "#121\nkey_type, value_type = args\nyield from _pydantic_models_from_type_annotation(key_type)\nyield from _pydantic_models_from_type_annotation(value_type)",
+                          "successors": []
+                        },
+                        {
+                          "id": 123,
+                          "label": "#123\nif origin in (Awaitable, Coroutine):",
+                          "successors": [
+                            {
+                              "id": 124,
+                              "label": "#124\nreturn_type = args[-1]\nyield from _pydantic_models_from_type_annotation(return_type)",
+                              "successors": []
+                            },
+                            {
+                              "id": 126,
+                              "label": "#126\nannotype = annotation if origin is None else origin\nif annotype is not None and not hasattr(typing, getattr(annotype,",
+                              "successors": [
+                                {
+                                  "id": 127,
+                                  "label": "#127\nif issubclass(annotype, BaseModel):",
+                                  "successors": [
+                                    {
+                                      "id": 129,
+                                      "label": "#129\nyield annotype",
+                                      "successors": []
+                                    },
+                                    {
+                                      "id": 131,
+                                      "label": "#131\nif annotype not in builtin_types and not issubclass(annotype, Enum):",
+                                      "successors": [
+                                        {
+                                          "id": 132,
+                                          "label": "#132\nraise TypeError(f'Unsupported type encountered: {annotype}')",
+                                          "successors": []
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "functions": [],
+      "classes": []
+    }
+  ],
+  "classes": [
+    {
+      "name": "AppService",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 43,
+          "label": "#43\nshared_event_loop: asyncio.AbstractEventLoop\nuse_db: bool = False\nuse_redis: bool = False\nuse_supabase: bool = False",
+          "successors": []
+        }
+      ],
+      "functions": [
+        {
+          "name": "__init__",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 45,
+              "label": "#45\nself.uri = None",
+              "successors": []
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "get_port",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 48,
+              "label": "#48\npass",
+              "successors": []
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "get_host",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 51,
+              "label": "#51\nreturn os.environ.get(f'{cls.service_name.upper()}_HOST', config.pyro_host)",
+              "successors": []
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "run_service",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 55,
+              "label": "#55\nwhile True:",
+              "successors": [
+                {
+                  "id": 56,
+                  "label": "#56\ntime.sleep(10)",
+                  "successors": []
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "__run_async",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 60,
+              "label": "#60\nreturn asyncio.run_coroutine_threadsafe(coro, self.shared_event_loop)",
+              "successors": []
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "run_and_wait",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 64,
+              "label": "#64\nfuture = self.__run_async(coro)\nreturn future.result()",
+              "successors": []
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "run",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 68,
+              "label": "#68\nself.shared_event_loop = asyncio.get_event_loop()\nif self.use_db:",
+              "successors": [
+                {
+                  "id": 69,
+                  "label": "#69\nself.shared_event_loop.run_until_complete(db.connect())",
+                  "successors": [
+                    {
+                      "id": 70,
+                      "label": "#70\nif self.use_redis:",
+                      "successors": [
+                        {
+                          "id": 71,
+                          "label": "#71\nredis.connect()",
+                          "successors": [
+                            {
+                              "id": 72,
+                              "label": "#72\nif self.use_supabase:",
+                              "successors": [
+                                {
+                                  "id": 73,
+                                  "label": "#73\nfrom supabase import create_client\nsecrets = Secrets()\nself.supabase = create_client(secrets.supabase_url, secrets.\n    supabase_service_role_key)",
+                                  "successors": [
+                                    {
+                                      "id": 74,
+                                      "label": "#74\nasync_thread = threading.Thread(target=self.__start_async_loop)\nasync_thread.daemon = True\nasync_thread.start()\ndaemon_thread = threading.Thread(target=self.__start_pyro)\ndaemon_thread.daemon = True\ndaemon_thread.start()\nself.run_service()",
+                                      "successors": []
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "cleanup",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 77,
+              "label": "#77\nif self.use_db:",
+              "successors": [
+                {
+                  "id": 78,
+                  "label": "#78\nself.run_and_wait(db.disconnect())",
+                  "successors": [
+                    {
+                      "id": 79,
+                      "label": "#79\nif self.use_redis:",
+                      "successors": [
+                        {
+                          "id": 80,
+                          "label": "#80\nredis.disconnect()",
+                          "successors": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "__start_pyro",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 84,
+              "label": "#84\nmaximum_connection_thread_count = max(Pyro5.config.THREADPOOL_SIZE, config.\n    num_node_workers * config.num_graph_workers)\nPyro5.config.THREADPOOL_SIZE = maximum_connection_thread_count\ndaemon = Pyro5.api.Daemon(host=config.pyro_host, port=self.get_port())\nself.uri = daemon.register(self, objectId=self.service_name)\nlogger.info(f'[{self.service_name}] Connected to Pyro; URI = {self.uri}')\ndaemon.requestLoop()",
+              "successors": []
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "__start_async_loop",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 87,
+              "label": "#87\nself.shared_event_loop.run_forever()",
+              "successors": []
+            }
+          ],
+          "functions": [],
+          "classes": []
+        }
+      ],
+      "classes": []
+    },
+    {
+      "name": "PyroClient",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 91,
+          "label": "#91\nproxy: Pyro5.api.Proxy",
+          "successors": []
+        }
+      ],
+      "functions": [],
+      "classes": []
+    }
+  ]
+}

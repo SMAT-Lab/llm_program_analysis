@@ -1,0 +1,279 @@
+{
+  "name": "175.py",
+  "type": "CFG",
+  "blocks": [
+    {
+      "id": 1,
+      "label": "#1\nimport logging\nimport os\nfrom urllib.parse import parse_qs, urlencode, urlparse, urlunparse\nfrom apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_EXECUTED\nfrom apscheduler.job import Job as JobObj\nfrom apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore\nfrom apscheduler.schedulers.blocking import BlockingScheduler\nfrom apscheduler.triggers.cron import CronTrigger\nfrom autogpt_libs.utils.cache import thread_cached\nfrom dotenv import load_dotenv\nfrom pydantic import BaseModel\nfrom sqlalchemy import MetaData, create_engine\nfrom backend.data.block import BlockInput\nfrom backend.executor.manager import ExecutionManager\nfrom backend.util.service import AppService, expose, get_service_client\nfrom backend.util.settings import Config\nlogger = logging.getLogger(__name__)\nconfig = Config()",
+      "successors": []
+    }
+  ],
+  "functions": [
+    {
+      "name": "_extract_schema_from_url",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 3,
+          "label": "#3\n\"\"\"\n    Extracts the schema from the DATABASE_URL and returns the schema and cleaned URL.\n    \"\"\"\nparsed_url = urlparse(database_url)\nquery_params = parse_qs(parsed_url.query)\nschema_list = query_params.pop('schema', None)\nschema = schema_list[0] if schema_list else 'public'\nnew_query = urlencode(query_params, doseq=True)\nnew_parsed_url = parsed_url._replace(query=new_query)\ndatabase_url_clean = str(urlunparse(new_parsed_url))\nreturn schema, database_url_clean",
+          "successors": []
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "log",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 7,
+          "label": "#7\nlogger.info('[ExecutionScheduler] ' + msg, **kwargs)",
+          "successors": []
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "job_listener",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 10,
+          "label": "#10\n\"\"\"Logs job execution outcomes for better monitoring.\"\"\"\nif event.exception:",
+          "successors": [
+            {
+              "id": 11,
+              "label": "#11\nlog(f'Job {event.job_id} failed.')",
+              "successors": []
+            },
+            {
+              "id": 13,
+              "label": "#13\nlog(f'Job {event.job_id} completed successfully.')",
+              "successors": []
+            }
+          ]
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "get_execution_client",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 16,
+          "label": "#16\nreturn get_service_client(ExecutionManager)",
+          "successors": []
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "execute_graph",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 20,
+          "label": "#20\nargs = JobArgs(**kwargs)\ntry:",
+          "successors": [
+            {
+              "id": 21,
+              "label": "#21\nlog(f'Executing recurring job for graph #{args.graph_id}')\nget_execution_client().add_execution(args.graph_id, args.input_data, args.\n    user_id)",
+              "successors": []
+            },
+            {
+              "id": 22,
+              "label": "#22\nlogger.exception(f'Error executing graph {args.graph_id}: {e}')",
+              "successors": []
+            }
+          ]
+        }
+      ],
+      "functions": [],
+      "classes": []
+    }
+  ],
+  "classes": [
+    {
+      "name": "JobArgs",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 26,
+          "label": "#26\ngraph_id: str\ninput_data: BlockInput\nuser_id: str\ngraph_version: int\ncron: str",
+          "successors": []
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "JobInfo",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 29,
+          "label": "#29\nid: str\nname: str\nnext_run_time: str",
+          "successors": []
+        }
+      ],
+      "functions": [
+        {
+          "name": "from_db",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 31,
+              "label": "#31\nreturn JobInfo(id=job_obj.id, name=job_obj.name, next_run_time=job_obj.\n    next_run_time.isoformat(), **job_args.model_dump())",
+              "successors": []
+            }
+          ],
+          "functions": [],
+          "classes": []
+        }
+      ],
+      "classes": []
+    },
+    {
+      "name": "ExecutionScheduler",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 36,
+          "label": "#36\nscheduler: BlockingScheduler",
+          "successors": []
+        }
+      ],
+      "functions": [
+        {
+          "name": "get_port",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 38,
+              "label": "#38\nreturn config.execution_scheduler_port",
+              "successors": []
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "execution_client",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 42,
+              "label": "#42\nreturn get_service_client(ExecutionManager)",
+              "successors": []
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "run_service",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 46,
+              "label": "#46\nload_dotenv()\ndb_schema, db_url = _extract_schema_from_url(os.getenv('DATABASE_URL'))\nself.scheduler = BlockingScheduler(jobstores={'default': SQLAlchemyJobStore\n    (engine=create_engine(db_url), metadata=MetaData(schema=db_schema))})\nself.scheduler.add_listener(job_listener, EVENT_JOB_EXECUTED | EVENT_JOB_ERROR)\nself.scheduler.start()",
+              "successors": []
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "add_execution_schedule",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 49,
+              "label": "#49\njob_args = JobArgs(graph_id=graph_id, input_data=input_data, user_id=\n    user_id, graph_version=graph_version, cron=cron)\njob = self.scheduler.add_job(execute_graph, CronTrigger.from_crontab(cron),\n    kwargs=job_args.model_dump(), replace_existing=True)\nlog(f\"Added job {job.id} with cron schedule '{cron}' input data: {input_data}\")\nreturn JobInfo.from_db(job_args, job)",
+              "successors": []
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "delete_schedule",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 53,
+              "label": "#53\njob = self.scheduler.get_job(schedule_id)\nif not job:",
+              "successors": [
+                {
+                  "id": 54,
+                  "label": "#54\nlog(f'Job {schedule_id} not found.')\nraise ValueError(f'Job #{schedule_id} not found.')",
+                  "successors": []
+                },
+                {
+                  "id": 55,
+                  "label": "#55\njob_args = JobArgs(**job.kwargs)\nif job_args.user_id != user_id:",
+                  "successors": [
+                    {
+                      "id": 57,
+                      "label": "#57\nraise ValueError(\"User ID does not match the job's user ID.\")",
+                      "successors": []
+                    },
+                    {
+                      "id": 58,
+                      "label": "#58\nlog(f'Deleting job {schedule_id}')\njob.remove()\nreturn JobInfo.from_db(job_args, job)",
+                      "successors": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "get_execution_schedules",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 63,
+              "label": "#63\nschedules = []",
+              "successors": [
+                {
+                  "id": 64,
+                  "label": "#64\nfor job in self.scheduler.get_jobs():",
+                  "successors": [
+                    {
+                      "id": 65,
+                      "label": "#65\njob_args = JobArgs(**job.kwargs)\nif job.next_run_time is not None and (graph_id is None or job_args.graph_id ==",
+                      "successors": [
+                        {
+                          "id": 67,
+                          "label": "#67\nschedules.append(JobInfo.from_db(job_args, job))",
+                          "successors": []
+                        }
+                      ]
+                    },
+                    {
+                      "id": 66,
+                      "label": "#66\nreturn schedules",
+                      "successors": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        }
+      ],
+      "classes": []
+    }
+  ]
+}

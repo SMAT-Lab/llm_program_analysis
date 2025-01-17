@@ -1,0 +1,118 @@
+{
+  "name": "63.py",
+  "type": "CFG",
+  "blocks": [
+    {
+      "id": 1,
+      "label": "#1\nfrom pathlib import Path\nfrom prisma.models import User\nfrom backend.blocks.basic import StoreValueBlock\nfrom backend.blocks.block import BlockInstallationBlock\nfrom backend.blocks.http import SendWebRequestBlock\nfrom backend.blocks.llm import AITextGeneratorBlock\nfrom backend.blocks.text import ExtractTextInformationBlock, FillTextTemplateBlock\nfrom backend.data.graph import Graph, Link, Node, create_graph\nfrom backend.data.user import get_or_create_user\nfrom backend.util.test import SpinTestServer, wait_execution\nsample_block_modules = {'llm':\n    'Block that calls the AI model to generate text.', 'basic':\n    'Block that does basic operations.', 'text':\n    'Blocks that do text operations.', 'reddit':\n    'Blocks that interacts with Reddit.'}\nsample_block_codes = {}",
+      "successors": [
+        {
+          "id": 2,
+          "label": "#2\nfor module, description in sample_block_modules.items():",
+          "successors": [
+            {
+              "id": 3,
+              "label": "#3\ncurrent_dir = Path(__file__).parent\nfile_path = current_dir.parent / 'blocks' / f'{module}.py'\nwith open(file_path, 'r') as f:",
+              "successors": [
+                {
+                  "id": 5,
+                  "label": "#5\ncode = '\\n'.join(['```python', f.read(), '```'])\nsample_block_codes[module] = f\"\"\"[Example: {description}]\n{code}\"\"\"",
+                  "successors": []
+                }
+              ]
+            },
+            {
+              "id": 4,
+              "label": "#4\nif __name__ == '__main__':",
+              "successors": [
+                {
+                  "id": 25,
+                  "label": "#25\nimport asyncio\nasyncio.run(block_autogen_agent())",
+                  "successors": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "functions": [
+    {
+      "name": "create_test_user",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 8,
+          "label": "#8\ntest_user_data = {'sub': 'ef3b97d7-1161-4eb4-92b2-10c24fb154c1', 'email':\n    'testuser@example.com', 'name': 'Test User'}\nuser = await get_or_create_user(test_user_data)",
+          "successors": [
+            {
+              "id": 9,
+              "label": "#9\nreturn user",
+              "successors": []
+            }
+          ]
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "create_test_graph",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 13,
+          "label": "#13\n\"\"\"\n            StoreValueBlock (input)\n                 ||\n                 v\n        FillTextTemplateBlock (input query)\n                 ||\n                 v\n         SendWebRequestBlock (browse)\n                 ||\n                 v\n     ------> StoreValueBlock===============\n    |           |  |                    ||\n    |            --                     ||\n    |                                   ||\n    |                                   ||\n    |                                    v\n    |        AITextGeneratorBlock  <===== FillTextTemplateBlock (query)\n    |            ||                      ^\n    |            v                      ||\n    |       ExtractTextInformationBlock             ||\n    |            ||                     ||\n    |            v                      ||\n    ------ BlockInstallationBlock  ======\n    \"\"\"\ninput_data = Node(block_id=StoreValueBlock().id)\ninput_query_constant = Node(block_id=StoreValueBlock().id, input_default={\n    'data': None})\ninput_text_formatter = Node(block_id=FillTextTemplateBlock().id,\n    input_default={'format':\n    'Show me how to make a python code for this query: `{query}`'})\nsearch_http_request = Node(block_id=SendWebRequestBlock().id, input_default\n    ={'url': 'https://osit-v2.bentlybro.com/search'})\nsearch_result_constant = Node(block_id=StoreValueBlock().id, input_default=\n    {'data': None})\nprompt_text_formatter = Node(block_id=FillTextTemplateBlock().id,\n    input_default={'format':\n    \"\"\"\nWrite me a full Block implementation for this query: `{query}`\n\nHere is the information I get to write a Python code for that:\n{search_result}\n\nHere is your previous attempt:\n{previous_attempt}\n\"\"\"\n    , 'values_#_previous_attempt': 'No previous attempt found.'})\ncode_gen_llm_call = Node(block_id=AITextGeneratorBlock().id, input_default=\n    {'sys_prompt':\n    f\"\"\"\nYou are a software engineer and you are asked to write the full class implementation.\nThe class that you are implementing is extending a class called `Block`.\nThis class will be used as a node in a graph of other blocks to build a complex system.\nThis class has a method called `run` that takes an input and returns an output.\nIt also has an `id` attribute that is a UUID, input_schema, and output_schema.\nFor UUID, you have to hardcode it, like `d2e2ecd2-9ae6-422d-8dfe-ceca500ce6a6`,\ndon't use any automatic UUID generation, because it needs to be consistent.\nTo validate the correctness of your implementation, you can also define a test.\nThere is `test_input` and `test_output` you can use to validate your implementation.\nThere is also `test_mock` to mock a helper function on your block class for testing.\n\nFeel free to start your answer by explaining your plan what's required how to test, etc.\nBut make sure to produce the fully working implementation at the end,\nand it should be enclosed within this block format:\n```python\n<Your implementation here>\n```\n\nHere are a couple of sample of the Block class implementation:\n\n{'--------------'.join([sample_block_codes[v] for v in sample_block_modules])}\n\"\"\"\n    })\ncode_text_parser = Node(block_id=ExtractTextInformationBlock().id,\n    input_default={'pattern': \"\"\"```python\n(.+?)\n```\"\"\", 'group': 1})\nblock_installation = Node(block_id=BlockInstallationBlock().id)\nnodes = [input_data, input_query_constant, input_text_formatter,\n    search_http_request, search_result_constant, prompt_text_formatter,\n    code_gen_llm_call, code_text_parser, block_installation]\nlinks = [Link(source_id=input_data.id, sink_id=input_query_constant.id,\n    source_name='output', sink_name='input'), Link(source_id=input_data.id,\n    sink_id=input_text_formatter.id, source_name='output', sink_name=\n    'values_#_query'), Link(source_id=input_query_constant.id, sink_id=\n    input_query_constant.id, source_name='output', sink_name='data'), Link(\n    source_id=input_text_formatter.id, sink_id=search_http_request.id,\n    source_name='output', sink_name='body_#_query'), Link(source_id=\n    search_http_request.id, sink_id=search_result_constant.id, source_name=\n    'response_#_reply', sink_name='input'), Link(source_id=\n    search_result_constant.id, sink_id=search_result_constant.id,\n    source_name='output', sink_name='data'), Link(source_id=\n    search_result_constant.id, sink_id=prompt_text_formatter.id,\n    source_name='output', sink_name='values_#_search_result'), Link(\n    source_id=input_query_constant.id, sink_id=prompt_text_formatter.id,\n    source_name='output', sink_name='values_#_query'), Link(source_id=\n    prompt_text_formatter.id, sink_id=code_gen_llm_call.id, source_name=\n    'output', sink_name='prompt'), Link(source_id=code_gen_llm_call.id,\n    sink_id=code_text_parser.id, source_name='response', sink_name='text'),\n    Link(source_id=code_text_parser.id, sink_id=block_installation.id,\n    source_name='positive', sink_name='code'), Link(source_id=\n    block_installation.id, sink_id=prompt_text_formatter.id, source_name=\n    'error', sink_name='values_#_previous_attempt'), Link(source_id=\n    block_installation.id, sink_id=search_result_constant.id, source_name=\n    'error', sink_name='input'), Link(source_id=block_installation.id,\n    sink_id=input_query_constant.id, source_name='error', sink_name='input')]\nreturn Graph(name='BlockAutoGen', description='Block auto generation agent',\n    nodes=nodes, links=links)",
+          "successors": []
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "block_autogen_agent",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 17,
+          "label": "#17\nasync with SpinTestServer() as server:\n    test_user = await create_test_user()\n    test_graph = await create_graph(create_test_graph(), user_id=test_user.id)\n    input_data = {'input': 'Write me a block that writes a string into a file.'\n        }\n    response = await server.agent_server.test_execute_graph(test_graph.id,\n        input_data, test_user.id)\n    print(response)\n    result = await wait_execution(graph_id=test_graph.id, graph_exec_id=\n        response['id'], timeout=1200, user_id=test_user.id)\n    print(result)",
+          "successors": [
+            {
+              "id": 18,
+              "label": "#18\ntest_user = await create_test_user()",
+              "successors": [
+                {
+                  "id": 20,
+                  "label": "#20\ntest_graph = await create_graph(create_test_graph(), user_id=test_user.id)",
+                  "successors": [
+                    {
+                      "id": 21,
+                      "label": "#21\ninput_data = {'input': 'Write me a block that writes a string into a file.'}\nresponse = await server.agent_server.test_execute_graph(test_graph.id,\n    input_data, test_user.id)",
+                      "successors": [
+                        {
+                          "id": 22,
+                          "label": "#22\nprint(response)\nresult = await wait_execution(graph_id=test_graph.id, graph_exec_id=\n    response['id'], timeout=1200, user_id=test_user.id)",
+                          "successors": [
+                            {
+                              "id": 23,
+                              "label": "#23\nprint(result)",
+                              "successors": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "functions": [],
+      "classes": []
+    }
+  ],
+  "classes": []
+}

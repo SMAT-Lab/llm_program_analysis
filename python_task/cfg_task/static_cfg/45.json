@@ -1,0 +1,583 @@
+{
+  "name": "45.py",
+  "type": "CFG",
+  "blocks": [
+    {
+      "id": 1,
+      "label": "#1\nimport logging\nimport uuid\nfrom datetime import datetime, timezone\nfrom typing import List, Optional\nfrom autogpt_libs.api_key.key_manager import APIKeyManager\nfrom prisma.enums import APIKeyPermission, APIKeyStatus\nfrom prisma.errors import PrismaError\nfrom prisma.models import APIKey as PrismaAPIKey\nfrom prisma.types import APIKeyCreateInput, APIKeyUpdateInput, APIKeyWhereInput, APIKeyWhereUniqueInput\nfrom pydantic import BaseModel\nfrom backend.data.db import BaseDbModel\nlogger = logging.getLogger(__name__)",
+      "successors": []
+    }
+  ],
+  "functions": [
+    {
+      "name": "generate_api_key",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 37,
+          "label": "#37\n\"\"\"\n    Generate a new API key and store it in the database.\n    Returns the API key object (without hash) and the plain text key.\n    \"\"\"\ntry:",
+          "successors": [
+            {
+              "id": 38,
+              "label": "#38\napi_manager = APIKeyManager()\nkey = api_manager.generate_api_key()\napi_key = await PrismaAPIKey.prisma().create(data=APIKeyCreateInput(id=str(\n    uuid.uuid4()), name=name, prefix=key.prefix, postfix=key.postfix, key=\n    key.hash, permissions=[p for p in permissions], description=description,\n    userId=user_id))",
+              "successors": [
+                {
+                  "id": 42,
+                  "label": "#42\napi_key_without_hash = APIKeyWithoutHash.from_db(api_key)\nreturn api_key_without_hash, key.raw",
+                  "successors": []
+                }
+              ]
+            },
+            {
+              "id": 39,
+              "label": "#39\nlogger.error(f'Database error while generating API key: {str(e)}')\nraise APIKeyError(f'Failed to generate API key: {str(e)}')",
+              "successors": []
+            },
+            {
+              "id": 40,
+              "label": "#40\nlogger.error(f'Unexpected error while generating API key: {str(e)}')\nraise APIKeyError(f'Failed to generate API key: {str(e)}')",
+              "successors": []
+            }
+          ]
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "validate_api_key",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 48,
+          "label": "#48\n\"\"\"\n    Validate an API key and return the API key object if valid.\n    \"\"\"\ntry:",
+          "successors": [
+            {
+              "id": 49,
+              "label": "#49\nif not plain_text_key.startswith(APIKeyManager.PREFIX):",
+              "successors": [
+                {
+                  "id": 52,
+                  "label": "#52\nlogger.warning('Invalid API key format')\nreturn None",
+                  "successors": []
+                },
+                {
+                  "id": 53,
+                  "label": "#53\nprefix = plain_text_key[:APIKeyManager.PREFIX_LENGTH]\napi_manager = APIKeyManager()\napi_key = await PrismaAPIKey.prisma().find_first(where=APIKeyWhereInput(\n    prefix=prefix, status=APIKeyStatus.ACTIVE))",
+                  "successors": [
+                    {
+                      "id": 55,
+                      "label": "#55\nif not api_key:",
+                      "successors": [
+                        {
+                          "id": 56,
+                          "label": "#56\nlogger.warning(f'No active API key found with prefix {prefix}')\nreturn None",
+                          "successors": []
+                        },
+                        {
+                          "id": 57,
+                          "label": "#57\nis_valid = api_manager.verify_api_key(plain_text_key, api_key.key)\nif not is_valid:",
+                          "successors": [
+                            {
+                              "id": 59,
+                              "label": "#59\nlogger.warning('API key verification failed')\nreturn None",
+                              "successors": []
+                            },
+                            {
+                              "id": 60,
+                              "label": "#60\nreturn APIKey.from_db(api_key)",
+                              "successors": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": 50,
+              "label": "#50\nlogger.error(f'Error validating API key: {str(e)}')\nraise APIKeyValidationError(f'Failed to validate API key: {str(e)}')",
+              "successors": []
+            }
+          ]
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "revoke_api_key",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 66,
+          "label": "#66\ntry:",
+          "successors": [
+            {
+              "id": 67,
+              "label": "#67\napi_key = await PrismaAPIKey.prisma().find_unique(where={'id': key_id})",
+              "successors": [
+                {
+                  "id": 72,
+                  "label": "#72\nif not api_key:",
+                  "successors": [
+                    {
+                      "id": 73,
+                      "label": "#73\nraise APIKeyNotFoundError(f'API key with id {key_id} not found')",
+                      "successors": []
+                    },
+                    {
+                      "id": 74,
+                      "label": "#74\nif api_key.userId != user_id:",
+                      "successors": [
+                        {
+                          "id": 76,
+                          "label": "#76\nraise APIKeyPermissionError(\n    'You do not have permission to revoke this API key.')",
+                          "successors": []
+                        },
+                        {
+                          "id": 77,
+                          "label": "#77\nwhere_clause: APIKeyWhereUniqueInput = {'id': key_id}\nupdated_api_key = await PrismaAPIKey.prisma().update(where=where_clause,\n    data=APIKeyUpdateInput(status=APIKeyStatus.REVOKED, revokedAt=datetime.\n    now(timezone.utc)))",
+                          "successors": [
+                            {
+                              "id": 79,
+                              "label": "#79\nif updated_api_key:",
+                              "successors": [
+                                {
+                                  "id": 80,
+                                  "label": "#80\nreturn APIKeyWithoutHash.from_db(updated_api_key)",
+                                  "successors": []
+                                },
+                                {
+                                  "id": 81,
+                                  "label": "#81\nreturn None",
+                                  "successors": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": 68,
+              "label": "#68\nraise e",
+              "successors": []
+            },
+            {
+              "id": 69,
+              "label": "#69\nlogger.error(f'Database error while revoking API key: {str(e)}')\nraise APIKeyError(f'Failed to revoke API key: {str(e)}')",
+              "successors": []
+            },
+            {
+              "id": 70,
+              "label": "#70\nlogger.error(f'Unexpected error while revoking API key: {str(e)}')\nraise APIKeyError(f'Failed to revoke API key: {str(e)}')",
+              "successors": []
+            }
+          ]
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "list_user_api_keys",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 89,
+          "label": "#89\ntry:",
+          "successors": [
+            {
+              "id": 90,
+              "label": "#90\nwhere_clause: APIKeyWhereInput = {'userId': user_id}\napi_keys = await PrismaAPIKey.prisma().find_many(where=where_clause, order=\n    {'createdAt': 'desc'})",
+              "successors": [
+                {
+                  "id": 94,
+                  "label": "#94\nreturn [APIKeyWithoutHash.from_db(key) for key in api_keys]",
+                  "successors": []
+                }
+              ]
+            },
+            {
+              "id": 91,
+              "label": "#91\nlogger.error(f'Database error while listing API keys: {str(e)}')\nraise APIKeyError(f'Failed to list API keys: {str(e)}')",
+              "successors": []
+            },
+            {
+              "id": 92,
+              "label": "#92\nlogger.error(f'Unexpected error while listing API keys: {str(e)}')\nraise APIKeyError(f'Failed to list API keys: {str(e)}')",
+              "successors": []
+            }
+          ]
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "suspend_api_key",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 100,
+          "label": "#100\ntry:",
+          "successors": [
+            {
+              "id": 101,
+              "label": "#101\napi_key = await PrismaAPIKey.prisma().find_unique(where={'id': key_id})",
+              "successors": [
+                {
+                  "id": 106,
+                  "label": "#106\nif not api_key:",
+                  "successors": [
+                    {
+                      "id": 107,
+                      "label": "#107\nraise APIKeyNotFoundError(f'API key with id {key_id} not found')",
+                      "successors": []
+                    },
+                    {
+                      "id": 108,
+                      "label": "#108\nif api_key.userId != user_id:",
+                      "successors": [
+                        {
+                          "id": 110,
+                          "label": "#110\nraise APIKeyPermissionError(\n    'You do not have permission to suspend this API key.')",
+                          "successors": []
+                        },
+                        {
+                          "id": 111,
+                          "label": "#111\nwhere_clause: APIKeyWhereUniqueInput = {'id': key_id}\nupdated_api_key = await PrismaAPIKey.prisma().update(where=where_clause,\n    data=APIKeyUpdateInput(status=APIKeyStatus.SUSPENDED))",
+                          "successors": [
+                            {
+                              "id": 113,
+                              "label": "#113\nif updated_api_key:",
+                              "successors": [
+                                {
+                                  "id": 114,
+                                  "label": "#114\nreturn APIKeyWithoutHash.from_db(updated_api_key)",
+                                  "successors": []
+                                },
+                                {
+                                  "id": 115,
+                                  "label": "#115\nreturn None",
+                                  "successors": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": 102,
+              "label": "#102\nraise e",
+              "successors": []
+            },
+            {
+              "id": 103,
+              "label": "#103\nlogger.error(f'Database error while suspending API key: {str(e)}')\nraise APIKeyError(f'Failed to suspend API key: {str(e)}')",
+              "successors": []
+            },
+            {
+              "id": 104,
+              "label": "#104\nlogger.error(f'Unexpected error while suspending API key: {str(e)}')\nraise APIKeyError(f'Failed to suspend API key: {str(e)}')",
+              "successors": []
+            }
+          ]
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "has_permission",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 123,
+          "label": "#123\ntry:",
+          "successors": [
+            {
+              "id": 124,
+              "label": "#124\nreturn required_permission in api_key.permissions",
+              "successors": []
+            },
+            {
+              "id": 125,
+              "label": "#125\nlogger.error(f'Error checking API key permissions: {str(e)}')\nreturn False",
+              "successors": []
+            }
+          ]
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "get_api_key_by_id",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 131,
+          "label": "#131\ntry:",
+          "successors": [
+            {
+              "id": 132,
+              "label": "#132\napi_key = await PrismaAPIKey.prisma().find_first(where=APIKeyWhereInput(id=\n    key_id, userId=user_id))",
+              "successors": [
+                {
+                  "id": 136,
+                  "label": "#136\nif not api_key:",
+                  "successors": [
+                    {
+                      "id": 137,
+                      "label": "#137\nreturn None",
+                      "successors": []
+                    },
+                    {
+                      "id": 138,
+                      "label": "#138\nreturn APIKeyWithoutHash.from_db(api_key)",
+                      "successors": []
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": 133,
+              "label": "#133\nlogger.error(f'Database error while getting API key: {str(e)}')\nraise APIKeyError(f'Failed to get API key: {str(e)}')",
+              "successors": []
+            },
+            {
+              "id": 134,
+              "label": "#134\nlogger.error(f'Unexpected error while getting API key: {str(e)}')\nraise APIKeyError(f'Failed to get API key: {str(e)}')",
+              "successors": []
+            }
+          ]
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "update_api_key_permissions",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 145,
+          "label": "#145\n\"\"\"\n    Update the permissions of an API key.\n    \"\"\"\ntry:",
+          "successors": [
+            {
+              "id": 146,
+              "label": "#146\napi_key = await PrismaAPIKey.prisma().find_unique(where={'id': key_id})",
+              "successors": [
+                {
+                  "id": 151,
+                  "label": "#151\nif api_key is None:",
+                  "successors": [
+                    {
+                      "id": 152,
+                      "label": "#152\nraise APIKeyNotFoundError('No such API key found.')",
+                      "successors": []
+                    },
+                    {
+                      "id": 153,
+                      "label": "#153\nif api_key.userId != user_id:",
+                      "successors": [
+                        {
+                          "id": 155,
+                          "label": "#155\nraise APIKeyPermissionError(\n    'You do not have permission to update this API key.')",
+                          "successors": []
+                        },
+                        {
+                          "id": 156,
+                          "label": "#156\nwhere_clause: APIKeyWhereUniqueInput = {'id': key_id}\nupdated_api_key = await PrismaAPIKey.prisma().update(where=where_clause,\n    data=APIKeyUpdateInput(permissions=permissions))",
+                          "successors": [
+                            {
+                              "id": 158,
+                              "label": "#158\nif updated_api_key:",
+                              "successors": [
+                                {
+                                  "id": 159,
+                                  "label": "#159\nreturn APIKeyWithoutHash.from_db(updated_api_key)",
+                                  "successors": []
+                                },
+                                {
+                                  "id": 160,
+                                  "label": "#160\nreturn None",
+                                  "successors": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": 147,
+              "label": "#147\nraise e",
+              "successors": []
+            },
+            {
+              "id": 148,
+              "label": "#148\nlogger.error(f'Database error while updating API key permissions: {str(e)}')\nraise APIKeyError(f'Failed to update API key permissions: {str(e)}')",
+              "successors": []
+            },
+            {
+              "id": 149,
+              "label": "#149\nlogger.error(f'Unexpected error while updating API key permissions: {str(e)}')\nraise APIKeyError(f'Failed to update API key permissions: {str(e)}')",
+              "successors": []
+            }
+          ]
+        }
+      ],
+      "functions": [],
+      "classes": []
+    }
+  ],
+  "classes": [
+    {
+      "name": "APIKeyError",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 3,
+          "label": "#3\n\"\"\"Base exception for API key operations\"\"\"\npass",
+          "successors": []
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "APIKeyNotFoundError",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 6,
+          "label": "#6\n\"\"\"Raised when an API key is not found\"\"\"\npass",
+          "successors": []
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "APIKeyPermissionError",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 9,
+          "label": "#9\n\"\"\"Raised when there are permission issues with API key operations\"\"\"\npass",
+          "successors": []
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "APIKeyValidationError",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 12,
+          "label": "#12\n\"\"\"Raised when API key validation fails\"\"\"\npass",
+          "successors": []
+        }
+      ],
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "APIKey",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 15,
+          "label": "#15\nname: str\nprefix: str\nkey: str\nstatus: APIKeyStatus = APIKeyStatus.ACTIVE\npermissions: List[APIKeyPermission]\npostfix: str\ncreated_at: datetime\nlast_used_at: Optional[datetime] = None\nrevoked_at: Optional[datetime] = None\ndescription: Optional[str] = None\nuser_id: str",
+          "successors": []
+        }
+      ],
+      "functions": [
+        {
+          "name": "from_db",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 17,
+              "label": "#17\ntry:",
+              "successors": [
+                {
+                  "id": 18,
+                  "label": "#18\nreturn APIKey(id=api_key.id, name=api_key.name, prefix=api_key.prefix,\n    postfix=api_key.postfix, key=api_key.key, status=APIKeyStatus(api_key.\n    status), permissions=[APIKeyPermission(p) for p in api_key.permissions],\n    created_at=api_key.createdAt, last_used_at=api_key.lastUsedAt,\n    revoked_at=api_key.revokedAt, description=api_key.description, user_id=\n    api_key.userId)",
+                  "successors": []
+                },
+                {
+                  "id": 19,
+                  "label": "#19\nlogger.error(f'Error creating APIKey from db: {str(e)}')\nraise APIKeyError(f'Failed to create API key object: {str(e)}')",
+                  "successors": []
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        }
+      ],
+      "classes": []
+    },
+    {
+      "name": "APIKeyWithoutHash",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 26,
+          "label": "#26\nid: str\nname: str\nprefix: str\npostfix: str\nstatus: APIKeyStatus\npermissions: List[APIKeyPermission]\ncreated_at: datetime\nlast_used_at: Optional[datetime]\nrevoked_at: Optional[datetime]\ndescription: Optional[str]\nuser_id: str",
+          "successors": []
+        }
+      ],
+      "functions": [
+        {
+          "name": "from_db",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 28,
+              "label": "#28\ntry:",
+              "successors": [
+                {
+                  "id": 29,
+                  "label": "#29\nreturn APIKeyWithoutHash(id=api_key.id, name=api_key.name, prefix=api_key.\n    prefix, postfix=api_key.postfix, status=APIKeyStatus(api_key.status),\n    permissions=[APIKeyPermission(p) for p in api_key.permissions],\n    created_at=api_key.createdAt, last_used_at=api_key.lastUsedAt,\n    revoked_at=api_key.revokedAt, description=api_key.description, user_id=\n    api_key.userId)",
+                  "successors": []
+                },
+                {
+                  "id": 30,
+                  "label": "#30\nlogger.error(f'Error creating APIKeyWithoutHash from db: {str(e)}')\nraise APIKeyError(f'Failed to create API key object: {str(e)}')",
+                  "successors": []
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        }
+      ],
+      "classes": []
+    }
+  ]
+}

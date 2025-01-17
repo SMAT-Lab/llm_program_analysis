@@ -1,0 +1,251 @@
+{
+  "name": "example_script",
+  "type": "CFG",
+  "blocks": [
+    {
+      "id": 1,
+      "start_line": 1,
+      "end_line": 17,
+      "label": "from pydantic import BaseModel\nfrom backend.data.block import (\n    Block,\n    BlockCategory,\n    BlockOutput,\n    BlockSchema,\n    BlockWebhookConfig,\n)\nfrom backend.data.model import SchemaField\nfrom backend.util import settings\nfrom backend.util.settings import AppEnvironment, BehaveAs\nfrom ._api import (\n    TEST_CREDENTIALS,\n    TEST_CREDENTIALS_INPUT,\n    Slant3DCredentialsField,\n    Slant3DCredentialsInput,\n)",
+      "successors": []
+    }
+  ],
+  "functions": [],
+  "classes": [
+    {
+      "name": "Slant3DTriggerBase",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 1,
+          "start_line": 1,
+          "end_line": 2,
+          "label": "class Slant3DTriggerBase:\n    \"\"\"Base class for Slant3D webhook triggers\"\"\"",
+          "successors": []
+        }
+      ],
+      "functions": [
+        {
+          "name": "run",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 1,
+              "label": "def run(self, input_data: Input, **kwargs) -> BlockOutput:",
+              "successors": [
+                {
+                  "id": 2,
+                  "start_line": 2,
+                  "end_line": 2,
+                  "label": "yield \"payload\", input_data.payload",
+                  "successors": [
+                    {
+                      "id": 3,
+                      "start_line": 3,
+                      "end_line": 3,
+                      "label": "yield \"order_id\", input_data.payload[\"orderId\"]",
+                      "successors": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        }
+      ],
+      "classes": [
+        {
+          "name": "Input",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 4,
+              "label": "class Input(BlockSchema):\n        credentials: Slant3DCredentialsInput = Slant3DCredentialsField()\n        # Webhook URL is handled by the webhook system\n        payload: dict = SchemaField(hidden=True, default={})",
+              "successors": []
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "Output",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 1,
+              "label": "class Output(BlockSchema):",
+              "successors": [
+                {
+                  "id": 2,
+                  "start_line": 2,
+                  "end_line": 4,
+                  "label": "payload: dict = SchemaField(\n            description=\"The complete webhook payload received from Slant3D\"\n        )",
+                  "successors": [
+                    {
+                      "id": 3,
+                      "start_line": 5,
+                      "end_line": 5,
+                      "label": "order_id: str = SchemaField(description=\"The ID of the affected order\")",
+                      "successors": [
+                        {
+                          "id": 4,
+                          "start_line": 6,
+                          "end_line": 8,
+                          "label": "error: str = SchemaField(\n            description=\"Error message if payload processing failed\"\n        )",
+                          "successors": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        }
+      ]
+    },
+    {
+      "name": "Slant3DOrderWebhookBlock",
+      "type": "CFG",
+      "blocks": [
+        {
+          "id": 1,
+          "start_line": 1,
+          "end_line": 2,
+          "label": "class Slant3DOrderWebhookBlock(Slant3DTriggerBase, Block):\n    \"\"\"Block for handling Slant3D order webhooks\"\"\"",
+          "successors": []
+        }
+      ],
+      "functions": [
+        {
+          "name": "__init__",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 1,
+              "label": "def __init__(self):",
+              "successors": [
+                {
+                  "id": 2,
+                  "start_line": 2,
+                  "end_line": 49,
+                  "label": "super().__init__(\n            id=\"8a74c2ad-0104-4640-962f-26c6b69e58cd\",\n            description=(\n                \"This block triggers on Slant3D order status updates and outputs \"\n                \"the event details, including tracking information when orders are shipped.\"\n            ),\n            # All webhooks are currently subscribed to for all orders. This works for self hosted, but not for cloud hosted prod\n            disabled=(\n                settings.Settings().config.behave_as == BehaveAs.CLOUD\n                and settings.Settings().config.app_env != AppEnvironment.LOCAL\n            ),\n            categories={BlockCategory.DEVELOPER_TOOLS},\n            input_schema=self.Input,\n            output_schema=self.Output,\n            webhook_config=BlockWebhookConfig(\n                provider=\"slant3d\",\n                webhook_type=\"orders\",  # Only one type for now\n                resource_format=\"\",  # No resource format needed\n                event_filter_input=\"events\",\n                event_format=\"order.{event}\",\n            ),\n            test_input={\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n                \"events\": {\"shipped\": True},\n                \"payload\": {\n                    \"orderId\": \"1234567890\",\n                    \"status\": \"SHIPPED\",\n                    \"trackingNumber\": \"ABCDEF123456\",\n                    \"carrierCode\": \"usps\",\n                },\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[\n                (\n                    \"payload\",\n                    {\n                        \"orderId\": \"1234567890\",\n                        \"status\": \"SHIPPED\",\n                        \"trackingNumber\": \"ABCDEF123456\",\n                        \"carrierCode\": \"usps\",\n                    },\n                ),\n                (\"order_id\", \"1234567890\"),\n                (\"status\", \"SHIPPED\"),\n                (\"tracking_number\", \"ABCDEF123456\"),\n                (\"carrier_code\", \"usps\"),\n            ],\n        )",
+                  "successors": []
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        },
+        {
+          "name": "run",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 1,
+              "label": "def run(self, input_data: Input, **kwargs) -> BlockOutput:  # type: ignore",
+              "successors": [
+                {
+                  "id": 2,
+                  "start_line": 2,
+                  "end_line": 2,
+                  "label": "yield from super().run(input_data, **kwargs)",
+                  "successors": [
+                    {
+                      "id": 3,
+                      "start_line": 3,
+                      "end_line": 3,
+                      "label": "# Extract and normalize values from the payload",
+                      "successors": [
+                        {
+                          "id": 4,
+                          "start_line": 4,
+                          "end_line": 4,
+                          "label": "yield \"status\", input_data.payload[\"status\"]",
+                          "successors": [
+                            {
+                              "id": 5,
+                              "start_line": 5,
+                              "end_line": 5,
+                              "label": "yield \"tracking_number\", input_data.payload[\"trackingNumber\"]",
+                              "successors": [
+                                {
+                                  "id": 6,
+                                  "start_line": 6,
+                                  "end_line": 6,
+                                  "label": "yield \"carrier_code\", input_data.payload[\"carrierCode\"]",
+                                  "successors": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "functions": [],
+          "classes": []
+        }
+      ],
+      "classes": [
+        {
+          "name": "Input",
+          "type": "CFG",
+          "blocks": [
+            {
+              "id": 1,
+              "start_line": 1,
+              "end_line": 6,
+              "label": "class Input(Slant3DTriggerBase.Input):\n        events: EventsFilter = SchemaField(\n            title=\"Events\",\n            description=\"Order status events to subscribe to\",\n            default=EventsFilter(shipped=True),\n        )",
+              "successors": []
+            }
+          ],
+          "functions": [],
+          "classes": [
+            {
+              "name": "EventsFilter",
+              "type": "CFG",
+              "blocks": [
+                {
+                  "id": 1,
+                  "start_line": 1,
+                  "end_line": 6,
+                  "label": "class EventsFilter(BaseModel):\n            \"\"\"\n            Currently Slant3D only supports 'SHIPPED' status updates\n            Could be expanded in the future with more status types\n            \"\"\"\n            shipped: bool = True",
+                  "successors": []
+                }
+              ],
+              "functions": [],
+              "classes": []
+            }
+          ]
+        },
+        {
+          "name": "Output",
+          "type": "CFG",
+          "blocks": [],
+          "functions": [],
+          "classes": []
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,326 @@
+{
+  "name": "example_script",
+  "type": "CFG",
+  "start_line": 1,
+  "end_line": 75,
+  "functions": [
+    {
+      "name": "_log_prefix",
+      "type": "function",
+      "start_line": 15,
+      "end_line": 21,
+      "functions": [],
+      "classes": [],
+      "simplified_code": "def _log_prefix(resource_name: str, conn_id: str):\n    \"\"\"\n    Returns a prefix string for logging purposes.\n    This needs to be called on the fly to get the current process ID & service name,\n    not the parent process ID & service name.\n    \"\"\"\n    return f\"[PID-{os.getpid()}|THREAD-{threading.get_native_id()}|{get_service_name()}|{resource_name}-{conn_id}]\"",
+      "blocks": [
+        {
+          "id": 1,
+          "label": "def _log_prefix(resource_name: str, conn_id: str):",
+          "successors": [
+            2
+          ]
+        },
+        {
+          "id": 2,
+          "label": "return f\"[PID-{os.getpid()}|THREAD-{threading.get_native_id()}|{get_service_name()}|{resource_name}-{conn_id}]\"",
+          "successors": []
+        }
+      ]
+    },
+    {
+      "name": "conn_retry",
+      "type": "function",
+      "start_line": 24,
+      "end_line": 75,
+      "functions": [
+        {
+          "name": "on_retry",
+          "type": "function",
+          "start_line": 34,
+          "end_line": 37,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "    def on_retry(retry_state):\n        prefix = _log_prefix(resource_name, conn_id)\n        exception = retry_state.outcome.exception()\n        logger.error(f\"{prefix} {action_name} failed: {exception}. Retrying now...\")",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "def on_retry(retry_state):",
+              "successors": [
+                2
+              ]
+            },
+            {
+              "id": 2,
+              "label": "prefix = _log_prefix(resource_name, conn_id)",
+              "successors": [
+                3
+              ]
+            },
+            {
+              "id": 3,
+              "label": "exception = retry_state.outcome.exception()",
+              "successors": [
+                4
+              ]
+            },
+            {
+              "id": 4,
+              "label": "logger.error(f\"{prefix} {action_name} failed: {exception}. Retrying now...\")",
+              "successors": []
+            }
+          ]
+        },
+        {
+          "name": "decorator",
+          "type": "function",
+          "start_line": 39,
+          "end_line": 74,
+          "functions": [
+            {
+              "name": "sync_wrapper",
+              "type": "function",
+              "start_line": 50,
+              "end_line": 59,
+              "functions": [],
+              "classes": [],
+              "simplified_code": "        def sync_wrapper(*args, **kwargs):\n            prefix = _log_prefix(resource_name, conn_id)\n            logger.info(f\"{prefix} {action_name} started...\")\n            try:\n                result = wrapped_func(*args, **kwargs)\n                logger.info(f\"{prefix} {action_name} completed successfully.\")\n                return result\n            except Exception as e:\n                logger.error(f\"{prefix} {action_name} failed after retries: {e}\")\n                raise",
+              "blocks": [
+                {
+                  "id": 1,
+                  "label": "prefix = _log_prefix(resource_name, conn_id)\nlogger.info(f\"{prefix} {action_name} started...\")",
+                  "successors": [
+                    2,
+                    3
+                  ]
+                },
+                {
+                  "id": 2,
+                  "label": "try:\n    result = wrapped_func(*args, **kwargs)\n    logger.info(f\"{prefix} {action_name} completed successfully.\")\n    return result",
+                  "successors": [
+                    4
+                  ]
+                },
+                {
+                  "id": 3,
+                  "label": "except Exception as e:\n    logger.error(f\"{prefix} {action_name} failed after retries: {e}\")\n    raise",
+                  "successors": []
+                },
+                {
+                  "id": 4,
+                  "label": "",
+                  "successors": []
+                }
+              ]
+            },
+            {
+              "name": "async_wrapper",
+              "type": "function",
+              "start_line": 62,
+              "end_line": 71,
+              "functions": [],
+              "classes": [],
+              "simplified_code": "        async def async_wrapper(*args, **kwargs):\n            prefix = _log_prefix(resource_name, conn_id)\n            logger.info(f\"{prefix} {action_name} started...\")\n            try:\n                result = await wrapped_func(*args, **kwargs)\n                logger.info(f\"{prefix} {action_name} completed successfully.\")\n                return result\n            except Exception as e:\n                logger.error(f\"{prefix} {action_name} failed after retries: {e}\")\n                raise",
+              "blocks": [
+                {
+                  "id": 1,
+                  "label": "prefix = _log_prefix(resource_name, conn_id)\nlogger.info(f\"{prefix} {action_name} started...\")",
+                  "successors": [
+                    2,
+                    3
+                  ]
+                },
+                {
+                  "id": 2,
+                  "label": "try:",
+                  "successors": [
+                    4,
+                    5
+                  ]
+                },
+                {
+                  "id": 3,
+                  "label": "result = await wrapped_func(*args, **kwargs)\nlogger.info(f\"{prefix} {action_name} completed successfully.\")\nreturn result",
+                  "successors": []
+                },
+                {
+                  "id": 4,
+                  "label": "except Exception as e:",
+                  "successors": [
+                    5
+                  ]
+                },
+                {
+                  "id": 5,
+                  "label": "logger.error(f\"{prefix} {action_name} failed after retries: {e}\")\nraise",
+                  "successors": []
+                }
+              ]
+            }
+          ],
+          "classes": [],
+          "simplified_code": "    def decorator(func):\n        is_coroutine = asyncio.iscoroutinefunction(func)\n        retry_decorator = retry(\n            stop=stop_after_attempt(max_retry + 1),\n            wait=wait_exponential(multiplier=multiplier, min=min_wait, max=max_wait),\n            before_sleep=on_retry,\n            reraise=True,\n        )\n        wrapped_func = retry_decorator(func)\n\n        @wraps(func)\n                raise\n\n        @wraps(func)\n                raise\n\n        return async_wrapper if is_coroutine else sync_wrapper\n",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "def decorator(func):",
+              "successors": [
+                2
+              ]
+            },
+            {
+              "id": 2,
+              "label": "is_coroutine = asyncio.iscoroutinefunction(func)",
+              "successors": [
+                3
+              ]
+            },
+            {
+              "id": 3,
+              "label": "retry_decorator = retry(stop=stop_after_attempt(max_retry + 1), wait=wait_exponential(multiplier=multiplier, min=min_wait, max=max_wait), before_sleep=on_retry, reraise=True)",
+              "successors": [
+                4
+              ]
+            },
+            {
+              "id": 4,
+              "label": "wrapped_func = retry_decorator(func)",
+              "successors": [
+                5
+              ]
+            },
+            {
+              "id": 5,
+              "label": "@wraps(func)\nasync def async_wrapper(*args, **kwargs):",
+              "successors": [
+                6
+              ]
+            },
+            {
+              "id": 6,
+              "label": "try:",
+              "successors": [
+                7,
+                8
+              ]
+            },
+            {
+              "id": 7,
+              "label": "return await wrapped_func(*args, **kwargs)",
+              "successors": [
+                11
+              ]
+            },
+            {
+              "id": 8,
+              "label": "except Exception as e:",
+              "successors": [
+                9
+              ]
+            },
+            {
+              "id": 9,
+              "label": "print(f\"Error: {e}\")",
+              "successors": [
+                10
+              ]
+            },
+            {
+              "id": 10,
+              "label": "raise",
+              "successors": [
+                11
+              ]
+            },
+            {
+              "id": 11,
+              "label": "@wraps(func)\ndef sync_wrapper(*args, **kwargs):",
+              "successors": [
+                12
+              ]
+            },
+            {
+              "id": 12,
+              "label": "try:",
+              "successors": [
+                13,
+                14
+              ]
+            },
+            {
+              "id": 13,
+              "label": "return wrapped_func(*args, **kwargs)",
+              "successors": [
+                17
+              ]
+            },
+            {
+              "id": 14,
+              "label": "except Exception as e:",
+              "successors": [
+                15
+              ]
+            },
+            {
+              "id": 15,
+              "label": "print(f\"Error: {e}\")",
+              "successors": [
+                16
+              ]
+            },
+            {
+              "id": 16,
+              "label": "raise",
+              "successors": [
+                17
+              ]
+            },
+            {
+              "id": 17,
+              "label": "return async_wrapper if is_coroutine else sync_wrapper",
+              "successors": []
+            }
+          ]
+        }
+      ],
+      "classes": [],
+      "simplified_code": "def conn_retry(\n    resource_name: str,\n    action_name: str,\n    max_retry: int = 5,\n    multiplier: int = 1,\n    min_wait: float = 1,\n    max_wait: float = 30,\n):\n    conn_id = str(uuid4())\n\n        logger.error(f\"{prefix} {action_name} failed: {exception}. Retrying now...\")\n\n\n    return decorator",
+      "blocks": [
+        {
+          "id": 1,
+          "label": "def conn_retry(...):",
+          "successors": [
+            2
+          ]
+        },
+        {
+          "id": 2,
+          "label": "conn_id = str(uuid4())",
+          "successors": [
+            3
+          ]
+        },
+        {
+          "id": 3,
+          "label": "return decorator",
+          "successors": []
+        }
+      ]
+    }
+  ],
+  "classes": [],
+  "simplified_code": "import asyncio\nimport logging\nimport os\nimport threading\nfrom functools import wraps\nfrom uuid import uuid4\n\nfrom tenacity import retry, stop_after_attempt, wait_exponential\n\nfrom backend.util.process import get_service_name\n\nlogger = logging.getLogger(__name__)\n\n\n    return f\"[PID-{os.getpid()}|THREAD-{threading.get_native_id()}|{get_service_name()}|{resource_name}-{conn_id}]\"\n\n\n    return decorator",
+  "blocks": [
+    {
+      "id": 1,
+      "label": "import asyncio, import logging, import os, import threading, from functools import wraps, from uuid import uuid4, from tenacity import retry, stop_after_attempt, wait_exponential, from backend.util.process import get_service_name",
+      "successors": [
+        2
+      ]
+    },
+    {
+      "id": 2,
+      "label": "logger = logging.getLogger(__name__)",
+      "successors": []
+    }
+  ]
+}
