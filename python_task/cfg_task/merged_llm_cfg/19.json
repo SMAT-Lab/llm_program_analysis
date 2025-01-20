@@ -22,13 +22,19 @@
           "blocks": [
             {
               "id": 1,
-              "label": "def default(self, o):\nif isinstance(o, datetime):\nreturn o.isoformat()",
-              "successors": []
-            },
-            {
-              "id": 4,
-              "label": "return super().default(o)",
-              "successors": []
+              "label": "def default(self, o):\nif isinstance(o, datetime):",
+              "successors": [
+                {
+                  "id": 3,
+                  "label": "    return o.isoformat()",
+                  "successors": []
+                },
+                {
+                  "id": 4,
+                  "label": "return super().default(o)",
+                  "successors": []
+                }
+              ]
             }
           ]
         }
@@ -37,7 +43,7 @@
       "blocks": [
         {
           "id": 1,
-          "label": "class DateTimeEncoder(json.JSONEncoder):\nreturn super().default(o)",
+          "label": "class DateTimeEncoder(json.JSONEncoder):\n        return super().default(o)",
           "successors": []
         }
       ]
@@ -75,7 +81,7 @@
           "blocks": [
             {
               "id": 1,
-              "label": "message = json.dumps(item.model_dump(), cls=DateTimeEncoder)\nchannel_name = f\"{self.event_bus_name}/{channel_key}\"\nlogger.info(f\"[{channel_name}] Publishing an event to Redis {message}\")\nreturn message, channel_name",
+              "label": "def _serialize_message(self, item: M, channel_key: str) -> tuple[str, str]:\n    message = json.dumps(item.model_dump(), cls=DateTimeEncoder)\n    channel_name = f\"{self.event_bus_name}/{channel_key}\"\n    logger.info(f\"[{channel_name}] Publishing an event to Redis {message}\")\n    return message, channel_name",
               "successors": []
             }
           ]
@@ -91,18 +97,36 @@
           "blocks": [
             {
               "id": 1,
-              "label": "message_type = \"pmessage\" if \"*\" in channel_key else \"message\"\nif msg[\"type\"] != message_type:\nreturn None",
-              "successors": []
-            },
-            {
-              "id": 4,
-              "label": "try:\ndata = json.loads(msg[\"data\"])\nlogger.info(f\"Consuming an event from Redis {data}\")\nreturn self.Model(**data)",
-              "successors": []
-            },
-            {
-              "id": 6,
-              "label": "except Exception as e:\nlogger.error(f\"Failed to parse event result from Redis {msg} {e}\")",
-              "successors": []
+              "label": "message_type = \"pmessage\" if \"*\" in channel_key else \"message\"\nif msg[\"type\"] != message_type:",
+              "successors": [
+                {
+                  "id": 3,
+                  "label": "    return None",
+                  "successors": []
+                },
+                {
+                  "id": 4,
+                  "label": "try:",
+                  "successors": [
+                    {
+                      "id": 5,
+                      "label": "    data = json.loads(msg[\"data\"])\n    logger.info(f\"Consuming an event from Redis {data}\")",
+                      "successors": [
+                        {
+                          "id": 7,
+                          "label": "    return self.Model(**data)",
+                          "successors": []
+                        }
+                      ]
+                    },
+                    {
+                      "id": 8,
+                      "label": "except Exception as e:\n    logger.error(f\"Failed to parse event result from Redis {msg} {e}\")",
+                      "successors": []
+                    }
+                  ]
+                }
+              ]
             }
           ]
         },
@@ -117,7 +141,7 @@
           "blocks": [
             {
               "id": 1,
-              "label": "def _get_pubsub_channel(self, connection: redis.Redis | redis.AsyncRedis, channel_key: str):\nfull_channel_name = f\"{self.event_bus_name}/{channel_key}\"\npubsub = connection.pubsub()\nreturn pubsub, full_channel_name",
+              "label": "def _get_pubsub_channel(\n    self, connection: redis.Redis | redis.AsyncRedis, channel_key: str\n) -> tuple[PubSub | AsyncPubSub, str]:\n    full_channel_name = f\"{self.event_bus_name}/{channel_key}\"\n    pubsub = connection.pubsub()\n    return pubsub, full_channel_name",
               "successors": []
             }
           ]
@@ -127,8 +151,20 @@
       "blocks": [
         {
           "id": 1,
-          "label": "class BaseRedisEventBus(Generic[M], ABC):\nModel: type[M]\n@property\n@abstractmethod\npass\nreturn message, channel_name\nlogger.error(f\"Failed to parse event result from Redis {msg} {e}\")\nreturn pubsub, full_channel_name",
-          "successors": []
+          "label": "class BaseRedisEventBus(Generic[M], ABC):\nModel: type[M]",
+          "successors": [
+            {
+              "id": 3,
+              "label": "@property\n@abstractmethod",
+              "successors": [
+                {
+                  "id": 5,
+                  "label": "pass",
+                  "successors": []
+                }
+              ]
+            }
+          ]
         }
       ]
     },
@@ -149,7 +185,7 @@
           "blocks": [
             {
               "id": 1,
-              "label": "def connection(self) -> redis.Redis:\nreturn redis.get_redis()",
+              "label": "def connection(self) -> redis.Redis:\n    return redis.get_redis()",
               "successors": []
             }
           ]
@@ -165,8 +201,14 @@
           "blocks": [
             {
               "id": 1,
-              "label": "message, full_channel_name = self._serialize_message(event, channel_key)\nself.connection.publish(full_channel_name, message)",
-              "successors": []
+              "label": "def publish_event(self, event: M, channel_key: str):\nmessage, full_channel_name = self._serialize_message(event, channel_key)",
+              "successors": [
+                {
+                  "id": 3,
+                  "label": "self.connection.publish(full_channel_name, message)",
+                  "successors": []
+                }
+              ]
             }
           ]
         },
@@ -181,30 +223,66 @@
           "blocks": [
             {
               "id": 1,
-              "label": "pubsub, full_channel_name = self._get_pubsub_channel(self.connection, channel_key)\nassert isinstance(pubsub, PubSub)\nif \"*\" in channel_key:\npubsub.psubscribe(full_channel_name)",
+              "label": "pubsub, full_channel_name = self._get_pubsub_channel(\n    self.connection, channel_key\n)\nassert isinstance(pubsub, PubSub)\nif \"*\" in channel_key:",
               "successors": [
-                6
-              ]
-            },
-            {
-              "id": 5,
-              "label": "pubsub.subscribe(full_channel_name)",
-              "successors": [
-                6
-              ]
-            },
-            {
-              "id": 6,
-              "label": "for message in pubsub.listen():\nif event := self._deserialize_message(message, channel_key):\nyield event",
-              "successors": [
-                6
-              ]
-            },
-            {
-              "id": 8,
-              "label": "continue",
-              "successors": [
-                6
+                {
+                  "id": 3,
+                  "label": "    pubsub.psubscribe(full_channel_name)",
+                  "successors": [
+                    {
+                      "id": 5,
+                      "label": "for message in pubsub.listen():",
+                      "successors": [
+                        {
+                          "id": 6,
+                          "label": "    if event := self._deserialize_message(message, channel_key):\n        yield event",
+                          "successors": [
+                            {
+                              "id": 5,
+                              "label": "for message in pubsub.listen():",
+                              "successors": [
+                                {
+                                  "id": 6,
+                                  "label": "    if event := self._deserialize_message(message, channel_key):\n        yield event",
+                                  "successors": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "id": 4,
+                  "label": "    pubsub.subscribe(full_channel_name)",
+                  "successors": [
+                    {
+                      "id": 5,
+                      "label": "for message in pubsub.listen():",
+                      "successors": [
+                        {
+                          "id": 6,
+                          "label": "    if event := self._deserialize_message(message, channel_key):\n        yield event",
+                          "successors": [
+                            {
+                              "id": 5,
+                              "label": "for message in pubsub.listen():",
+                              "successors": [
+                                {
+                                  "id": 6,
+                                  "label": "    if event := self._deserialize_message(message, channel_key):\n        yield event",
+                                  "successors": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
               ]
             }
           ]
@@ -214,8 +292,34 @@
       "blocks": [
         {
           "id": 1,
-          "label": "class RedisEventBus(BaseRedisEventBus[M], ABC):\nModel: type[M]\n@property\nreturn redis.get_redis()\nself.connection.publish(full_channel_name, message)\nyield event",
-          "successors": []
+          "label": "class RedisEventBus(BaseRedisEventBus[M], ABC):",
+          "successors": [
+            {
+              "id": 2,
+              "label": "Model: type[M]",
+              "successors": []
+            },
+            {
+              "id": 3,
+              "label": "@property",
+              "successors": []
+            },
+            {
+              "id": 4,
+              "label": "def get_connection(self):\nreturn redis.get_redis()",
+              "successors": []
+            },
+            {
+              "id": 6,
+              "label": "def publish(self, full_channel_name, message):\nself.connection.publish(full_channel_name, message)",
+              "successors": []
+            },
+            {
+              "id": 8,
+              "label": "def listen(self):\nyield event",
+              "successors": []
+            }
+          ]
         }
       ]
     },
@@ -252,8 +356,24 @@
           "blocks": [
             {
               "id": 1,
-              "label": "message, full_channel_name = self._serialize_message(event, channel_key)\nconnection = await self.connection\nawait connection.publish(full_channel_name, message)",
-              "successors": []
+              "label": "async def publish_event(self, event: M, channel_key: str):",
+              "successors": [
+                {
+                  "id": 2,
+                  "label": "    message, full_channel_name = self._serialize_message(event, channel_key)",
+                  "successors": []
+                },
+                {
+                  "id": 3,
+                  "label": "    connection = await self.connection",
+                  "successors": []
+                },
+                {
+                  "id": 4,
+                  "label": "    await connection.publish(full_channel_name, message)",
+                  "successors": []
+                }
+              ]
             }
           ]
         },
@@ -268,38 +388,42 @@
           "blocks": [
             {
               "id": 1,
-              "label": "async def listen_events(self, channel_key: str) -> AsyncGenerator[M, None]:\npubsub, full_channel_name = self._get_pubsub_channel(await self.connection, channel_key)\nassert isinstance(pubsub, AsyncPubSub)\nif '*' in channel_key:\nawait pubsub.psubscribe(full_channel_name)",
+              "label": "async def listen_events(self, channel_key: str) -> AsyncGenerator[M, None]:\npubsub, full_channel_name = self._get_pubsub_channel( await self.connection, channel_key )",
               "successors": [
-                6
-              ]
-            },
-            {
-              "id": 5,
-              "label": "await pubsub.subscribe(full_channel_name)",
-              "successors": [
-                6
-              ]
-            },
-            {
-              "id": 6,
-              "label": "async for message in pubsub.listen():\nif event := self._deserialize_message(message, channel_key):",
-              "successors": [
-                8,
-                9
-              ]
-            },
-            {
-              "id": 8,
-              "label": "yield event",
-              "successors": [
-                6
-              ]
-            },
-            {
-              "id": 9,
-              "label": "continue",
-              "successors": [
-                6
+                {
+                  "id": 3,
+                  "label": "assert isinstance(pubsub, AsyncPubSub)",
+                  "successors": [
+                    {
+                      "id": 4,
+                      "label": "if \"*\" in channel_key:\n    await pubsub.psubscribe(full_channel_name)",
+                      "successors": [
+                        {
+                          "id": 7,
+                          "label": "async for message in pubsub.listen():\nif event := self._deserialize_message(message, channel_key):",
+                          "successors": [
+                            {
+                              "id": 9,
+                              "label": "    yield event",
+                              "successors": []
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "id": 6,
+                      "label": "    await pubsub.subscribe(full_channel_name)\nasync for message in pubsub.listen():",
+                      "successors": [
+                        {
+                          "id": 8,
+                          "label": "if event := self._deserialize_message(message, channel_key):\n    yield event",
+                          "successors": []
+                        }
+                      ]
+                    }
+                  ]
+                }
               ]
             }
           ]
@@ -315,13 +439,19 @@
           "blocks": [
             {
               "id": 1,
-              "label": "try:\nreturn await asyncio.wait_for(anext(aiter(self.listen_events(channel_key))), timeout)",
-              "successors": []
-            },
-            {
-              "id": 3,
-              "label": "except TimeoutError:\nreturn None",
-              "successors": []
+              "label": "async def wait_for_event(self, channel_key: str, timeout: Optional[float] = None) -> M | None:\ntry:",
+              "successors": [
+                {
+                  "id": 3,
+                  "label": "return await asyncio.wait_for(anext(aiter(self.listen_events(channel_key))), timeout)",
+                  "successors": []
+                },
+                {
+                  "id": 4,
+                  "label": "except TimeoutError:\nreturn None",
+                  "successors": []
+                }
+              ]
             }
           ]
         }
@@ -330,12 +460,18 @@
       "blocks": [
         {
           "id": 1,
-          "label": "class AsyncRedisEventBus(BaseRedisEventBus[M], ABC):\nModel: type[M]\n@property\nreturn await redis.get_redis_async()\nawait connection.publish(full_channel_name, message)\nyield event\nreturn None",
+          "label": "class AsyncRedisEventBus(BaseRedisEventBus[M], ABC):\n    Model: type[M]",
           "successors": []
         }
       ]
     }
   ],
   "simplified_code": "import asyncio\nimport json\nimport logging\nfrom abc import ABC, abstractmethod\nfrom datetime import datetime\nfrom typing import Any, AsyncGenerator, Generator, Generic, Optional, TypeVar\n\nfrom pydantic import BaseModel\nfrom redis.asyncio.client import PubSub as AsyncPubSub\nfrom redis.client import PubSub\n\nfrom backend.data import redis\n\nlogger = logging.getLogger(__name__)\n\n\n        return super().default(o)\n\n\nM = TypeVar(\"M\", bound=BaseModel)\n\n\n        return pubsub, full_channel_name\n\n\n                yield event\n\n\n            return None",
-  "blocks": []
+  "blocks": [
+    {
+      "id": 1,
+      "label": "import asyncio\nimport json\nimport logging\nfrom abc import ABC, abstractmethod\nfrom datetime import datetime\nfrom typing import Any, AsyncGenerator, Generator, Generic, Optional, TypeVar\n\nfrom pydantic import BaseModel\nfrom redis.asyncio.client import PubSub as AsyncPubSub\nfrom redis.client import PubSub\n\nfrom backend.data import redis\n\nlogger = logging.getLogger(__name__)\n\n\nreturn super().default(o)",
+      "successors": []
+    }
+  ]
 }

@@ -1,0 +1,218 @@
+{
+    "type": "module",
+    "start_token": 0,
+    "end_token": 1394,
+    "label": "from typing import Type\n\nfrom backend.blocks.ai_music_generator import AIMusicGeneratorBlock\nfrom backend.blocks.ai_shortform_video_block import AIShortformVideoCreatorBlock\nfrom backend.blocks.ideogram import IdeogramModelBlock\nfrom backend.blocks.jina.embeddings import JinaEmbeddingBlock\nfrom backend.blocks.jina.search import ExtractWebsiteContentBlock, SearchTheWebBlock\nfrom backend.blocks.llm import (\n    MODEL_METADATA,\n    AIConversationBlock,\n    AIListGeneratorBlock,\n    AIStructuredResponseGeneratorBlock,\n    AITextGeneratorBlock,\n    AITextSummarizerBlock,\n    LlmModel,\n)\nfrom backend.blocks.replicate_flux_advanced import ReplicateFluxAdvancedModelBlock\nfrom backend.blocks.talking_head import CreateTalkingAvatarVideoBlock\nfrom backend.blocks.text_to_speech_block import UnrealTextToSpeechBlock\nfrom backend.data.block import Block\nfrom backend.data.cost import BlockCost, BlockCostType\nfrom backend.integrations.credentials_store import (\n    anthropic_credentials,\n    did_credentials,\n    groq_credentials,\n    ideogram_credentials,\n    jina_credentials,\n    open_router_credentials,\n    openai_credentials,\n    replicate_credentials,\n    revid_credentials,\n    unreal_credentials,\n)\n\n# =============== Configure the cost for each LLM Model call =============== #\n\nMODEL_COST: dict[LlmModel, int] = {\n    LlmModel.O1_PREVIEW: 16,\n    LlmModel.O1_MINI: 4,\n    LlmModel.GPT4O_MINI: 1,\n    LlmModel.GPT4O: 3,\n    LlmModel.GPT4_TURBO: 10,\n    LlmModel.GPT3_5_TURBO: 1,\n    LlmModel.CLAUDE_3_5_SONNET: 4,\n    LlmModel.CLAUDE_3_HAIKU: 1,\n    LlmModel.LLAMA3_8B: 1,\n    LlmModel.LLAMA3_70B: 1,\n    LlmModel.MIXTRAL_8X7B: 1,\n    LlmModel.GEMMA_7B: 1,\n    LlmModel.GEMMA2_9B: 1,\n    LlmModel.LLAMA3_1_405B: 1,\n    LlmModel.LLAMA3_1_70B: 1,\n    LlmModel.LLAMA3_1_8B: 1,\n    LlmModel.OLLAMA_LLAMA3_8B: 1,\n    LlmModel.OLLAMA_LLAMA3_405B: 1,\n    LlmModel.OLLAMA_DOLPHIN: 1,\n    LlmModel.GEMINI_FLASH_1_5_8B: 1,\n    LlmModel.GROK_BETA: 5,\n    LlmModel.MISTRAL_NEMO: 1,\n    LlmModel.COHERE_COMMAND_R_08_2024: 1,\n    LlmModel.COHERE_COMMAND_R_PLUS_08_2024: 3,\n    LlmModel.EVA_QWEN_2_5_32B: 1,\n    LlmModel.DEEPSEEK_CHAT: 2,\n    LlmModel.PERPLEXITY_LLAMA_3_1_SONAR_LARGE_128K_ONLINE: 1,\n    LlmModel.QWEN_QWQ_32B_PREVIEW: 2,\n    LlmModel.NOUSRESEARCH_HERMES_3_LLAMA_3_1_405B: 1,\n    LlmModel.NOUSRESEARCH_HERMES_3_LLAMA_3_1_70B: 1,\n    LlmModel.AMAZON_NOVA_LITE_V1: 1,\n    LlmModel.AMAZON_NOVA_MICRO_V1: 1,\n    LlmModel.AMAZON_NOVA_PRO_V1: 1,\n    LlmModel.MICROSOFT_WIZARDLM_2_8X22B: 1,\n    LlmModel.GRYPHE_MYTHOMAX_L2_13B: 1,\n}\n\nfor model in LlmModel:\n    if model not in MODEL_COST:\n        raise ValueError(f\"Missing MODEL_COST for model: {model}\")\n\n\nLLM_COST = (\n    # Anthropic Models\n    [\n        BlockCost(\n            cost_type=BlockCostType.RUN,\n            cost_filter={\n                \"model\": model,\n                \"credentials\": {\n                    \"id\": anthropic_credentials.id,\n                    \"provider\": anthropic_credentials.provider,\n                    \"type\": anthropic_credentials.type,\n                },\n            },\n            cost_amount=cost,\n        )\n        for model, cost in MODEL_COST.items()\n        if MODEL_METADATA[model].provider == \"anthropic\"\n    ]\n    # OpenAI Models\n    + [\n        BlockCost(\n            cost_type=BlockCostType.RUN,\n            cost_filter={\n                \"model\": model,\n                \"credentials\": {\n                    \"id\": openai_credentials.id,\n                    \"provider\": openai_credentials.provider,\n                    \"type\": openai_credentials.type,\n                },\n            },\n            cost_amount=cost,\n        )\n        for model, cost in MODEL_COST.items()\n        if MODEL_METADATA[model].provider == \"openai\"\n    ]\n    # Groq Models\n    + [\n        BlockCost(\n            cost_type=BlockCostType.RUN,\n            cost_filter={\n                \"model\": model,\n                \"credentials\": {\"id\": groq_credentials.id},\n            },\n            cost_amount=cost,\n        )\n        for model, cost in MODEL_COST.items()\n        if MODEL_METADATA[model].provider == \"groq\"\n    ]\n    # Open Router Models\n    + [\n        BlockCost(\n            cost_type=BlockCostType.RUN,\n            cost_filter={\n                \"model\": model,\n                \"credentials\": {\n                    \"id\": open_router_credentials.id,\n                    \"provider\": open_router_credentials.provider,\n                    \"type\": open_router_credentials.type,\n                },\n            },\n            cost_amount=cost,\n        )\n        for model, cost in MODEL_COST.items()\n        if MODEL_METADATA[model].provider == \"open_router\"\n    ]\n)\n\n# =============== This is the exhaustive list of cost for each Block =============== #\n\nBLOCK_COSTS: dict[Type[Block], list[BlockCost]] = {\n    AIConversationBlock: LLM_COST,\n    AITextGeneratorBlock: LLM_COST,\n    AIStructuredResponseGeneratorBlock: LLM_COST,\n    AITextSummarizerBlock: LLM_COST,\n    AIListGeneratorBlock: LLM_COST,\n    CreateTalkingAvatarVideoBlock: [\n        BlockCost(\n            cost_amount=15,\n            cost_filter={\n                \"credentials\": {\n                    \"id\": did_credentials.id,\n                    \"provider\": did_credentials.provider,\n                    \"type\": did_credentials.type,\n                }\n            },\n        )\n    ],\n    SearchTheWebBlock: [\n        BlockCost(\n            cost_amount=1,\n            cost_filter={\n                \"credentials\": {\n                    \"id\": jina_credentials.id,\n                    \"provider\": jina_credentials.provider,\n                    \"type\": jina_credentials.type,\n                }\n            },\n        )\n    ],\n    ExtractWebsiteContentBlock: [\n        BlockCost(\n            cost_amount=1,\n            cost_filter={\n                \"raw_content\": False,\n                \"credentials\": {\n                    \"id\": jina_credentials.id,\n                    \"provider\": jina_credentials.provider,\n                    \"type\": jina_credentials.type,\n                },\n            },\n        )\n    ],\n    IdeogramModelBlock: [\n        BlockCost(\n            cost_amount=16,\n            cost_filter={\n                \"credentials\": {\n                    \"id\": ideogram_credentials.id,\n                    \"provider\": ideogram_credentials.provider,\n                    \"type\": ideogram_credentials.type,\n                }\n            },\n        )\n    ],\n    AIShortformVideoCreatorBlock: [\n        BlockCost(\n            cost_amount=50,\n            cost_filter={\n                \"credentials\": {\n                    \"id\": revid_credentials.id,\n                    \"provider\": revid_credentials.provider,\n                    \"type\": revid_credentials.type,\n                }\n            },\n        )\n    ],\n    ReplicateFluxAdvancedModelBlock: [\n        BlockCost(\n            cost_amount=10,\n            cost_filter={\n                \"credentials\": {\n                    \"id\": replicate_credentials.id,\n                    \"provider\": replicate_credentials.provider,\n                    \"type\": replicate_credentials.type,\n                }\n            },\n        )\n    ],\n    AIMusicGeneratorBlock: [\n        BlockCost(\n            cost_amount=11,\n            cost_filter={\n                \"credentials\": {\n                    \"id\": replicate_credentials.id,\n                    \"provider\": replicate_credentials.provider,\n                    \"type\": replicate_credentials.type,\n                }\n            },\n        )\n    ],\n    JinaEmbeddingBlock: [\n        BlockCost(\n            cost_amount=12,\n            cost_filter={\n                \"credentials\": {\n                    \"id\": jina_credentials.id,\n                    \"provider\": jina_credentials.provider,\n                    \"type\": jina_credentials.type,\n                }\n            },\n        )\n    ],\n    UnrealTextToSpeechBlock: [\n        BlockCost(\n            cost_amount=5,\n            cost_filter={\n                \"credentials\": {\n                    \"id\": unreal_credentials.id,\n                    \"provider\": unreal_credentials.provider,\n                    \"type\": unreal_credentials.type,\n                }\n            },\n        )\n    ],\n}",
+    "children": [
+        {
+            "type": "import_from_statement",
+            "start_token": 0,
+            "end_token": 3,
+            "label": "from typing import Type",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 6,
+            "end_token": 13,
+            "label": "from backend.blocks.ai_music_generator import AIMusicGeneratorBlock",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 15,
+            "end_token": 22,
+            "label": "from backend.blocks.ai_shortform_video_block import AIShortformVideoCreatorBlock",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 24,
+            "end_token": 31,
+            "label": "from backend.blocks.ideogram import IdeogramModelBlock",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 33,
+            "end_token": 42,
+            "label": "from backend.blocks.jina.embeddings import JinaEmbeddingBlock",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 44,
+            "end_token": 55,
+            "label": "from backend.blocks.jina.search import ExtractWebsiteContentBlock, SearchTheWebBlock",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 57,
+            "end_token": 87,
+            "label": "from backend.blocks.llm import (\n    MODEL_METADATA,\n    AIConversationBlock,\n    AIListGeneratorBlock,\n    AIStructuredResponseGeneratorBlock,\n    AITextGeneratorBlock,\n    AITextSummarizerBlock,\n    LlmModel,\n)",
+            "children": [
+                {
+                    "type": "generic_type",
+                    "start_token": 65,
+                    "end_token": 87,
+                    "label": "\n    MODEL_METADATA,\n    AIConversationBlock,\n    AIListGeneratorBlock,\n    AIStructuredResponseGeneratorBlock,\n    AITextGeneratorBlock,\n    AITextSummarizerBlock,\n    LlmModel,\n)",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 89,
+            "end_token": 96,
+            "label": "from backend.blocks.replicate_flux_advanced import ReplicateFluxAdvancedModelBlock",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 98,
+            "end_token": 105,
+            "label": "from backend.blocks.talking_head import CreateTalkingAvatarVideoBlock",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 107,
+            "end_token": 114,
+            "label": "from backend.blocks.text_to_speech_block import UnrealTextToSpeechBlock",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 116,
+            "end_token": 123,
+            "label": "from backend.data.block import Block",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 125,
+            "end_token": 134,
+            "label": "from backend.data.cost import BlockCost, BlockCostType",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 136,
+            "end_token": 175,
+            "label": "from backend.integrations.credentials_store import (\n    anthropic_credentials,\n    did_credentials,\n    groq_credentials,\n    ideogram_credentials,\n    jina_credentials,\n    open_router_credentials,\n    openai_credentials,\n    replicate_credentials,\n    revid_credentials,\n    unreal_credentials,\n)",
+            "children": [
+                {
+                    "type": "generic_type",
+                    "start_token": 143,
+                    "end_token": 175,
+                    "label": "(\n    anthropic_credentials,\n    did_credentials,\n    groq_credentials,\n    ideogram_credentials,\n    jina_credentials,\n    open_router_credentials,\n    openai_credentials,\n    replicate_credentials,\n    revid_credentials,\n    unreal_credentials,\n)",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "comment",
+            "start_token": 178,
+            "end_token": 217,
+            "label": "# =============== Configure the cost for each LLM Model call =============== #",
+            "children": []
+        },
+        {
+            "type": "assignment",
+            "start_token": 220,
+            "end_token": 476,
+            "label": "MODEL_COST: dict[LlmModel, int] = {\n    LlmModel.O1_PREVIEW: 16,\n    LlmModel.O1_MINI: 4,\n    LlmModel.GPT4O_MINI: 1,\n    LlmModel.GPT4O: 3,\n    LlmModel.GPT4_TURBO: 10,\n    LlmModel.GPT3_5_TURBO: 1,\n    LlmModel.CLAUDE_3_5_SONNET: 4,\n    LlmModel.CLAUDE_3_HAIKU: 1,\n    LlmModel.LLAMA3_8B: 1,\n    LlmModel.LLAMA3_70B: 1,\n    LlmModel.MIXTRAL_8X7B: 1,\n    LlmModel.GEMMA_7B: 1,\n    LlmModel.GEMMA2_9B: 1,\n    LlmModel.LLAMA3_1_405B: 1,\n    LlmModel.LLAMA3_1_70B: 1,\n    LlmModel.LLAMA3_1_8B: 1,\n    LlmModel.OLLAMA_LLAMA3_8B: 1,\n    LlmModel.OLLAMA_LLAMA3_405B: 1,\n    LlmModel.OLLAMA_DOLPHIN: 1,\n    LlmModel.GEMINI_FLASH_1_5_8B: 1,\n    LlmModel.GROK_BETA: 5,\n    LlmModel.MISTRAL_NEMO: 1,\n    LlmModel.COHERE_COMMAND_R_08_2024: 1,\n    LlmModel.COHERE_COMMAND_R_PLUS_08_2024: 3,\n    LlmModel.EVA_QWEN_2_5_32B: 1,\n    LlmModel.DEEPSEEK_CHAT: 2,\n    LlmModel.PERPLEXITY_LLAMA_3_1_SONAR_LARGE_128K_ONLINE: 1,\n    LlmModel.QWEN_QWQ_32B_PREVIEW: 2,\n    LlmModel.NOUSRESEARCH_HERMES_3_LLAMA_3_1_405B: 1,\n    LlmModel.NOUSRESEARCH_HERMES_3_LLAMA_3_1_70B: 1,\n    LlmModel.AMAZON_NOVA_LITE_V1: 1,\n    LlmModel.AMAZON_NOVA_MICRO_V1: 1,\n    LlmModel.AMAZON_NOVA_PRO_V1: 1,\n    LlmModel.MICROSOFT_WIZARDLM_2_8X22B: 1,\n    LlmModel.GRYPHE_MYTHOMAX_L2_13B: 1,\n}",
+            "children": [
+                {
+                    "type": "dictionary",
+                    "start_token": 229,
+                    "end_token": 476,
+                    "label": "{\n    LlmModel.O1_PREVIEW: 16,\n    LlmModel.O1_MINI: 4,\n    LlmModel.GPT4O_MINI: 1,\n    LlmModel.GPT4O: 3,\n    LlmModel.GPT4_TURBO: 10,\n    LlmModel.GPT3_5_TURBO: 1,\n    LlmModel.CLAUDE_3_5_SONNET: 4,\n    LlmModel.CLAUDE_3_HAIKU: 1,\n    LlmModel.LLAMA3_8B: 1,\n    LlmModel.LLAMA3_70B: 1,\n    LlmModel.MIXTRAL_8X7B: 1,\n    LlmModel.GEMMA_7B: 1,\n    LlmModel.GEMMA2_9B: 1,\n    LlmModel.LLAMA3_1_405B: 1,\n    LlmModel.LLAMA3_1_70B: 1,\n    LlmModel.LLAMA3_1_8B: 1,\n    LlmModel.OLLAMA_LLAMA3_8B: 1,\n    LlmModel.OLLAMA_LLAMA3_405B: 1,\n    LlmModel.OLLAMA_DOLPHIN: 1,\n    LlmModel.GEMINI_FLASH_1_5_8B: 1,\n    LlmModel.GROK_BETA: 5,\n    LlmModel.MISTRAL_NEMO: 1,\n    LlmModel.COHERE_COMMAND_R_08_2024: 1,\n    LlmModel.COHERE_COMMAND_R_PLUS_08_2024: 3,\n    LlmModel.EVA_QWEN_2_5_32B: 1,\n    LlmModel.DEEPSEEK_CHAT: 2,\n    LlmModel.PERPLEXITY_LLAMA_3_1_SONAR_LARGE_128K_ONLINE: 1,\n    LlmModel.QWEN_QWQ_32B_PREVIEW: 2,\n    LlmModel.NOUSRESEARCH_HERMES_3_LLAMA_3_1_405B: 1,\n    LlmModel.NOUSRESEARCH_HERMES_3_LLAMA_3_1_70B: 1,\n    LlmModel.AMAZON_NOVA_LITE_V1: 1,\n    LlmModel.AMAZON_NOVA_MICRO_V1: 1,\n    LlmModel.AMAZON_NOVA_PRO_V1: 1,\n    LlmModel.MICROSOFT_WIZARDLM_2_8X22B: 1,\n    LlmModel.GRYPHE_MYTHOMAX_L2_13B: 1,\n}",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "for_statement",
+            "start_token": 479,
+            "end_token": 497,
+            "label": "for model in LlmModel:\n    if model not in MODEL_COST:\n        raise ValueError(f\"Missing MODEL_COST for model: {model}\")",
+            "children": [
+                {
+                    "type": "raise_statement",
+                    "start_token": 492,
+                    "end_token": 497,
+                    "label": "raise ValueError(f\"Missing MODEL_COST for model: {model}\")",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "assignment",
+            "start_token": 501,
+            "end_token": 840,
+            "label": "LLM_COST = (\n    # Anthropic Models\n    [\n        BlockCost(\n            cost_type=BlockCostType.RUN,\n            cost_filter={\n                \"model\": model,\n                \"credentials\": {\n                    \"id\": anthropic_credentials.id,\n                    \"provider\": anthropic_credentials.provider,\n                    \"type\": anthropic_credentials.type,\n                },\n            },\n            cost_amount=cost,\n        )\n        for model, cost in MODEL_COST.items()\n        if MODEL_METADATA[model].provider == \"anthropic\"\n    ]\n    # OpenAI Models\n    + [\n        BlockCost(\n            cost_type=BlockCostType.RUN,\n            cost_filter={\n                \"model\": model,\n                \"credentials\": {\n                    \"id\": openai_credentials.id,\n                    \"provider\": openai_credentials.provider,\n                    \"type\": openai_credentials.type,\n                },\n            },\n            cost_amount=cost,\n        )\n        for model, cost in MODEL_COST.items()\n        if MODEL_METADATA[model].provider == \"openai\"\n    ]\n    # Groq Models\n    + [\n        BlockCost(\n            cost_type=BlockCostType.RUN,\n            cost_filter={\n                \"model\": model,\n                \"credentials\": {\"id\": groq_credentials.id},\n            },\n            cost_amount=cost,\n        )\n        for model, cost in MODEL_COST.items()\n        if MODEL_METADATA[model].provider == \"groq\"\n    ]\n    # Open Router Models\n    + [\n        BlockCost(\n            cost_type=BlockCostType.RUN,\n            cost_filter={\n                \"model\": model,\n                \"credentials\": {\n                    \"id\": open_router_credentials.id,\n                    \"provider\": open_router_credentials.provider,\n                    \"type\": open_router_credentials.type,\n                },\n            },\n            cost_amount=cost,\n        )\n        for model, cost in MODEL_COST.items()\n        if MODEL_METADATA[model].provider == \"open_router\"\n    ]\n)",
+            "children": [
+                {
+                    "type": "dictionary",
+                    "start_token": 503,
+                    "end_token": 840,
+                    "label": "(\n    # Anthropic Models\n    [\n        BlockCost(\n            cost_type=BlockCostType.RUN,\n            cost_filter={\n                \"model\": model,\n                \"credentials\": {\n                    \"id\": anthropic_credentials.id,\n                    \"provider\": anthropic_credentials.provider,\n                    \"type\": anthropic_credentials.type,\n                },\n            },\n            cost_amount=cost,\n        )\n        for model, cost in MODEL_COST.items()\n        if MODEL_METADATA[model].provider == \"anthropic\"\n    ]\n    # OpenAI Models\n    + [\n        BlockCost(\n            cost_type=BlockCostType.RUN,\n            cost_filter={\n                \"model\": model,\n                \"credentials\": {\n                    \"id\": openai_credentials.id,\n                    \"provider\": openai_credentials.provider,\n                    \"type\": openai_credentials.type,\n                },\n            },\n            cost_amount=cost,\n        )\n        for model, cost in MODEL_COST.items()\n        if MODEL_METADATA[model].provider == \"openai\"\n    ]\n    # Groq Models\n    + [\n        BlockCost(\n            cost_type=BlockCostType.RUN,\n            cost_filter={\n                \"model\": model,\n                \"credentials\": {\"id\": groq_credentials.id},\n            },\n            cost_amount=cost,\n        )\n        for model, cost in MODEL_COST.items()\n        if MODEL_METADATA[model].provider == \"groq\"\n    ]\n    # Open Router Models\n    + [\n        BlockCost(\n            cost_type=BlockCostType.RUN,\n            cost_filter={\n                \"model\": model,\n                \"credentials\": {\n                    \"id\": open_router_credentials.id,\n                    \"provider\": open_router_credentials.provider,\n                    \"type\": open_router_credentials.type,\n                },\n            },\n            cost_amount=cost,\n        )\n        for model, cost in MODEL_COST.items()\n        if MODEL_METADATA[model].provider == \"open_router\"\n    ]\n)",
+                    "children": [
+                        {
+                            "type": "dictionary",
+                            "start_token": 509,
+                            "end_token": 590,
+                            "label": "[\n        BlockCost(\n            cost_type=BlockCostType.RUN,\n            cost_filter={\n                \"model\": model,\n                \"credentials\": {\n                    \"id\": anthropic_credentials.id,\n                    \"provider\": anthropic_credentials.provider,\n                    \"type\": anthropic_credentials.type,\n                },\n            },\n            cost_amount=cost,\n        )\n        for model, cost in MODEL_COST.items()\n        if MODEL_METADATA[model].provider == \"anthropic\"\n    ]",
+                            "children": []
+                        },
+                        {
+                            "type": "dictionary",
+                            "start_token": 596,
+                            "end_token": 678,
+                            "label": "+ [\n        BlockCost(\n            cost_type=BlockCostType.RUN,\n            cost_filter={\n                \"model\": model,\n                \"credentials\": {\n                    \"id\": openai_credentials.id,\n                    \"provider\": openai_credentials.provider,\n                    \"type\": openai_credentials.type,\n                },\n            },\n            cost_amount=cost,\n        )\n        for model, cost in MODEL_COST.items()\n        if MODEL_METADATA[model].provider == \"openai\"\n    ]",
+                            "children": []
+                        },
+                        {
+                            "type": "dictionary",
+                            "start_token": 684,
+                            "end_token": 749,
+                            "label": "+ [\n        BlockCost(\n            cost_type=BlockCostType.RUN,\n            cost_filter={\n                \"model\": model,\n                \"credentials\": {\"id\": groq_credentials.id},\n            },\n            cost_amount=cost,\n        )\n        for model, cost in MODEL_COST.items()\n        if MODEL_METADATA[model].provider == \"groq\"\n    ]",
+                            "children": []
+                        },
+                        {
+                            "type": "dictionary",
+                            "start_token": 756,
+                            "end_token": 838,
+                            "label": "+ [\n        BlockCost(\n            cost_type=BlockCostType.RUN,\n            cost_filter={\n                \"model\": model,\n                \"credentials\": {\n                    \"id\": open_router_credentials.id,\n                    \"provider\": open_router_credentials.provider,\n                    \"type\": open_router_credentials.type,\n                },\n            },\n            cost_amount=cost,\n        )\n        for model, cost in MODEL_COST.items()\n        if MODEL_METADATA[model].provider == \"open_router\"\n    ]",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "comment",
+            "start_token": 843,
+            "end_token": 884,
+            "label": "# =============== This is the exhaustive list of cost for each Block =============== #",
+            "children": []
+        },
+        {
+            "type": "assignment",
+            "start_token": 887,
+            "end_token": 1394,
+            "label": "BLOCK_COSTS: dict[Type[Block], list[BlockCost]] = {\n    AIConversationBlock: LLM_COST,\n    AITextGeneratorBlock: LLM_COST,\n    AIStructuredResponseGeneratorBlock: LLM_COST,\n    AITextSummarizerBlock: LLM_COST,\n    AIListGeneratorBlock: LLM_COST,\n    CreateTalkingAvatarVideoBlock: [\n        BlockCost(\n            cost_amount=15,\n            cost_filter={\n                \"credentials\": {\n                    \"id\": did_credentials.id,\n                    \"provider\": did_credentials.provider,\n                    \"type\": did_credentials.type,\n                }\n            },\n        )\n    ],\n    SearchTheWebBlock: [\n        BlockCost(\n            cost_amount=1,\n            cost_filter={\n                \"credentials\": {\n                    \"id\": jina_credentials.id,\n                    \"provider\": jina_credentials.provider,\n                    \"type\": jina_credentials.type,\n                }\n            },\n        )\n    ],\n    ExtractWebsiteContentBlock: [\n        BlockCost(\n            cost_amount=1,\n            cost_filter={\n                \"raw_content\": False,\n                \"credentials\": {\n                    \"id\": jina_credentials.id,\n                    \"provider\": jina_credentials.provider,\n                    \"type\": jina_credentials.type,\n                },\n            },\n        )\n    ],\n    IdeogramModelBlock: [\n        BlockCost(\n            cost_amount=16,\n            cost_filter={\n                \"credentials\": {\n                    \"id\": ideogram_credentials.id,\n                    \"provider\": ideogram_credentials.provider,\n                    \"type\": ideogram_credentials.type,\n                }\n            },\n        )\n    ],\n    AIShortformVideoCreatorBlock: [\n        BlockCost(\n            cost_amount=50,\n            cost_filter={\n                \"credentials\": {\n                    \"id\": revid_credentials.id,\n                    \"provider\": revid_credentials.provider,\n                    \"type\": revid_credentials.type,\n                }\n            },\n        )\n    ],\n    ReplicateFluxAdvancedModelBlock: [\n        BlockCost(\n            cost_amount=10,\n            cost_filter={\n                \"credentials\": {\n                    \"id\": replicate_credentials.id,\n                    \"provider\": replicate_credentials.provider,\n                    \"type\": replicate_credentials.type,\n                }\n            },\n        )\n    ],\n    AIMusicGeneratorBlock: [\n        BlockCost(\n            cost_amount=11,\n            cost_filter={\n                \"credentials\": {\n                    \"id\": replicate_credentials.id,\n                    \"provider\": replicate_credentials.provider,\n                    \"type\": replicate_credentials.type,\n                }\n            },\n        )\n    ],\n    JinaEmbeddingBlock: [\n        BlockCost(\n            cost_amount=12,\n            cost_filter={\n                \"credentials\": {\n                    \"id\": jina_credentials.id,\n                    \"provider\": jina_credentials.provider,\n                    \"type\": jina_credentials.type,\n                }\n            },\n        )\n    ],\n    UnrealTextToSpeechBlock: [\n        BlockCost(\n            cost_amount=5,\n            cost_filter={\n                \"credentials\": {\n                    \"id\": unreal_credentials.id,\n                    \"provider\": unreal_credentials.provider,\n                    \"type\": unreal_credentials.type,\n                }\n            },\n        )\n    ],\n}",
+            "children": [
+                {
+                    "type": "dictionary",
+                    "start_token": 902,
+                    "end_token": 1394,
+                    "label": "{\n    AIConversationBlock: LLM_COST,\n    AITextGeneratorBlock: LLM_COST,\n    AIStructuredResponseGeneratorBlock: LLM_COST,\n    AITextSummarizerBlock: LLM_COST,\n    AIListGeneratorBlock: LLM_COST,\n    CreateTalkingAvatarVideoBlock: [\n        BlockCost(\n            cost_amount=15,\n            cost_filter={\n                \"credentials\": {\n                    \"id\": did_credentials.id,\n                    \"provider\": did_credentials.provider,\n                    \"type\": did_credentials.type,\n                }\n            },\n        )\n    ],\n    SearchTheWebBlock: [\n        BlockCost(\n            cost_amount=1,\n            cost_filter={\n                \"credentials\": {\n                    \"id\": jina_credentials.id,\n                    \"provider\": jina_credentials.provider,\n                    \"type\": jina_credentials.type,\n                }\n            },\n        )\n    ],\n    ExtractWebsiteContentBlock: [\n        BlockCost(\n            cost_amount=1,\n            cost_filter={\n                \"raw_content\": False,\n                \"credentials\": {\n                    \"id\": jina_credentials.id,\n                    \"provider\": jina_credentials.provider,\n                    \"type\": jina_credentials.type,\n                },\n            },\n        )\n    ],\n    IdeogramModelBlock: [\n        BlockCost(\n            cost_amount=16,\n            cost_filter={\n                \"credentials\": {\n                    \"id\": ideogram_credentials.id,\n                    \"provider\": ideogram_credentials.provider,\n                    \"type\": ideogram_credentials.type,\n                }\n            },\n        )\n    ],\n    AIShortformVideoCreatorBlock: [\n        BlockCost(\n            cost_amount=50,\n            cost_filter={\n                \"credentials\": {\n                    \"id\": revid_credentials.id,\n                    \"provider\": revid_credentials.provider,\n                    \"type\": revid_credentials.type,\n                }\n            },\n        )\n    ],\n    ReplicateFluxAdvancedModelBlock: [\n        BlockCost(\n            cost_amount=10,\n            cost_filter={\n                \"credentials\": {\n                    \"id\": replicate_credentials.id,\n                    \"provider\": replicate_credentials.provider,\n                    \"type\": replicate_credentials.type,\n                }\n            },\n        )\n    ],\n    AIMusicGeneratorBlock: [\n        BlockCost(\n            cost_amount=11,\n            cost_filter={\n                \"credentials\": {\n                    \"id\": replicate_credentials.id,\n                    \"provider\": replicate_credentials.provider,\n                    \"type\": replicate_credentials.type,\n                }\n            },\n        )\n    ],\n    JinaEmbeddingBlock: [\n        BlockCost(\n            cost_amount=12,\n            cost_filter={\n                \"credentials\": {\n                    \"id\": jina_credentials.id,\n                    \"provider\": jina_credentials.provider,\n                    \"type\": jina_credentials.type,\n                }\n            },\n        )\n    ],\n    UnrealTextToSpeechBlock: [\n        BlockCost(\n            cost_amount=5,\n            cost_filter={\n                \"credentials\": {\n                    \"id\": unreal_credentials.id,\n                    \"provider\": unreal_credentials.provider,\n                    \"type\": unreal_credentials.type,\n                }\n            },\n        )\n    ],\n}",
+                    "children": []
+                }
+            ]
+        }
+    ]
+}

@@ -15,18 +15,30 @@
       "blocks": [
         {
           "id": 1,
-          "label": "if provider_name not in HANDLERS_BY_NAME:\nraise KeyError(f\"Unknown provider '{provider_name}'\")",
-          "successors": []
-        },
-        {
-          "id": 3,
-          "label": "client_id = getattr(settings.secrets, f\"{provider_name}_client_id\")\nclient_secret = getattr(settings.secrets, f\"{provider_name}_client_secret\")\nif not (client_id and client_secret):\nraise MissingConfigError(\n    f\"Integration with provider '{provider_name}' is not configured\",\n)",
-          "successors": []
-        },
-        {
-          "id": 6,
-          "label": "handler_class = HANDLERS_BY_NAME[provider_name]\nfrontend_base_url = (\n    settings.config.frontend_base_url or settings.config.platform_base_url\n)\nreturn handler_class(\n    client_id=client_id,\n    client_secret=client_secret,\n    redirect_uri=f\"{frontend_base_url}/auth/integrations/oauth_callback\",\n)",
-          "successors": []
+          "label": "def _get_provider_oauth_handler(provider_name: str) -> \"BaseOAuthHandler\":",
+          "successors": [
+            {
+              "id": 2,
+              "label": "if provider_name not in HANDLERS_BY_NAME:\nraise KeyError(f\"Unknown provider '{provider_name}'\")",
+              "successors": []
+            },
+            {
+              "id": 4,
+              "label": "client_id = getattr(settings.secrets, f\"{provider_name}_client_id\")\nclient_secret = getattr(settings.secrets, f\"{provider_name}_client_secret\")",
+              "successors": [
+                {
+                  "id": 5,
+                  "label": "if not (client_id and client_secret):\nraise MissingConfigError(f\"Integration with provider '{provider_name}' is not configured\",)",
+                  "successors": []
+                },
+                {
+                  "id": 7,
+                  "label": "handler_class = HANDLERS_BY_NAME[provider_name]\nfrontend_base_url = (settings.config.frontend_base_url or settings.config.platform_base_url)\nreturn handler_class(client_id=client_id, client_secret=client_secret, redirect_uri=f\"{frontend_base_url}/auth/integrations/oauth_callback\")",
+                  "successors": []
+                }
+              ]
+            }
+          ]
         }
       ]
     }
@@ -36,7 +48,7 @@
       "name": "IntegrationCredentialsManager",
       "type": "class",
       "start_line": 23,
-      "end_line": 153,
+      "end_line": 154,
       "functions": [
         {
           "name": "__init__",
@@ -49,8 +61,14 @@
           "blocks": [
             {
               "id": 1,
-              "label": "def __init__(self):\nredis_conn = redis.get_redis()\nself._locks = RedisKeyedMutex(redis_conn)\nself.store = IntegrationCredentialsStore()",
-              "successors": []
+              "label": "def __init__(self):\nredis_conn = redis.get_redis()",
+              "successors": [
+                {
+                  "id": 3,
+                  "label": "self._locks = RedisKeyedMutex(redis_conn)\nself.store = IntegrationCredentialsStore()",
+                  "successors": []
+                }
+              ]
             }
           ]
         },
@@ -81,7 +99,7 @@
           "blocks": [
             {
               "id": 1,
-              "label": "return self.store.get_creds_by_id(user_id, credentials_id) is not None",
+              "label": "def exists(self, user_id: str, credentials_id: str) -> bool:\n    return self.store.get_creds_by_id(user_id, credentials_id) is not None",
               "successors": []
             }
           ]
@@ -97,27 +115,60 @@
           "blocks": [
             {
               "id": 1,
-              "label": "credentials = self.store.get_creds_by_id(user_id, credentials_id)\nif not credentials:\nreturn None",
-              "successors": []
-            },
-            {
-              "id": 4,
-              "label": "if credentials.type == 'oauth2' and credentials.access_token_expires_at:\nlogger.debug(...) (First debug statement)\nwith self._locked(user_id, credentials_id, 'refresh'):\noauth_handler = _get_provider_oauth_handler(credentials.provider)\nif oauth_handler.needs_refresh(credentials):\nlogger.debug(...) (Refreshing debug statement)\n_lock = None\nif lock:\n  _lock = self._acquire_lock(user_id, credentials_id)\nfresh_credentials = oauth_handler.refresh_tokens(credentials)\nself.store.update_creds(user_id, fresh_credentials)\nif _lock and _lock.locked():\n  _lock.release()\ncredentials = fresh_credentials",
+              "label": "def get(\n        self, user_id: str, credentials_id: str, lock: bool = True\n    ) -> Credentials | None:\ncredentials = self.store.get_creds_by_id(user_id, credentials_id)",
               "successors": [
-                11
+                {
+                  "id": 3,
+                  "label": "if not credentials:",
+                  "successors": [
+                    {
+                      "id": 4,
+                      "label": "return None",
+                      "successors": []
+                    },
+                    {
+                      "id": 5,
+                      "label": "# Refresh OAuth credentials if needed\nif credentials.type == \"oauth2\" and credentials.access_token_expires_at:\nlogger.debug(\n    f\"Credentials #{credentials.id} expire at \"\n    f\"{datetime.fromtimestamp(credentials.access_token_expires_at)}; \"\n    f\"current time is {datetime.now()}\"\n)",
+                      "successors": [
+                        {
+                          "id": 7,
+                          "label": "with self._locked(user_id, credentials_id, \"refresh\"):\noauth_handler = _get_provider_oauth_handler(credentials.provider)",
+                          "successors": [
+                            {
+                              "id": 9,
+                              "label": "if oauth_handler.needs_refresh(credentials):\nlogger.debug(\n    f\"Refreshing '{credentials.provider}' \"\n    f\"credentials #{credentials.id}\"\n)",
+                              "successors": [
+                                {
+                                  "id": 11,
+                                  "label": "_lock = None\nif lock:",
+                                  "successors": [
+                                    {
+                                      "id": 13,
+                                      "label": "# Wait until the credentials are no longer in use anywhere\n_lock = self._acquire_lock(user_id, credentials_id)\nfresh_credentials = oauth_handler.refresh_tokens(credentials)\nself.store.update_creds(user_id, fresh_credentials)\nif _lock and _lock.locked():\n    _lock.release()\n\ncredentials = fresh_credentials",
+                                      "successors": [
+                                        {
+                                          "id": 15,
+                                          "label": "return credentials",
+                                          "successors": []
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "id": 16,
+                      "label": "else:\n    logger.debug(f\"Credentials #{credentials.id} never expire\")\nreturn credentials",
+                      "successors": []
+                    }
+                  ]
+                }
               ]
-            },
-            {
-              "id": 11,
-              "label": "After 'if oauth_handler.needs_refresh(credentials):'",
-              "successors": [
-                12
-              ]
-            },
-            {
-              "id": 12,
-              "label": "else:\n  logger.debug(f'Credentials #{credentials.id} never expire')\nreturn credentials",
-              "successors": []
             }
           ]
         },
@@ -128,17 +179,34 @@
           "end_line": 121,
           "functions": [],
           "classes": [],
-          "simplified_code": "    def acquire(\n        self, user_id: str, credentials_id: str\n    ) -> tuple[Credentials, RedisLock]:\n        \"\"\"\n        \u26a0\ufe0f WARNING: this locks credentials system-wide and blocks both acquiring\n        and updating them elsewhere until the lock is released.\n        See the class docstring for more info.\n        \"\"\"\n        # Use a low-priority (!time_sensitive) locking queue on top of the general lock\n        # to allow priority access for refreshing/updating the tokens.\n        with self._locked(user_id, credentials_id, \"!time_sensitive\"):\n            lock = self._acquire_lock(user_id, credentials_id)\n        credentials = self.get(user_id, credentials_id, lock=False)\n        if not credentials:\n            raise ValueError(\n                f\"Credentials #{credentials_id} for user #{user_id} not found\"\n            )\n        return credentials, lock",
+          "simplified_code": "    def acquire(\n        self, user_id: str, credentials_id: str\n    ) -> tuple[Credentials, RedisLock]:\n        \"\"\"\n        ⚠️ WARNING: this locks credentials system-wide and blocks both acquiring\n        and updating them elsewhere until the lock is released.\n        See the class docstring for more info.\n        \"\"\"\n        # Use a low-priority (!time_sensitive) locking queue on top of the general lock\n        # to allow priority access for refreshing/updating the tokens.\n        with self._locked(user_id, credentials_id, \"!time_sensitive\"):\n            lock = self._acquire_lock(user_id, credentials_id)\n        credentials = self.get(user_id, credentials_id, lock=False)\n        if not credentials:\n            raise ValueError(\n                f\"Credentials #{credentials_id} for user #{user_id} not found\"\n            )\n        return credentials, lock",
           "blocks": [
             {
               "id": 1,
-              "label": "def acquire(self, user_id: str, credentials_id: str) -> tuple[Credentials, RedisLock]:\nwith self._locked(user_id, credentials_id, \"!time_sensitive\"): lock = self._acquire_lock(user_id, credentials_id)\ncredentials = self.get(user_id, credentials_id, lock=False)\nif not credentials:\nraise ValueError(f\"Credentials #{credentials_id} for user #{user_id} not found\")",
-              "successors": []
-            },
-            {
-              "id": 6,
-              "label": "return credentials, lock",
-              "successors": []
+              "label": "def acquire(\n    self, user_id: str, credentials_id: str\n) -> tuple[Credentials, RedisLock]:",
+              "successors": [
+                {
+                  "id": 2,
+                  "label": "with self._locked(user_id, credentials_id, \"!time_sensitive\"):\n    lock = self._acquire_lock(user_id, credentials_id)",
+                  "successors": []
+                },
+                {
+                  "id": 4,
+                  "label": "credentials = self.get(user_id, credentials_id, lock=False)",
+                  "successors": [
+                    {
+                      "id": 5,
+                      "label": "if not credentials:\n    raise ValueError(f\"Credentials #{credentials_id} for user #{user_id} not found\")",
+                      "successors": []
+                    },
+                    {
+                      "id": 7,
+                      "label": "return credentials, lock",
+                      "successors": []
+                    }
+                  ]
+                }
+              ]
             }
           ]
         },
@@ -153,8 +221,14 @@
           "blocks": [
             {
               "id": 1,
-              "label": "with self._locked(user_id, updated.id):\nself.store.update_creds(user_id, updated)",
-              "successors": []
+              "label": "def update(self, user_id: str, updated: Credentials) -> None:\nwith self._locked(user_id, updated.id):",
+              "successors": [
+                {
+                  "id": 3,
+                  "label": "self.store.update_creds(user_id, updated)",
+                  "successors": []
+                }
+              ]
             }
           ]
         },
@@ -169,8 +243,14 @@
           "blocks": [
             {
               "id": 1,
-              "label": "with self._locked(user_id, credentials_id):\nself.store.delete_creds_by_id(user_id, credentials_id)",
-              "successors": []
+              "label": "def delete(self, user_id: str, credentials_id: str) -> None:\nwith self._locked(user_id, credentials_id):",
+              "successors": [
+                {
+                  "id": 3,
+                  "label": "    self.store.delete_creds_by_id(user_id, credentials_id)",
+                  "successors": []
+                }
+              ]
             }
           ]
         },
@@ -185,8 +265,14 @@
           "blocks": [
             {
               "id": 1,
-              "label": "key = (f\"user:{user_id}\", f\"credentials:{credentials_id}\", *args,)\nreturn self._locks.acquire(key)",
-              "successors": []
+              "label": "def _acquire_lock(self, user_id: str, credentials_id: str, *args: str) -> RedisLock:\nkey = (\n    f\"user:{user_id}\",\n    f\"credentials:{credentials_id}\",\n    *args,\n)",
+              "successors": [
+                {
+                  "id": 3,
+                  "label": "return self._locks.acquire(key)",
+                  "successors": []
+                }
+              ]
             }
           ]
         },
@@ -201,15 +287,20 @@
           "blocks": [
             {
               "id": 1,
-              "label": "lock = self._acquire_lock(user_id, credentials_id, *args)\ntry: yield\nfinally: if lock.locked():\nlock.release()",
+              "label": "lock = self._acquire_lock(user_id, credentials_id, *args)\ntry:",
               "successors": [
-                5
+                {
+                  "id": 3,
+                  "label": "yield\nfinally:",
+                  "successors": [
+                    {
+                      "id": 5,
+                      "label": "if lock.locked():\nlock.release()",
+                      "successors": []
+                    }
+                  ]
+                }
               ]
-            },
-            {
-              "id": 5,
-              "label": "end of function",
-              "successors": []
             }
           ]
         },
@@ -224,29 +315,123 @@
           "blocks": [
             {
               "id": 1,
-              "label": "self._locks.release_all_locks()\nself.store.locks.release_all_locks()",
-              "successors": []
+              "label": "def release_all_locks(self):\n\"\"\"Call this on process termination to ensure all locks are released\"\"\"",
+              "successors": [
+                {
+                  "id": 3,
+                  "label": "self._locks.release_all_locks()\nself.store.locks.release_all_locks()",
+                  "successors": []
+                }
+              ]
             }
           ]
         }
       ],
       "classes": [],
-      "simplified_code": "class IntegrationCredentialsManager:\n    \"\"\"\n    Handles the lifecycle of integration credentials.\n    - Automatically refreshes requested credentials if needed.\n    - Uses locking mechanisms to ensure system-wide consistency and\n      prevent invalidation of in-use tokens.\n\n    ### \u26a0\ufe0f Gotcha\n    With `acquire(..)`, credentials can only be in use in one place at a time (e.g. one\n    block execution).\n\n    ### Locking mechanism\n    - Because *getting* credentials can result in a refresh (= *invalidation* +\n      *replacement*) of the stored credentials, *getting* is an operation that\n      potentially requires read/write access.\n    - Checking whether a token has to be refreshed is subject to an additional `refresh`\n      scoped lock to prevent unnecessary sequential refreshes when multiple executions\n      try to access the same credentials simultaneously.\n    - We MUST lock credentials while in use to prevent them from being invalidated while\n      they are in use, e.g. because they are being refreshed by a different part\n      of the system.\n    - The `!time_sensitive` lock in `acquire(..)` is part of a two-tier locking\n      mechanism in which *updating* gets priority over *getting* credentials.\n      This is to prevent a long queue of waiting *get* requests from blocking essential\n      credential refreshes or user-initiated updates.\n\n    It is possible to implement a reader/writer locking system where either multiple\n    readers or a single writer can have simultaneous access, but this would add a lot of\n    complexity to the mechanism. I don't expect the current (\"simple\") mechanism to\n    cause so much latency that it's worth implementing.\n    \"\"\"\n\n        self.store = IntegrationCredentialsStore()\n\n        return self.store.add_creds(user_id, credentials)\n\n        return self.store.get_creds_by_id(user_id, credentials_id) is not None\n\n        return credentials\n\n        return credentials, lock\n\n            self.store.update_creds(user_id, updated)\n\n            self.store.delete_creds_by_id(user_id, credentials_id)\n\n    # -- Locking utilities -- #\n\n        return self._locks.acquire(key)\n\n    @contextmanager\n                lock.release()\n\n        self.store.locks.release_all_locks()",
+      "simplified_code": "class IntegrationCredentialsManager:\n    \"\"\"\n    Handles the lifecycle of integration credentials.\n    - Automatically refreshes requested credentials if needed.\n    - Uses locking mechanisms to ensure system-wide consistency and\n      prevent invalidation of in-use tokens.\n\n    ### ⚠️ Gotcha\n    With `acquire(..)`, credentials can only be in use in one place at a time (e.g. one\n    block execution).\n\n    ### Locking mechanism\n    - Because *getting* credentials can result in a refresh (= *invalidation* +\n      *replacement*) of the stored credentials, *getting* is an operation that\n      potentially requires read/write access.\n    - Checking whether a token has to be refreshed is subject to an additional `refresh`\n      scoped lock to prevent unnecessary sequential refreshes when multiple executions\n      try to access the same credentials simultaneously.\n    - We MUST lock credentials while in use to prevent them from being invalidated while\n      they are in use, e.g. because they are being refreshed by a different part\n      of the system.\n    - The `!time_sensitive` lock in `acquire(..)` is part of a two-tier locking\n      mechanism in which *updating* gets priority over *getting* credentials.\n      This is to prevent a long queue of waiting *get* requests from blocking essential\n      credential refreshes or user-initiated updates.\n\n    It is possible to implement a reader/writer locking system where either multiple\n    readers or a single writer can have simultaneous access, but this would add a lot of\n    complexity to the mechanism. I don't expect the current (\"simple\") mechanism to\n    cause so much latency that it's worth implementing.\n    \"\"\"\n\n        self.store = IntegrationCredentialsStore()\n\n        return self.store.add_creds(user_id, credentials)\n\n        return self.store.get_creds_by_id(user_id, credentials_id) is not None\n\n        return credentials\n\n        return credentials, lock\n\n            self.store.update_creds(user_id, updated)\n\n            self.store.delete_creds_by_id(user_id, credentials_id)\n\n    # -- Locking utilities -- #\n\n        return self._locks.acquire(key)\n\n    @contextmanager\n                lock.release()\n\n        self.store.locks.release_all_locks()\n",
       "blocks": [
         {
           "id": 1,
-          "label": "class IntegrationCredentialsManager:\nself.store = IntegrationCredentialsStore()\nreturn self.store.add_creds(user_id, credentials)\nreturn self.store.get_creds_by_id(user_id, credentials_id) is not None\nreturn credentials\nreturn credentials, lock\nself.store.update_creds(user_id, updated)\nself.store.delete_creds_by_id(user_id, credentials_id)\nreturn self._locks.acquire(key)\nlock.release()\nself.store.locks.release_all_locks()",
-          "successors": []
+          "label": "class IntegrationCredentialsManager:",
+          "successors": [
+            {
+              "id": 2,
+              "label": "self.store = IntegrationCredentialsStore()\nreturn self.store.add_creds(user_id, credentials)",
+              "successors": []
+            },
+            {
+              "id": 4,
+              "label": "return self.store.get_creds_by_id(user_id, credentials_id) is not None",
+              "successors": []
+            },
+            {
+              "id": 5,
+              "label": "return credentials",
+              "successors": []
+            },
+            {
+              "id": 6,
+              "label": "return credentials, lock",
+              "successors": []
+            },
+            {
+              "id": 7,
+              "label": "self.store.update_creds(user_id, updated)",
+              "successors": []
+            },
+            {
+              "id": 8,
+              "label": "self.store.delete_creds_by_id(user_id, credentials_id)",
+              "successors": []
+            },
+            {
+              "id": 9,
+              "label": "return self._locks.acquire(key)",
+              "successors": []
+            },
+            {
+              "id": 10,
+              "label": "@contextmanager\nlock.release()",
+              "successors": []
+            },
+            {
+              "id": 12,
+              "label": "self.store.locks.release_all_locks()",
+              "successors": []
+            }
+          ]
         }
       ]
     }
   ],
-  "simplified_code": "import logging\nfrom contextlib import contextmanager\nfrom datetime import datetime\nfrom typing import TYPE_CHECKING\n\nfrom autogpt_libs.utils.synchronize import RedisKeyedMutex\nfrom redis.lock import Lock as RedisLock\n\nfrom backend.data import redis\nfrom backend.data.model import Credentials\nfrom backend.integrations.credentials_store import IntegrationCredentialsStore\nfrom backend.integrations.oauth import HANDLERS_BY_NAME\nfrom backend.util.exceptions import MissingConfigError\nfrom backend.util.settings import Settings\n\nif TYPE_CHECKING:\n    from backend.integrations.oauth import BaseOAuthHandler\n\nlogger = logging.getLogger(__name__)\nsettings = Settings()\n\n\n        self.store.locks.release_all_locks()\n\n\n    )",
+  "simplified_code": "import logging\nfrom contextlib import contextmanager\nfrom datetime import datetime\nfrom typing import TYPE_CHECKING\n\nfrom autogpt_libs.utils.synchronize import RedisKeyedMutex\nfrom redis.lock import Lock as RedisLock\n\nfrom backend.data import redis\nfrom backend.data.model import Credentials\nfrom backend.integrations.credentials_store import IntegrationCredentialsStore\nfrom backend.integrations.oauth import HANDLERS_BY_NAME\nfrom backend.util.exceptions import MissingConfigError\nfrom backend.util.settings import Settings\n\nif TYPE_CHECKING:\n    from backend.integrations.oauth import BaseOAuthHandler\n\nlogger = logging.getLogger(__name__)\nsettings = Settings()\n\n\n\n\n    )",
   "blocks": [
     {
       "id": 1,
-      "label": "import logging\nfrom contextlib import contextmanager\nfrom datetime import datetime\nfrom typing import TYPE_CHECKING\n\nfrom autogpt_libs.utils.synchronize import RedisKeyedMutex\nfrom redis.lock import Lock as RedisLock\n\nfrom backend.data import redis\nfrom backend.data.model import Credentials\nfrom backend.integrations.credentials_store import IntegrationCredentialsStore\nfrom backend.integrations.oauth import HANDLERS_BY_NAME\nfrom backend.util.exceptions import MissingConfigError\nfrom backend.util.settings import Settings\nif TYPE_CHECKING:\n    from backend.integrations.oauth import BaseOAuthHandler\nlogger = logging.getLogger(__name__)\nsettings = Settings()\nself.store.locks.release_all_locks()",
-      "successors": []
+      "label": "import logging\nfrom contextlib import contextmanager",
+      "successors": [
+        {
+          "id": 3,
+          "label": "from datetime import datetime\nfrom typing import TYPE_CHECKING",
+          "successors": [
+            {
+              "id": 5,
+              "label": "from autogpt_libs.utils.synchronize import RedisKeyedMutex\nfrom redis.lock import Lock as RedisLock",
+              "successors": [
+                {
+                  "id": 7,
+                  "label": "from backend.data import redis\nfrom backend.data.model import Credentials",
+                  "successors": [
+                    {
+                      "id": 9,
+                      "label": "from backend.integrations.credentials_store import IntegrationCredentialsStore\nfrom backend.integrations.oauth import HANDLERS_BY_NAME",
+                      "successors": [
+                        {
+                          "id": 11,
+                          "label": "from backend.util.exceptions import MissingConfigError\nfrom backend.util.settings import Settings",
+                          "successors": [
+                            {
+                              "id": 13,
+                              "label": "if TYPE_CHECKING:\n    from backend.integrations.oauth import BaseOAuthHandler\nlogger = logging.getLogger(__name__)",
+                              "successors": [
+                                {
+                                  "id": 15,
+                                  "label": "settings = Settings()",
+                                  "successors": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
     }
   ]
 }

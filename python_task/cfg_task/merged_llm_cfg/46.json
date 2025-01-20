@@ -22,7 +22,7 @@
           "blocks": [
             {
               "id": 1,
-              "label": "def __init__(self):\nsuper().__init__(id=\"5e7315d1-af61-4a0c-9350-7c868fa7438a\", description=\"Finds similar links using Exa's findSimilar API\", categories={BlockCategory.SEARCH}, input_schema=ExaFindSimilarBlock.Input, output_schema=ExaFindSimilarBlock.Output)",
+              "label": "def __init__(self):\nsuper().__init__(\n    id=\"5e7315d1-af61-4a0c-9350-7c868fa7438a\",\n    description=\"Finds similar links using Exa's findSimilar API\",\n    categories={BlockCategory.SEARCH},\n    input_schema=ExaFindSimilarBlock.Input,\n    output_schema=ExaFindSimilarBlock.Output,\n)",
               "successors": []
             }
           ]
@@ -38,27 +38,59 @@
           "blocks": [
             {
               "id": 1,
-              "label": "def run(self, input_data: Input, *, credentials: ExaCredentials, **kwargs) -> BlockOutput:\nurl = \"https://api.exa.ai/findSimilar\"\nheaders = {\n\"Content-Type\": \"application/json\",\n\"x-api-key\": credentials.api_key.get_secret_value(),\n}\npayload = {\n\"url\": input_data.url,\n\"numResults\": input_data.number_of_results,\n\"contents\": input_data.contents.dict(),\n}\noptional_field_mapping = {\n\"include_domains\": \"includeDomains\",\n\"exclude_domains\": \"excludeDomains\",\n\"include_text\": \"includeText\",\n\"exclude_text\": \"excludeText\",\n}\nfor input_field, api_field in optional_field_mapping.items():\nvalue = getattr(input_data, input_field)\nif value:\npayload[api_field] = value",
+              "label": "def run(self, input_data: Input, *, credentials: ExaCredentials, **kwargs) -> BlockOutput:\nurl = \"https://api.exa.ai/findSimilar\"\nheaders = {\n    \"Content-Type\": \"application/json\",\n    \"x-api-key\": credentials.api_key.get_secret_value(),\n}",
               "successors": [
-                8
+                {
+                  "id": 3,
+                  "label": "payload = {\n    \"url\": input_data.url,\n    \"numResults\": input_data.number_of_results,\n    \"contents\": input_data.contents.dict(),\n}\noptional_field_mapping = {\n    \"include_domains\": \"includeDomains\",\n    \"exclude_domains\": \"excludeDomains\",\n    \"include_text\": \"includeText\",\n    \"exclude_text\": \"excludeText\",\n}",
+                  "successors": [
+                    {
+                      "id": 5,
+                      "label": "for input_field, api_field in optional_field_mapping.items():",
+                      "successors": [
+                        {
+                          "id": 6,
+                          "label": "value = getattr(input_data, input_field)\nif value:  # Only add non-empty values\n    payload[api_field] = value",
+                          "successors": []
+                        }
+                      ]
+                    },
+                    {
+                      "id": 7,
+                      "label": "date_field_mapping = {\n    \"start_crawl_date\": \"startCrawlDate\",\n    \"end_crawl_date\": \"endCrawlDate\",\n    \"start_published_date\": \"startPublishedDate\",\n    \"end_published_date\": \"endPublishedDate\",\n}",
+                      "successors": [
+                        {
+                          "id": 8,
+                          "label": "for input_field, api_field in date_field_mapping.items():",
+                          "successors": [
+                            {
+                              "id": 9,
+                              "label": "value = getattr(input_data, input_field, None)\nif value:\n    payload[api_field] = value.strftime(\"%Y-%m-%dT%H:%M:%S.000Z\")",
+                              "successors": []
+                            }
+                          ]
+                        },
+                        {
+                          "id": 10,
+                          "label": "try:",
+                          "successors": [
+                            {
+                              "id": 11,
+                              "label": "response = requests.post(url, headers=headers, json=payload)\nresponse.raise_for_status()\ndata = response.json()\nyield \"results\", data.get(\"results\", [])",
+                              "successors": []
+                            },
+                            {
+                              "id": 12,
+                              "label": "except Exception as e:\nyield \"error\", str(e)\nyield \"results\", []",
+                              "successors": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
               ]
-            },
-            {
-              "id": 8,
-              "label": "date_field_mapping = {\n\"start_crawl_date\": \"startCrawlDate\",\n\"end_crawl_date\": \"endCrawlDate\",\n\"start_published_date\": \"startPublishedDate\",\n\"end_published_date\": \"endPublishedDate\",\n}\nfor input_field, api_field in date_field_mapping.items():\nvalue = getattr(input_data, input_field, None)\nif value:\npayload[api_field] = value.strftime(\"%Y-%m-%dT%H:%M:%S.000Z\")",
-              "successors": [
-                12
-              ]
-            },
-            {
-              "id": 12,
-              "label": "try:\nresponse = requests.post(url, headers=headers, json=payload)\nresponse.raise_for_status()\ndata = response.json()\nyield \"results\", data.get(\"results\", [])",
-              "successors": []
-            },
-            {
-              "id": 15,
-              "label": "yield \"error\", str(e)\nyield \"results\", []",
-              "successors": []
             }
           ]
         }
@@ -75,8 +107,44 @@
           "blocks": [
             {
               "id": 1,
-              "label": "class Input(BlockSchema):\ncredentials: ExaCredentialsInput = ExaCredentialsField()\nurl: str = SchemaField(description=\"The url for which you would like to find similar links\")\nnumber_of_results: int = SchemaField(description=\"Number of results to return\", default=10, advanced=True)\ninclude_domains: List[str] = SchemaField(description=\"Domains to include in search\", default=[], advanced=True)\nexclude_domains: List[str] = SchemaField(description=\"Domains to exclude from search\", default=[], advanced=True)\nstart_crawl_date: datetime = SchemaField(description=\"Start date for crawled content\")\nend_crawl_date: datetime = SchemaField(description=\"End date for crawled content\")\nstart_published_date: datetime = SchemaField(description=\"Start date for published content\")\nend_published_date: datetime = SchemaField(description=\"End date for published content\")\ninclude_text: List[str] = SchemaField(description=\"Text patterns to include (max 1 string, up to 5 words)\", default=[], advanced=True)\nexclude_text: List[str] = SchemaField(description=\"Text patterns to exclude (max 1 string, up to 5 words)\", default=[], advanced=True)\ncontents: ContentSettings = SchemaField(description=\"Content retrieval settings\", default=ContentSettings(), advanced=True)",
-              "successors": []
+              "label": "class Input(BlockSchema):\n    credentials: ExaCredentialsInput = ExaCredentialsField()",
+              "successors": [
+                {
+                  "id": 3,
+                  "label": "    url: str = SchemaField(\n        description=\"The url for which you would like to find similar links\"\n    )\n    number_of_results: int = SchemaField(\n        description=\"Number of results to return\",\n        default=10,\n        advanced=True,\n    )",
+                  "successors": [
+                    {
+                      "id": 5,
+                      "label": "    include_domains: List[str] = SchemaField(\n        description=\"Domains to include in search\",\n        default=[],\n        advanced=True,\n    )\n    exclude_domains: List[str] = SchemaField(\n        description=\"Domains to exclude from search\",\n        default=[],\n        advanced=True,\n    )",
+                      "successors": [
+                        {
+                          "id": 7,
+                          "label": "    start_crawl_date: datetime = SchemaField(\n        description=\"Start date for crawled content\",\n    )\n    end_crawl_date: datetime = SchemaField(\n        description=\"End date for crawled content\",\n    )",
+                          "successors": [
+                            {
+                              "id": 9,
+                              "label": "    start_published_date: datetime = SchemaField(\n        description=\"Start date for published content\",\n    )\n    end_published_date: datetime = SchemaField(\n        description=\"End date for published content\",\n    )",
+                              "successors": [
+                                {
+                                  "id": 11,
+                                  "label": "    include_text: List[str] = SchemaField(\n        description=\"Text patterns to include (max 1 string, up to 5 words)\",\n        default=[],\n        advanced=True,\n    )\n    exclude_text: List[str] = SchemaField(\n        description=\"Text patterns to exclude (max 1 string, up to 5 words)\",\n        default=[],\n        advanced=True,\n    )",
+                                  "successors": [
+                                    {
+                                      "id": 13,
+                                      "label": "    contents: ContentSettings = SchemaField(\n        description=\"Content retrieval settings\",\n        default=ContentSettings(),\n        advanced=True,\n    )",
+                                      "successors": []
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
             }
           ]
         },
@@ -91,8 +159,14 @@
           "blocks": [
             {
               "id": 1,
-              "label": "class Output(BlockSchema):\nresults: List[Any] = SchemaField(description=\"List of similar documents with title, URL, published date, author, and score\", default=[])",
-              "successors": []
+              "label": "class Output(BlockSchema):\n    results: List[Any] = SchemaField(",
+              "successors": [
+                {
+                  "id": 3,
+                  "label": "        description=\"List of similar documents with title, URL, published date, author, and score\",\n        default=[],",
+                  "successors": []
+                }
+              ]
             }
           ]
         }
@@ -101,7 +175,7 @@
       "blocks": [
         {
           "id": 1,
-          "label": "class ExaFindSimilarBlock(Block):\ndef execute(self):\nyield results, []",
+          "label": "class ExaFindSimilarBlock(Block):\nyield \"results\", []",
           "successors": []
         }
       ]
@@ -111,7 +185,7 @@
   "blocks": [
     {
       "id": 1,
-      "label": "from datetime import datetime\nfrom typing import Any, List\nfrom backend.blocks.exa._auth import (ExaCredentials, ExaCredentialsField, ExaCredentialsInput,)\nfrom backend.data.block import Block, BlockCategory, BlockOutput, BlockSchema\nfrom backend.data.model import SchemaField\nfrom backend.util.request import requests\nfrom .helpers import ContentSettings\nyield \"results\", []",
+      "label": "from datetime import datetime\nfrom typing import Any, List\n\nfrom backend.blocks.exa._auth import (\n    ExaCredentials,\n    ExaCredentialsField,\n    ExaCredentialsInput,\n)\nfrom backend.data.block import Block, BlockCategory, BlockOutput, BlockSchema\nfrom backend.data.model import SchemaField\nfrom backend.util.request import requests\n\nfrom .helpers import ContentSettings\nyield \"results\", []",
       "successors": []
     }
   ]

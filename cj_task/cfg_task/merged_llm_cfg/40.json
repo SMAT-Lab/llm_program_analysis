@@ -1,0 +1,958 @@
+{
+  "name": "example_script",
+  "type": "CFG",
+  "start_line": 1,
+  "end_line": 431,
+  "functions": [],
+  "classes": [
+    {
+      "name": "MysqlConnection",
+      "type": "class",
+      "start_line": 7,
+      "end_line": 431,
+      "functions": [
+        {
+          "name": "init",
+          "type": "function",
+          "start_line": 21,
+          "end_line": 42,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "    init(config: Config) {\n        this.config = config\n\n        // 构造tcpSocket\n        var socket = TcpSocket(IPSocketAddress.parse(config.address))\n        socket.keepAlive = SocketKeepAliveConfig()\n        \n        // 三次握手建立连接\n        socket.connect()\n        this.tcpSocket = socket\n        this.buffer = Buffer(socket)\n        // 处理handshake, mysql server 向 client 发送\n        readInitPacket()\n\n        // Send Client Authentication Packet\n        writeAuthPacket()\n        // handleAuthResult\n        handleAuthResult()\n\n        // get max allowed packet size\n        // let result = getSystemVar(\"max_allowed_packet\")\n    }",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "init(config: Config) {\nthis.config = config",
+              "successors": [
+                {
+                  "id": 3,
+                  "label": "var socket = TcpSocket(IPSocketAddress.parse(config.address))\nsocket.keepAlive = SocketKeepAliveConfig()",
+                  "successors": [
+                    {
+                      "id": 5,
+                      "label": "socket.connect()\nthis.tcpSocket = socket",
+                      "successors": [
+                        {
+                          "id": 7,
+                          "label": "this.buffer = Buffer(socket)\nreadInitPacket()",
+                          "successors": [
+                            {
+                              "id": 9,
+                              "label": "writeAuthPacket()\nhandleAuthResult()",
+                              "successors": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "getMetaData",
+          "type": "function",
+          "start_line": 44,
+          "end_line": 46,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "    public func getMetaData(): Map<String, String> {\n        HashMap([])\n    }",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "public func getMetaData(): Map<String, String> {\n    HashMap([])",
+              "successors": []
+            }
+          ]
+        },
+        {
+          "name": "createTransaction",
+          "type": "function",
+          "start_line": 47,
+          "end_line": 49,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "    public func createTransaction():Transaction {\n        return MySqlTransaction()\n    }",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "public func createTransaction():Transaction {\nreturn MySqlTransaction()",
+              "successors": []
+            }
+          ]
+        },
+        {
+          "name": "state",
+          "type": "function",
+          "start_line": 51,
+          "end_line": 55,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "    public prop state: ConnectionState {\n        get() {\n            ConnectionState.Connected\n        }\n    }",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "public prop state: ConnectionState {\nget() {",
+              "successors": [
+                {
+                  "id": 3,
+                  "label": "ConnectionState.Connected",
+                  "successors": []
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "close",
+          "type": "function",
+          "start_line": 57,
+          "end_line": 59,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "    public func close() {\n        \n    }",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "public func close() {",
+              "successors": []
+            }
+          ]
+        },
+        {
+          "name": "isClosed",
+          "type": "function",
+          "start_line": 61,
+          "end_line": 63,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "    public func isClosed(): Bool {\n        return false\n    }",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "public func isClosed(): Bool {\n    return false",
+              "successors": []
+            }
+          ]
+        },
+        {
+          "name": "prepareStatement",
+          "type": "function",
+          "start_line": 65,
+          "end_line": 67,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "    public func prepareStatement(sql: String): Statement {\n        return MySqlStatement(this, sql)\n    }",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "public func prepareStatement(sql: String): Statement {\nreturn MySqlStatement(this, sql)",
+              "successors": []
+            }
+          ]
+        },
+        {
+          "name": "readInitPacket",
+          "type": "function",
+          "start_line": 69,
+          "end_line": 105,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "    private func readInitPacket() {\n        let data = readPacket()\n        \n        // 协议版本: 1 字节\n        // 服务器版本: 以 \\0 结尾的字符串\n        // 连接 ID: 4 字节\n        var pos = 1 + ByteArrayUtils.indexByte(data[1..], 0) + 1 + 4 // 11\n\n        // 密码加密部分: 8 字节\n        cipher = cipher.concat(data[pos..pos + 8])\n        // 填充字节: 1 字节（始终为 0x00）\n        pos = pos + 8 + 1 \n\n        // 能力标志（低 2 字节）: 2 字节\n        flags = UInt32(ByteArrayUtils.littleEndianUint16(data[pos .. pos + 2]))\n        pos = pos + 2\n\n        // 字符集: 1 字节\n        charset = data.get(pos).getOrThrow()\n        \n        // 状态标志: 2 字节\n        // 能力标志（高 2 字节）: 2 字节\n        // 认证插件数据长度: 1 字节\n        // 保留字节: 10 字节（全部为 0x00）\n        pos = pos + 1 + 2 + 2 + 1 + 10 // 38\n\n        // 密码加密部分: 可变长度（通常为 12 字节）\n        cipher = cipher.concat(data[pos..pos + 12])\n        pos += 13\n\n        let end = ByteArrayUtils.indexByte(data[pos..], 0)\n        if (end != -1) {\n            plugin = String.fromUtf8(data[pos .. pos + end])\n        }else {\n            plugin = String.fromUtf8(data[pos .. ])\n        }\n    }",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "private func readInitPacket() {\nlet data = readPacket()",
+              "successors": [
+                {
+                  "id": 3,
+                  "label": "var pos = 1 + ByteArrayUtils.indexByte(data[1..], 0) + 1 + 4\ncipher = cipher.concat(data[pos..pos + 8])",
+                  "successors": [
+                    {
+                      "id": 5,
+                      "label": "pos = pos + 8 + 1\nflags = UInt32(ByteArrayUtils.littleEndianUint16(data[pos .. pos + 2]))",
+                      "successors": [
+                        {
+                          "id": 7,
+                          "label": "pos = pos + 2\ncharset = data.get(pos).getOrThrow()",
+                          "successors": [
+                            {
+                              "id": 9,
+                              "label": "pos = pos + 1 + 2 + 2 + 1 + 10\ncipher = cipher.concat(data[pos..pos + 12])",
+                              "successors": [
+                                {
+                                  "id": 11,
+                                  "label": "pos += 13\nlet end = ByteArrayUtils.indexByte(data[pos..], 0)",
+                                  "successors": [
+                                    {
+                                      "id": 13,
+                                      "label": "if (end != -1) {",
+                                      "successors": [
+                                        {
+                                          "id": 14,
+                                          "label": "plugin = String.fromUtf8(data[pos .. pos + end])",
+                                          "successors": []
+                                        },
+                                        {
+                                          "id": 15,
+                                          "label": "}else {\nplugin = String.fromUtf8(data[pos .. ])",
+                                          "successors": []
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "writeAuthPacket",
+          "type": "function",
+          "start_line": 107,
+          "end_line": 180,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "    private func writeAuthPacket() {\n        var clientFlags: UInt32 = \n\t\t    clientProtocol41 |  \n\t\t\tclientSecureConn | \n\t\t\tclientLongPassword | \n\t\t\tclientTransactions | \n\t\t\tclientLocalFiles |  \n            clientPluginAuth |  \n            clientMultiResults | \n            flags &\n            clientLongFlag \n\t    \n\n        let authResp = ByteArrayUtils.scrambleCachingSha2(cipher, config.password.toArray())\n\n        // 4 长度 + sequence\n        // 4 clientFlags\n        // 4 个空位\n        // 1 charset\n        // 23 空\n        // username\n        // 1 以0结尾\n        // 1 密码长度\n        // 密码\n        // dbname\n\n        let authRespLen = authResp.size\n        let authRespLEI = ByteArrayUtils.appendLengthEncodedInteger(UInt64(authRespLen))\n        if (authRespLEI.size > 1) {\n            clientFlags |= clientPluginAuthLenEncClientData\n        }\n        var pktLen = 4 + 4 + 1 + 23 + config.username.toArray().size + 1 + authRespLEI.size + authResp.size + 21 \n\t    if (config.dbname.size > 0) {\n\t\t    clientFlags |= UInt32(clientConnectWithDB)\n\t\t    pktLen += config.dbname.toArray().size + 1\n\t    }\n\n        let data = Array<Byte>(pktLen + 4, item: UInt8(0))\n\n        data[0] = UInt8(pktLen & 0xff)\n\t    data[1] = UInt8(pktLen >> 8)\n\t    data[2] = UInt8(pktLen >> 16)\n\t    data[3] = sequence\n\n        data[4] = UInt8(clientFlags & 0xff)\n\t    data[5] = UInt8(clientFlags >> 8 & 0xff)\n\t    data[6] = UInt8(clientFlags >> 16 & 0xff)\n\t    data[7] = UInt8(clientFlags >> 24 & 0xff)\n\n        data[12] = charset\n\n        var pos = 13 + 23\n\n        if (config.username.size > 0) {\n            config.username.toArray().copyTo(data, 0, pos, config.username.toArray().size)\n            pos += config.username.toArray().size\n        }\n        pos += 1\n\n        authRespLEI.copyTo(data, 0, pos, authRespLEI.size)\n        pos += authRespLEI.size\n\n        authResp.copyTo(data, 0, pos, authResp.size)\n        pos += authResp.size\n\n        if (config.dbname.size > 0) {\n            config.dbname.toArray().copyTo(data, 0, pos, config.dbname.toArray().size)\n            pos +=  config.dbname.toArray().size\n            pos += 1\n        }\n        plugin.toArray().copyTo(data, 0, pos, plugin.toArray().size)\n        pos += plugin.toArray().size\n        writePacket(data)\n    }",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "var clientFlags: UInt32 = clientProtocol41 | clientSecureConn | clientLongPassword | clientTransactions | clientLocalFiles | clientPluginAuth | clientMultiResults | flags & clientLongFlag\nlet authResp = ByteArrayUtils.scrambleCachingSha2(cipher, config.password.toArray())",
+              "successors": [
+                {
+                  "id": 3,
+                  "label": "let authRespLen = authResp.size\nlet authRespLEI = ByteArrayUtils.appendLengthEncodedInteger(UInt64(authRespLen))\nif (authRespLEI.size > 1) {\n    clientFlags |= clientPluginAuthLenEncClientData\n}",
+                  "successors": [
+                    {
+                      "id": 5,
+                      "label": "var pktLen = 4 + 4 + 1 + 23 + config.username.toArray().size + 1 + authRespLEI.size + authResp.size + 21\nif (config.dbname.size > 0) {\n    clientFlags |= UInt32(clientConnectWithDB)\n    pktLen += config.dbname.toArray().size + 1\n}",
+                      "successors": [
+                        {
+                          "id": 7,
+                          "label": "let data = Array<Byte>(pktLen + 4, item: UInt8(0))\n\ndata[0] = UInt8(pktLen & 0xff)\ndata[1] = UInt8(pktLen >> 8)\ndata[2] = UInt8(pktLen >> 16)\ndata[3] = sequence\n\ndata[4] = UInt8(clientFlags & 0xff)\ndata[5] = UInt8(clientFlags >> 8 & 0xff)\ndata[6] = UInt8(clientFlags >> 16 & 0xff)\ndata[7] = UInt8(clientFlags >> 24 & 0xff)\n\ndata[12] = charset\nvar pos = 13 + 23",
+                          "successors": [
+                            {
+                              "id": 9,
+                              "label": "if (config.username.size > 0) {\n    config.username.toArray().copyTo(data, 0, pos, config.username.toArray().size)\n    pos += config.username.toArray().size\n}\npos += 1\n\nauthRespLEI.copyTo(data, 0, pos, authRespLEI.size)\npos += authRespLEI.size\n\nauthResp.copyTo(data, 0, pos, authResp.size)\npos += authResp.size",
+                              "successors": [
+                                {
+                                  "id": 11,
+                                  "label": "if (config.dbname.size > 0) {\n    config.dbname.toArray().copyTo(data, 0, pos, config.dbname.toArray().size)\n    pos +=  config.dbname.toArray().size\n    pos += 1\n}\nplugin.toArray().copyTo(data, 0, pos, plugin.toArray().size)\npos += plugin.toArray().size\nwritePacket(data)",
+                                  "successors": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "handleAuthResult",
+          "type": "function",
+          "start_line": 182,
+          "end_line": 237,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "    private func handleAuthResult() {\n\n        var result = readAuthResult()\n        var authData = result[0]\n        var newPlugin = result[1]\n        if (newPlugin != \"\") {\n            if (authData.size > 0) {\n                // cipher = authData\n                authData.copyTo(cipher, 0, 0, cipher.size)\n            } else {\n                authData = cipher\n            }\n            plugin = newPlugin\n            let authResp = ByteArrayUtils.scrambleCachingSha2(authData, config.password.toArray())\n            writeAuthSwitchPacket(authResp)\n\n            result = readAuthResult()\n            authData = result[0]\n            newPlugin = result[1]\n        }\n\n        match(plugin) {\n            case \"caching_sha2_password\" => \n                match(authData.size) {\n                    case 1 =>\n                        match(authData[0]) {\n                            case 4 =>\n                                // request public key from server\n                                let pktLen = 1\n        \n                                let data = Array<Byte>(pktLen + 4, item: UInt8(0))\n\n                                data[0] = UInt8(pktLen & 0xff)\n                                data[1] = UInt8(pktLen >> 8)\n                                data[2] = UInt8(pktLen >> 16)\n                                data[3] = sequence\n\n                                data[4] = cachingSha2PasswordRequestPublicKey\n                                writePacket(data)\n\n                                let publicKeyData = readPacket()\n\n                                sendEncryptedPassword(publicKeyData[1..])\n\n                                readPacket()\n                            case _ =>\n                                println(\"eror or correct but do later\")\n                        }\n                    case _ =>\n                        println(\"error size or correct size but do later \")\n                }\n            case _ => \n                println(\"other, do later\")\n            \n        }\n    }",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "var result = readAuthResult()\nvar authData = result[0]\nvar newPlugin = result[1]\nif (newPlugin != \"\") {",
+              "successors": [
+                {
+                  "id": 2,
+                  "label": "if (authData.size > 0) {",
+                  "successors": [
+                    {
+                      "id": 3,
+                      "label": "authData.copyTo(cipher, 0, 0, cipher.size)\nplugin = newPlugin\nlet authResp = ByteArrayUtils.scrambleCachingSha2(authData, config.password.toArray())\nwriteAuthSwitchPacket(authResp)\nresult = readAuthResult()\nauthData = result[0]\nnewPlugin = result[1]",
+                      "successors": [
+                        {
+                          "id": 5,
+                          "label": "match(plugin) {",
+                          "successors": [
+                            {
+                              "id": 6,
+                              "label": "case \"caching_sha2_password\" =>\nmatch(authData.size) {",
+                              "successors": [
+                                {
+                                  "id": 8,
+                                  "label": "case 1 =>\nmatch(authData[0]) {",
+                                  "successors": [
+                                    {
+                                      "id": 10,
+                                      "label": "case 4 =>\nlet pktLen = 1\nlet data = Array<Byte>(pktLen + 4, item: UInt8(0))\ndata[0] = UInt8(pktLen & 0xff)\ndata[1] = UInt8(pktLen >> 8)\ndata[2] = UInt8(pktLen >> 16)\ndata[3] = sequence\ndata[4] = cachingSha2PasswordRequestPublicKey\nwritePacket(data)\nlet publicKeyData = readPacket()\nsendEncryptedPassword(publicKeyData[1..])\nreadPacket()",
+                                      "successors": []
+                                    },
+                                    {
+                                      "id": 12,
+                                      "label": "case _ =>\nprintln(\"eror or correct but do later\")",
+                                      "successors": []
+                                    }
+                                  ]
+                                },
+                                {
+                                  "id": 13,
+                                  "label": "case _ =>\nprintln(\"error size or correct size but do later \")",
+                                  "successors": []
+                                }
+                              ]
+                            },
+                            {
+                              "id": 14,
+                              "label": "case _ =>\nprintln(\"other, do later\")",
+                              "successors": []
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "id": 15,
+                      "label": "authData = cipher\nplugin = newPlugin\nlet authResp = ByteArrayUtils.scrambleCachingSha2(authData, config.password.toArray())\nwriteAuthSwitchPacket(authResp)\nresult = readAuthResult()\nauthData = result[0]\nnewPlugin = result[1]",
+                      "successors": [
+                        {
+                          "id": 5,
+                          "label": "match(plugin) {",
+                          "successors": [
+                            {
+                              "id": 6,
+                              "label": "case \"caching_sha2_password\" =>\nmatch(authData.size) {",
+                              "successors": [
+                                {
+                                  "id": 8,
+                                  "label": "case 1 =>\nmatch(authData[0]) {",
+                                  "successors": [
+                                    {
+                                      "id": 10,
+                                      "label": "case 4 =>\nlet pktLen = 1\nlet data = Array<Byte>(pktLen + 4, item: UInt8(0))\ndata[0] = UInt8(pktLen & 0xff)\ndata[1] = UInt8(pktLen >> 8)\ndata[2] = UInt8(pktLen >> 16)\ndata[3] = sequence\ndata[4] = cachingSha2PasswordRequestPublicKey\nwritePacket(data)\nlet publicKeyData = readPacket()\nsendEncryptedPassword(publicKeyData[1..])\nreadPacket()",
+                                      "successors": []
+                                    },
+                                    {
+                                      "id": 12,
+                                      "label": "case _ =>\nprintln(\"eror or correct but do later\")",
+                                      "successors": []
+                                    }
+                                  ]
+                                },
+                                {
+                                  "id": 13,
+                                  "label": "case _ =>\nprintln(\"error size or correct size but do later \")",
+                                  "successors": []
+                                }
+                              ]
+                            },
+                            {
+                              "id": 14,
+                              "label": "case _ =>\nprintln(\"other, do later\")",
+                              "successors": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "id": 16,
+                  "label": "plugin = newPlugin\nlet authResp = ByteArrayUtils.scrambleCachingSha2(authData, config.password.toArray())\nwriteAuthSwitchPacket(authResp)\nresult = readAuthResult()\nauthData = result[0]\nnewPlugin = result[1]\nmatch(plugin) {",
+                  "successors": [
+                    {
+                      "id": 6,
+                      "label": "case \"caching_sha2_password\" =>\nmatch(authData.size) {",
+                      "successors": [
+                        {
+                          "id": 8,
+                          "label": "case 1 =>\nmatch(authData[0]) {",
+                          "successors": [
+                            {
+                              "id": 10,
+                              "label": "case 4 =>\nlet pktLen = 1\nlet data = Array<Byte>(pktLen + 4, item: UInt8(0))\ndata[0] = UInt8(pktLen & 0xff)\ndata[1] = UInt8(pktLen >> 8)\ndata[2] = UInt8(pktLen >> 16)\ndata[3] = sequence\ndata[4] = cachingSha2PasswordRequestPublicKey\nwritePacket(data)\nlet publicKeyData = readPacket()\nsendEncryptedPassword(publicKeyData[1..])\nreadPacket()",
+                              "successors": []
+                            },
+                            {
+                              "id": 12,
+                              "label": "case _ =>\nprintln(\"eror or correct but do later\")",
+                              "successors": []
+                            }
+                          ]
+                        },
+                        {
+                          "id": 13,
+                          "label": "case _ =>\nprintln(\"error size or correct size but do later \")",
+                          "successors": []
+                        }
+                      ]
+                    },
+                    {
+                      "id": 14,
+                      "label": "case _ =>\nprintln(\"other, do later\")",
+                      "successors": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "writeAuthSwitchPacket",
+          "type": "function",
+          "start_line": 239,
+          "end_line": 250,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "    private func writeAuthSwitchPacket(authData: Array<Byte>) {\n        let pktLen = authData.size\n        \n        let data = Array<Byte>(pktLen + 4, item: UInt8(0))\n\n        data[0] = UInt8(pktLen & 0xff)\n\t    data[1] = UInt8(pktLen >> 8)\n\t    data[2] = UInt8(pktLen >> 16)\n\t    data[3] = sequence\n\n        authData.copyTo(data, 0, 4, authData.size)\n        writePacket(data)",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "private func writeAuthSwitchPacket(authData: Array<Byte>) {\nlet pktLen = authData.size",
+              "successors": [
+                {
+                  "id": 3,
+                  "label": "let data = Array<Byte>(pktLen + 4, item: UInt8(0))\ndata[0] = UInt8(pktLen & 0xff)\ndata[1] = UInt8(pktLen >> 8)\ndata[2] = UInt8(pktLen >> 16)\ndata[3] = sequence\nauthData.copyTo(data, 0, 4, authData.size)\nwritePacket(data)",
+                  "successors": []
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "readAuthResult",
+          "type": "function",
+          "start_line": 253,
+          "end_line": 276,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "    private func readAuthResult() {\n        // let data = fromHexString(data: String)\n\n        let data = readPacket()\n        \n        match(data[0]) {\n            case 1 =>\n                return (data[1..], \"\")\n            case 254 => \n                if (data.size == 1) {\n                    return (Array<Byte>(), \"mysql_old_password\")\n                }\n                let pluginEndIndex = ByteArrayUtils.indexByte(data, 0)\n                if (pluginEndIndex < 0) {\n                    return (Array<Byte>(), \"\")\n                }\n                let plugin = String.fromUtf8(data[1..pluginEndIndex])\n                let authData = data[pluginEndIndex + 1 ..]\n                return (authData, plugin)\n            case _ => \n                println(\"other, do later\")\n                return (Array<Byte>(), \"\")\n        }\n    }",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "let data = readPacket()\nmatch(data[0])",
+              "successors": [
+                {
+                  "id": 3,
+                  "label": "case 1 => return (data[1..], \"\")",
+                  "successors": []
+                },
+                {
+                  "id": 4,
+                  "label": "case 254 =>\nif (data.size == 1)",
+                  "successors": [
+                    {
+                      "id": 6,
+                      "label": "return (Array<Byte>(), \"mysql_old_password\")",
+                      "successors": []
+                    },
+                    {
+                      "id": 7,
+                      "label": "let pluginEndIndex = ByteArrayUtils.indexByte(data, 0)\nif (pluginEndIndex < 0)",
+                      "successors": [
+                        {
+                          "id": 9,
+                          "label": "return (Array<Byte>(), \"\")",
+                          "successors": []
+                        },
+                        {
+                          "id": 10,
+                          "label": "let plugin = String.fromUtf8(data[1..pluginEndIndex])\nlet authData = data[pluginEndIndex + 1 ..]",
+                          "successors": [
+                            {
+                              "id": 12,
+                              "label": "return (authData, plugin)",
+                              "successors": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "id": 13,
+                  "label": "case _ =>\nprintln(\"other, do later\")",
+                  "successors": [
+                    {
+                      "id": 15,
+                      "label": "return (Array<Byte>(), \"\")",
+                      "successors": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "sendEncryptedPassword",
+          "type": "function",
+          "start_line": 278,
+          "end_line": 281,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "    private func sendEncryptedPassword(publicKey: Array<Byte>) {\n        let encrypted = ByteArrayUtils.scrambleRSA(config.password, publicKey, cipher)\n        (\"encrypted = \" + encrypted.toString())\n        writeAuthSwitchPacket(encrypted)",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "private func sendEncryptedPassword(publicKey: Array<Byte>) {\nlet encrypted = ByteArrayUtils.scrambleRSA(config.password, publicKey, cipher)",
+              "successors": [
+                {
+                  "id": 3,
+                  "label": "(\"encrypted = \" + encrypted.toString())\nwriteAuthSwitchPacket(encrypted)",
+                  "successors": []
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "writeCommandPacketStr",
+          "type": "function",
+          "start_line": 284,
+          "end_line": 299,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "    protected func writeCommandPacketStr(command: Byte, sql: String) {\n        sequence = 0\n        let pktLen = 1 + sql.toArray().size\n\n        let data = Array<Byte>(pktLen + 4, item: UInt8(0))\n\n        data[0] = UInt8(pktLen & 0xff)\n\t    data[1] = UInt8(pktLen >> 8)\n\t    data[2] = UInt8(pktLen >> 16)\n\t    data[3] = sequence\n\n        data[4] = command\n        sql.toArray().copyTo(data, 0, 5, sql.toArray().size)\n        writePacket(data)\n\n    }",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "protected func writeCommandPacketStr(command: Byte, sql: String) {\nsequence = 0",
+              "successors": [
+                {
+                  "id": 3,
+                  "label": "let pktLen = 1 + sql.toArray().size\nlet data = Array<Byte>(pktLen + 4, item: UInt8(0))",
+                  "successors": [
+                    {
+                      "id": 5,
+                      "label": "data[0] = UInt8(pktLen & 0xff)\ndata[1] = UInt8(pktLen >> 8)",
+                      "successors": [
+                        {
+                          "id": 7,
+                          "label": "data[2] = UInt8(pktLen >> 16)\ndata[3] = sequence",
+                          "successors": [
+                            {
+                              "id": 9,
+                              "label": "data[4] = command\nsql.toArray().copyTo(data, 0, 5, sql.toArray().size)",
+                              "successors": [
+                                {
+                                  "id": 11,
+                                  "label": "writePacket(data)",
+                                  "successors": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "readColumns",
+          "type": "function",
+          "start_line": 305,
+          "end_line": 369,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "    protected func readColumns(count: UInt16): ArrayList<MySqlField> {\n        let returnResult = ArrayList<MySqlField>()\n        \n        for(i in 0..count) {\n            let data = readPacket()\n            var pos = 0\n            let mysqlField = MySqlField()\n            \n\n            // catalog\n            var result = ByteArrayUtils.readLengthEncodedString(data)\n            var catalog = String.fromUtf8(result[0])\n            pos += result[2]\n\n            // database\n            result = ByteArrayUtils.readLengthEncodedString(data[pos..])\n            var database = String.fromUtf8(result[0])\n            pos += result[2]\n            // tableName\n            result = ByteArrayUtils.readLengthEncodedString(data[pos..])\n            var tableName = String.fromUtf8(result[0])\n            pos += result[2]\n            mysqlField.setTableName(tableName)\n            \n            // org_table\n            result = ByteArrayUtils.readLengthEncodedString(data[pos..])\n            var orgTableName = String.fromUtf8(result[0])\n            pos += result[2]\n\n            // name\n            result = ByteArrayUtils.readLengthEncodedString(data[pos..])\n            var name = String.fromUtf8(result[0])\n            pos += result[2]\n            mysqlField.setName(name)\n\n            // org_name\n            result = ByteArrayUtils.readLengthEncodedString(data[pos..])\n            var orgName = String.fromUtf8(result[0])\n            pos += result[2]\n            // filter\n            pos ++\n\n            mysqlField.setCharSet(data[pos])\n            pos += 2\n\n            mysqlField.setLength(ByteArrayUtils.littleEndianUint32(data[pos..pos + 4]))\n            pos += 4\n\n            mysqlField.setFieldType(UInt16(data[pos]))\n            pos ++\n\n            mysqlField.setFlags(ByteArrayUtils.littleEndianUint16(data[pos .. pos + 2]))\n            pos += 2\n\n            mysqlField.setDecimals(data[pos])\n            returnResult.append(mysqlField)\n        }\n\n        let data = readPacket()\n        // match(data[0]) {\n        //     case 254 => println(\"read end\")\n        //     case _ => println(\"error, do later\")\n        // }\n        return returnResult\n    }",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "protected func readColumns(count: UInt16): ArrayList<MySqlField> {\nlet returnResult = ArrayList<MySqlField>()",
+              "successors": [
+                {
+                  "id": 3,
+                  "label": "for(i in 0..count) {\nlet data = readPacket()\nvar pos = 0\nlet mysqlField = MySqlField()",
+                  "successors": [
+                    {
+                      "id": 5,
+                      "label": "var result = ByteArrayUtils.readLengthEncodedString(data)\nvar catalog = String.fromUtf8(result[0])\npos += result[2]\nresult = ByteArrayUtils.readLengthEncodedString(data[pos..])\nvar database = String.fromUtf8(result[0])\npos += result[2]",
+                      "successors": [
+                        {
+                          "id": 7,
+                          "label": "result = ByteArrayUtils.readLengthEncodedString(data[pos..])\nvar tableName = String.fromUtf8(result[0])\npos += result[2]\nmysqlField.setTableName(tableName)\nresult = ByteArrayUtils.readLengthEncodedString(data[pos..])\nvar orgTableName = String.fromUtf8(result[0])\npos += result[2]",
+                          "successors": [
+                            {
+                              "id": 9,
+                              "label": "result = ByteArrayUtils.readLengthEncodedString(data[pos..])\nvar name = String.fromUtf8(result[0])\npos += result[2]\nmysqlField.setName(name)\nresult = ByteArrayUtils.readLengthEncodedString(data[pos..])\nvar orgName = String.fromUtf8(result[0])\npos += result[2]\npos ++",
+                              "successors": [
+                                {
+                                  "id": 11,
+                                  "label": "mysqlField.setCharSet(data[pos])\npos += 2\nmysqlField.setLength(ByteArrayUtils.littleEndianUint32(data[pos..pos + 4]))\npos += 4",
+                                  "successors": [
+                                    {
+                                      "id": 13,
+                                      "label": "mysqlField.setFieldType(UInt16(data[pos]))\npos ++\nmysqlField.setFlags(ByteArrayUtils.littleEndianUint16(data[pos .. pos + 2]))\npos += 2",
+                                      "successors": [
+                                        {
+                                          "id": 15,
+                                          "label": "mysqlField.setDecimals(data[pos])\nreturnResult.append(mysqlField)\n}",
+                                          "successors": [
+                                            {
+                                              "id": 17,
+                                              "label": "let data = readPacket()\nreturn returnResult\n}",
+                                              "successors": []
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "readRows",
+          "type": "function",
+          "start_line": 371,
+          "end_line": 383,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "    protected func readRows():ArrayList<Array<Byte>> {\n        let result = ArrayList<Array<Byte>>()\n        while(true) {\n            let data = readPacket()\n            match(data[0]) {\n                case 254 =>\n                    break\n                case _ =>\n                    result.append(data)\n            }\n        }\n        return result\n    }",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "protected func readRows():ArrayList<Array<Byte>> {\nlet result = ArrayList<Array<Byte>>()",
+              "successors": [
+                {
+                  "id": 3,
+                  "label": "while(true) {\nlet data = readPacket()",
+                  "successors": [
+                    {
+                      "id": 5,
+                      "label": "match(data[0]) {",
+                      "successors": [
+                        {
+                          "id": 6,
+                          "label": "case 254 =>\nbreak",
+                          "successors": []
+                        },
+                        {
+                          "id": 8,
+                          "label": "case _ =>\nresult.append(data)",
+                          "successors": [
+                            {
+                              "id": 3,
+                              "label": "while(true) {",
+                              "successors": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "id": 10,
+                  "label": "return result",
+                  "successors": []
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "readPacket",
+          "type": "function",
+          "start_line": 388,
+          "end_line": 402,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "    protected func readPacket(): Array<Byte> {\n        let data = buffer.readNext(4)\n        let pktLen = Int64(UInt32(data[0]) | UInt32(data[1])<<8 | UInt32(data[2])<<16)\n        if (data[3] != sequence) {\n            println(\"ERROR sequence NOT EQUAL\")\n        }\n        sequence ++\n\n        let resultData = buffer.readNext(pktLen)\n        if (pktLen < maxPacketSize) {\n            return resultData\n        }\n        let resultData2 = readPacket()\n        return resultData.concat(resultData2)\n    }",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "protected func readPacket(): Array<Byte> {\n    let data = buffer.readNext(4)\n    let pktLen = Int64(UInt32(data[0]) | UInt32(data[1])<<8 | UInt32(data[2])<<16)",
+              "successors": [
+                {
+                  "id": 2,
+                  "label": "if (data[3] != sequence) {\n    println(\"ERROR sequence NOT EQUAL\")\n}",
+                  "successors": []
+                },
+                {
+                  "id": 3,
+                  "label": "sequence ++\n\nlet resultData = buffer.readNext(pktLen)",
+                  "successors": [
+                    {
+                      "id": 4,
+                      "label": "if (pktLen < maxPacketSize) {\n    return resultData\n}",
+                      "successors": []
+                    },
+                    {
+                      "id": 5,
+                      "label": "let resultData2 = readPacket()\nreturn resultData.concat(resultData2)\n}",
+                      "successors": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "readUntilEOF",
+          "type": "function",
+          "start_line": 404,
+          "end_line": 415,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "    protected func readUntilEOF(): Array<Byte> {\n        let result = ArrayList<Byte>()\n        while (true) {\n            let tempData = readPacket()\n            match(tempData[0]) {\n                case 254 => break\n                case 255 => println(\"error happen, do later\")\n                case _ => result.appendAll(tempData)\n            }\n        }\n        return result.toArray()\n    }",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "let result = ArrayList<Byte>()",
+              "successors": [
+                {
+                  "id": 2,
+                  "label": "while (true) {",
+                  "successors": [
+                    {
+                      "id": 3,
+                      "label": "    let tempData = readPacket()\n    match(tempData[0]) {",
+                      "successors": [
+                        {
+                          "id": 5,
+                          "label": "        case 254 => break\nreturn result.toArray()",
+                          "successors": []
+                        },
+                        {
+                          "id": 6,
+                          "label": "        case 255 => println(\"error happen, do later\")",
+                          "successors": [
+                            {
+                              "id": 2,
+                              "label": "while (true) {",
+                              "successors": [
+                                {
+                                  "id": 3,
+                                  "label": "    let tempData = readPacket()\n    match(tempData[0]) {",
+                                  "successors": [
+                                    {
+                                      "id": 5,
+                                      "label": "        case 254 => break\nreturn result.toArray()",
+                                      "successors": []
+                                    },
+                                    {
+                                      "id": 6,
+                                      "label": "        case 255 => println(\"error happen, do later\")",
+                                      "successors": [
+                                        {
+                                          "id": 2,
+                                          "label": "while (true) {",
+                                          "successors": [
+                                            {
+                                              "id": 3,
+                                              "label": "    let tempData = readPacket()\n    match(tempData[0]) {",
+                                              "successors": [
+                                                {
+                                                  "id": 5,
+                                                  "label": "        case 254 => break\nreturn result.toArray()",
+                                                  "successors": []
+                                                },
+                                                {
+                                                  "id": 6,
+                                                  "label": "        case 255 => println(\"error happen, do later\")",
+                                                  "successors": [
+                                                    {
+                                                      "id": 2,
+                                                      "label": "while (true) {",
+                                                      "successors": [
+                                                        {
+                                                          "id": 3,
+                                                          "label": "    let tempData = readPacket()\n    match(tempData[0]) {",
+                                                          "successors": [
+                                                            {
+                                                              "id": 5,
+                                                              "label": "        case 254 => break\nreturn result.toArray()",
+                                                              "successors": []
+                                                            },
+                                                            {
+                                                              "id": 6,
+                                                              "label": "        case 255 => println(\"error happen, do later\")",
+                                                              "successors": [
+                                                                {
+                                                                  "id": 2,
+                                                                  "label": "while (true) {",
+                                                                  "successors": [
+                                                                    {
+                                                                      "id": 3,
+                                                                      "label": "    let tempData = readPacket()\n    match(tempData[0]) {",
+                                                                      "successors": [
+                                                                        {
+                                                                          "id": 5,
+                                                                          "label": "        case 254 => break\nreturn result.toArray()",
+                                                                          "successors": []
+                                                                        },
+                                                                        {
+                                                                          "id": 6,
+                                                                          "label": "        case 255 => println(\"error happen, do later\")",
+                                                                          "successors": [
+                                                                            {
+                                                                              "id": 2,
+                                                                              "label": "while (true) {",
+                                                                              "successors": [
+                                                                                {
+                                                                                  "id": 3,
+                                                                                  "label": "    let tempData = readPacket()\n    match(tempData[0]) {",
+                                                                                  "successors": [
+                                                                                    {
+                                                                                      "id": 5,
+                                                                                      "label": "        case 254 => break\nreturn result.toArray()",
+                                                                                      "successors": []
+                                                                                    },
+                                                                                    {
+                                                                                      "id": 6,
+                                                                                      "label": "        case 255 => println(\"error happen, do later\")",
+                                                                                      "successors": [
+                                                                                        {
+                                                                                          "id": 2,
+                                                                                          "label": "while (true) {",
+                                                                                          "successors": [
+                                                                                            {
+                                                                                              "id": 3,
+                                                                                              "label": "    let tempData = readPacket()\n    match(tempData[0]) {",
+                                                                                              "successors": [
+                                                                                                {
+                                                                                                  "id": 5,
+                                                                                                  "label": "        case 254 => break\nreturn result.toArray()",
+                                                                                                  "successors": []
+                                                                                                }
+                                                                                              ]
+                                                                                            }
+                                                                                          ]
+                                                                                        }
+                                                                                      ]
+                                                                                    }
+                                                                                  ]
+                                                                                }
+                                                                              ]
+                                                                            }
+                                                                          ]
+                                                                        }
+                                                                      ]
+                                                                    }
+                                                                  ]
+                                                                }
+                                                              ]
+                                                            }
+                                                          ]
+                                                        }
+                                                      ]
+                                                    }
+                                                  ]
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "writePacket",
+          "type": "function",
+          "start_line": 417,
+          "end_line": 430,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "    protected func writePacket(data: Array<Byte>) {\n        // TODO 拆包发送\n        // if (data.size - 4 <= maxWriteSize) {\n        try {\n            this.tcpSocket.write(data)\n            sequence ++\n        } catch (e: SocketException) {\n            println(\"send fail \" + e.message)\n        } finally {\n            // println(\"send success\")\n        }\n        // } \n        // splitPacket(data)\n    }",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "try:",
+              "successors": [
+                {
+                  "id": 2,
+                  "label": "    this.tcpSocket.write(data)\n    sequence ++\n",
+                  "successors": []
+                },
+                {
+                  "id": 3,
+                  "label": "except (e: SocketException):\n    println(\"send fail \" + e.message)\n",
+                  "successors": []
+                }
+              ]
+            },
+            {
+              "id": 4,
+              "label": "finally:",
+              "successors": []
+            }
+          ]
+        }
+      ],
+      "classes": [],
+      "simplified_code": "public class MysqlConnection <: Connection {\n\n    private let config: Config\n    private let tcpSocket: TcpSocket\n    private let buffer: Buffer\n    protected var sequence: Byte = 0\n    private var cipher: Array<Byte> = Array<Byte>()\n    private var charset: Byte = 0\n    private var flags: UInt32 = 0\n    private var plugin: String = \"\"\n\n    private var maxPacketAllowed: Int64 = maxPacketSize\n\tprivate var maxWriteSize: Int64 = maxPacketSize - 1\n\n    }\n\n    }\n    }\n\n    }\n\n    }\n\n    }\n\n    }\n\n    }\n\n    }\n\n    }\n\n        writePacket(data)\n    }\n\n    }\n\n        writeAuthSwitchPacket(encrypted)\n    }\n\n    }\n\n    // private func getSystemVar(name: String): Array<Byte> {\n\n    // }\n\n    }\n\n    }\n\n\n\n\n    }\n\n    }\n\n    }\n}",
+      "blocks": [
+        {
+          "id": 1,
+          "label": "public class MysqlConnection <: Connection {\nprivate let config: Config\nprivate let tcpSocket: TcpSocket\nprivate let buffer: Buffer\nprotected var sequence: Byte = 0\nprivate var cipher: Array<Byte> = Array<Byte>()\nprivate var charset: Byte = 0\nprivate var flags: UInt32 = 0\nprivate var plugin: String = \"\"\n\nprivate var maxPacketAllowed: Int64 = maxPacketSize\nprivate var maxWriteSize: Int64 = maxPacketSize - 1",
+          "successors": []
+        }
+      ]
+    }
+  ],
+  "simplified_code": "package cangjieWeb.mysql\nimport std.database.sql.{Connection, Transaction, ConnectionState, Statement}\nimport std.collection.{Map, HashMap, ArrayList}\nimport std.net.{TcpSocket, IPSocketAddress, SocketException, SocketKeepAliveConfig}\nimport cangjieWeb.utils.ByteArrayUtils\nimport encoding.hex.{toHexString,fromHexString}\n}",
+  "blocks": [
+    {
+      "id": 1,
+      "label": "package cangjieWeb.mysql\nimport std.database.sql.{Connection, Transaction, ConnectionState, Statement}",
+      "successors": [
+        {
+          "id": 3,
+          "label": "import std.collection.{Map, HashMap, ArrayList}\nimport std.net.{TcpSocket, IPSocketAddress, SocketException, SocketKeepAliveConfig}",
+          "successors": [
+            {
+              "id": 5,
+              "label": "import cangjieWeb.utils.ByteArrayUtils\nimport encoding.hex.{toHexString,fromHexString}",
+              "successors": []
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

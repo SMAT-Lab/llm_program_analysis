@@ -1,0 +1,164 @@
+{
+  "name": "example_script",
+  "type": "CFG",
+  "start_line": 1,
+  "end_line": 92,
+  "functions": [
+    {
+      "name": "controller",
+      "type": "function",
+      "start_line": 15,
+      "end_line": 24,
+      "functions": [],
+      "classes": [],
+      "simplified_code": "func controller() {\n    spawn {\n        while (!g_quit) {\n            let key = Console.stdIn.read().getOrDefault {r' '}\n            if (key == r'q' || key == r'Q') {\n                g_quit = true\n            }\n        }\n    }\n}",
+      "blocks": [
+        {
+          "id": 1,
+          "label": "func controller() {\nspawn {",
+          "successors": [
+            {
+              "id": 3,
+              "label": "while (!g_quit) {",
+              "successors": [
+                {
+                  "id": 4,
+                  "label": "let key = Console.stdIn.read().getOrDefault {r' '}\nif (key == r'q' || key == r'Q') {",
+                  "successors": [
+                    {
+                      "id": 6,
+                      "label": "g_quit = true\n}",
+                      "successors": []
+                    },
+                    {
+                      "id": 7,
+                      "label": "}",
+                      "successors": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "main",
+      "type": "function",
+      "start_line": 36,
+      "end_line": 92,
+      "functions": [],
+      "classes": [],
+      "simplified_code": "main() {\n    let messageQueue = NonBlockingQueue<(TcpSocket, Array<Byte>)>()\n    let members = LinkedList<TcpSocket>() // 群聊成员/客户端\n    let server = TcpServerSocket(bindAt: PORT) // 服务端\n    server.bind()\n    controller()\n\n    // 和新的客户端建立连接\n    let mutex = ReentrantMutex()\n    let monitor = Monitor()\n    spawn {\n        while (!g_quit) {\n            let client = server.accept()\n            synchronized (mutex) {\n                members.append(client)\n            }\n            // 每个连接要处理的任务\n            spawn {\n                while (!g_quit) {\n                    let data = Array<Byte>(BUFFER_SIZE, repeat: 0)\n                    try { client.read(data) } catch (e: SocketException) {\n                        return // 遇到异常终止此线程，由转发线程清理资源\n                    }\n                    println(String.fromUtf8(data))\n                    messageQueue.enqueue((client, data))\n                    synchronized (monitor) { monitor.notify() }\n                }\n            }\n        }\n    }\n\n    // 转发消息到所有客户端，实现群聊\n    while (!g_quit) {\n        // 我们使用了并发数据结构，这里 Monitor 不必保护数据，仅用于避免当前 while 空转\n        synchronized (monitor) {\n            monitor.wait(timeout: 100 * Duration.millisecond)            \n        }\n        while (let Some((client, data)) <- messageQueue.dequeue()) {\n            mutex.lock()\n            // 遍历群聊成员，转发消息并清理无效客户端\n            members.removeIf { socket =>\n                if (refEq(client, socket)) { // 不必转发给消息源\n                    return false\n                }\n                !socket.tryWrite(data)\n            }\n            mutex.unlock()\n        }\n    }\n    // 退出时通知所有客户端\n    for (client in members) {\n        if (client.tryWrite(\"Server Exit\".toArray())) {\n            client.close()\n        }\n    }\n    server.close()\n}",
+      "blocks": [
+        {
+          "id": 1,
+          "label": "let messageQueue = NonBlockingQueue<(TcpSocket, Array<Byte>)>()\nlet members = LinkedList<TcpSocket>()",
+          "successors": [
+            {
+              "id": 3,
+              "label": "let server = TcpServerSocket(bindAt: PORT)\nserver.bind()",
+              "successors": [
+                {
+                  "id": 5,
+                  "label": "controller()\nlet mutex = ReentrantMutex()",
+                  "successors": [
+                    {
+                      "id": 7,
+                      "label": "let monitor = Monitor()\nspawn { while (!g_quit) { let client = server.accept() synchronized (mutex) { members.append(client) } spawn { while (!g_quit) { let data = Array<Byte>(BUFFER_SIZE, repeat: 0) try { client.read(data) } catch (e: SocketException) { return } println(String.fromUtf8(data)) messageQueue.enqueue((client, data)) synchronized (monitor) { monitor.notify() } } } } }",
+                      "successors": [
+                        {
+                          "id": 9,
+                          "label": "while (!g_quit) { synchronized (monitor) { monitor.wait(timeout: 100 * Duration.millisecond) } while (let Some((client, data)) <- messageQueue.dequeue()) { mutex.lock() members.removeIf { socket => if (refEq(client, socket)) { return false } !socket.tryWrite(data) } mutex.unlock() } }",
+                          "successors": [
+                            {
+                              "id": 10,
+                              "label": "for (client in members) { if (client.tryWrite(\"Server Exit\".toArray())) { client.close() } }",
+                              "successors": [
+                                {
+                                  "id": 11,
+                                  "label": "server.close()",
+                                  "successors": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "classes": [
+    {
+      "name": "TcpSocket",
+      "type": "class",
+      "start_line": 26,
+      "end_line": 34,
+      "functions": [
+        {
+          "name": "tryWrite",
+          "type": "function",
+          "start_line": 27,
+          "end_line": 33,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "    public func tryWrite(data: Array<Byte>) {\n        try { this.write(data) } catch (e: SocketException) {\n            if (!this.isClosed()) { this.close() }\n            return false\n        }\n        return true\n    }",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "public func tryWrite(data: Array<Byte>) {",
+              "successors": [
+                {
+                  "id": 2,
+                  "label": "try { this.write(data) }\nreturn true",
+                  "successors": []
+                },
+                {
+                  "id": 4,
+                  "label": "catch (e: SocketException) {\nif (!this.isClosed()) { this.close() }",
+                  "successors": [
+                    {
+                      "id": 6,
+                      "label": "return false",
+                      "successors": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "simplified_code": "extend TcpSocket {\n    }\n}",
+      "blocks": [
+        {
+          "id": 1,
+          "label": "extend TcpSocket {\n    }",
+          "successors": [
+            {
+              "id": 3,
+              "label": "}",
+              "successors": []
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "simplified_code": "// 群聊程序-服务器\n// 仓颉语言团队 刘俊杰 2024/10/21\nimport std.net.*\nimport std.time.*\nimport std.sync.*\nimport std.collection.*\nimport std.collection.concurrent.*\nimport std.console.*\n\nconst PORT: UInt16 = 24621\nconst BUFFER_SIZE = 1024\nvar g_quit = false\n\n// 从控制台读取退出命令\n}\n\n}\n\n}",
+  "blocks": [
+    {
+      "id": 1,
+      "label": "import std.net.*\nimport std.time.*\nimport std.sync.*\nimport std.collection.*\nimport std.collection.concurrent.*\nimport std.console.*\nconst PORT: UInt16 = 24621\nconst BUFFER_SIZE = 1024\nvar g_quit = false",
+      "successors": []
+    }
+  ]
+}

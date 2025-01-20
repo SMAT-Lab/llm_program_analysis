@@ -22,7 +22,7 @@
           "blocks": [
             {
               "id": 1,
-              "label": "def __init__(self, redis: \"Redis\", timeout: int | None = 60):\nself.redis = redis\nself.timeout = timeout\nself.locks: dict[Any, \"RedisLock\"] = ExpiringDict(max_len=6000, max_age_seconds=self.timeout)\nself.locks_lock = Lock()",
+              "label": "def __init__(self, redis: \"Redis\", timeout: int | None = 60):\n    self.redis = redis\n    self.timeout = timeout\n    self.locks: dict[Any, \"RedisLock\"] = ExpiringDict(\n        max_len=6000, max_age_seconds=self.timeout\n    )\n    self.locks_lock = Lock()",
               "successors": []
             }
           ]
@@ -38,28 +38,26 @@
           "blocks": [
             {
               "id": 1,
-              "label": "lock = self.acquire(key)\ntry:\nyield",
+              "label": "def locked(self, key: Any):\nlock = self.acquire(key)",
               "successors": [
-                4
+                {
+                  "id": 3,
+                  "label": "try:\nyield",
+                  "successors": [
+                    {
+                      "id": 5,
+                      "label": "finally:\nif lock.locked():",
+                      "successors": [
+                        {
+                          "id": 7,
+                          "label": "lock.release()",
+                          "successors": []
+                        }
+                      ]
+                    }
+                  ]
+                }
               ]
-            },
-            {
-              "id": 4,
-              "label": "finally:\nif lock.locked():",
-              "successors": [
-                6,
-                7
-              ]
-            },
-            {
-              "id": 6,
-              "label": "lock.release()",
-              "successors": []
-            },
-            {
-              "id": 7,
-              "label": "end of function",
-              "successors": []
             }
           ]
         },
@@ -74,15 +72,37 @@
           "blocks": [
             {
               "id": 1,
-              "label": "with self.locks_lock:\nif key not in self.locks:\nself.locks[key] = self.redis.lock(str(key), self.timeout, thread_local=False)",
+              "label": "def acquire(self, key: Any) -> \"RedisLock\":\n    with self.locks_lock:",
               "successors": [
-                4
+                {
+                  "id": 3,
+                  "label": "        if key not in self.locks:",
+                  "successors": [
+                    {
+                      "id": 4,
+                      "label": "            self.locks[key] = self.redis.lock(\n                str(key), self.timeout, thread_local=False\n            )\n        lock = self.locks[key]",
+                      "successors": [
+                        {
+                          "id": 6,
+                          "label": "lock.acquire()\nreturn lock",
+                          "successors": []
+                        }
+                      ]
+                    },
+                    {
+                      "id": 5,
+                      "label": "        lock = self.locks[key]\nlock.acquire()",
+                      "successors": [
+                        {
+                          "id": 7,
+                          "label": "return lock",
+                          "successors": []
+                        }
+                      ]
+                    }
+                  ]
+                }
               ]
-            },
-            {
-              "id": 4,
-              "label": "lock = self.locks[key]\nlock.acquire()\nreturn lock",
-              "successors": []
             }
           ]
         },
@@ -97,8 +117,14 @@
           "blocks": [
             {
               "id": 1,
-              "label": "if (lock := self.locks.get(key)) and lock.locked() and lock.owned():\nlock.release()",
-              "successors": []
+              "label": "def release(self, key: Any):\nif (lock := self.locks.get(key)) and lock.locked() and lock.owned():",
+              "successors": [
+                {
+                  "id": 3,
+                  "label": "lock.release()",
+                  "successors": []
+                }
+              ]
             }
           ]
         },
@@ -113,15 +139,20 @@
           "blocks": [
             {
               "id": 1,
-              "label": "self.locks_lock.acquire(blocking=False)\nfor lock in self.locks.values():\nif lock.locked() and lock.owned():\nlock.release()",
+              "label": "def release_all_locks(self):\n\"\"\"Call this on process termination to ensure all locks are released\"\"\"\nself.locks_lock.acquire(blocking=False)",
               "successors": [
-                5
+                {
+                  "id": 3,
+                  "label": "for lock in self.locks.values():",
+                  "successors": [
+                    {
+                      "id": 4,
+                      "label": "if lock.locked() and lock.owned():\nlock.release()",
+                      "successors": []
+                    }
+                  ]
+                }
               ]
-            },
-            {
-              "id": 5,
-              "label": "",
-              "successors": []
             }
           ]
         }
@@ -131,8 +162,26 @@
       "blocks": [
         {
           "id": 1,
-          "label": "class RedisKeyedMutex:\n    \"\"\"\n    This class provides a mutex that can be locked and unlocked by a specific key,\n    using Redis as a distributed locking provider.\n    It uses an ExpiringDict to automatically clear the mutex after a specified timeout,\n    in case the key is not unlocked for a specified duration, to prevent memory leaks.\n    \"\"\"\nself.locks_lock = Lock()\n@contextmanager\nlock.release()\nreturn lock\nlock.release()\nlock.release()",
-          "successors": []
+          "label": "class RedisKeyedMutex:\n\"\"\"\nThis class provides a mutex that can be locked and unlocked by a specific key,\nusing Redis as a distributed locking provider.\nIt uses an ExpiringDict to automatically clear the mutex after a specified timeout,\nin case the key is not unlocked for a specified duration, to prevent memory leaks.\n\"\"\"",
+          "successors": [
+            {
+              "id": 3,
+              "label": "self.locks_lock = Lock()\n@contextmanager",
+              "successors": [
+                {
+                  "id": 5,
+                  "label": "lock.release()\nreturn lock",
+                  "successors": [
+                    {
+                      "id": 7,
+                      "label": "lock.release()\nlock.release()",
+                      "successors": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
         }
       ]
     }
@@ -141,14 +190,7 @@
   "blocks": [
     {
       "id": 1,
-      "label": "from contextlib import contextmanager\nfrom threading import Lock\nfrom typing import TYPE_CHECKING, Any\n\nfrom expiringdict import ExpiringDict\nif TYPE_CHECKING:\nfrom redis import Redis\nfrom redis.lock import Lock as RedisLock",
-      "successors": [
-        4
-      ]
-    },
-    {
-      "id": 4,
-      "label": "lock.release()",
+      "label": "from contextlib import contextmanager\nfrom threading import Lock\nfrom typing import TYPE_CHECKING, Any\n\nfrom expiringdict import ExpiringDict\n\nif TYPE_CHECKING:\n    from redis import Redis\n    from redis.lock import Lock as RedisLock\n\n\nlock.release()",
       "successors": []
     }
   ]

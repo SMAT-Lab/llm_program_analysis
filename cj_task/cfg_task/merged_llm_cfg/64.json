@@ -1,0 +1,311 @@
+{
+  "name": "example_script",
+  "type": "CFG",
+  "start_line": 1,
+  "end_line": 119,
+  "functions": [
+    {
+      "name": "parseType",
+      "type": "function",
+      "start_line": 31,
+      "end_line": 45,
+      "functions": [],
+      "classes": [],
+      "simplified_code": "func parseType(oriType: String, pointerCount: String): Tokens {\n    if (oriType == \"char\" && pointerCount.count(\"*\") == 1) {\n        return Tokens() + Token(TokenKind.IDENTIFIER, \"CString\") //返回CString\n    }\n    var outType = Tokens()\n    if (typeMap.contains(oriType)) {\n        outType += Token(typeMap[oriType])\n    } else {\n        outType += Token(TokenKind.UNIT)\n    }\n    for (_ in 0..pointerCount.count(\"*\")) {\n        outType = quote(CPointer<$(outType)>)\n    }\n    return outType\n}",
+      "blocks": [
+        {
+          "id": 1,
+          "label": "func parseType(oriType: String, pointerCount: String): Tokens {",
+          "successors": [
+            {
+              "id": 2,
+              "label": "if (oriType == \"char\" && pointerCount.count(\"*\") == 1) {\nreturn Tokens() + Token(TokenKind.IDENTIFIER, \"CString\")",
+              "successors": []
+            },
+            {
+              "id": 4,
+              "label": "var outType = Tokens()",
+              "successors": [
+                {
+                  "id": 5,
+                  "label": "if (typeMap.contains(oriType)) {\noutType += Token(typeMap[oriType])",
+                  "successors": [
+                    {
+                      "id": 8,
+                      "label": "for (_ in 0..pointerCount.count(\"*\")) {",
+                      "successors": [
+                        {
+                          "id": 9,
+                          "label": "outType = quote(CPointer<$(outType)>)\nreturn outType",
+                          "successors": []
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "id": 7,
+                  "label": "else { outType += Token(TokenKind.UNIT) }",
+                  "successors": [
+                    {
+                      "id": 8,
+                      "label": "for (_ in 0..pointerCount.count(\"*\")) {",
+                      "successors": [
+                        {
+                          "id": 9,
+                          "label": "outType = quote(CPointer<$(outType)>)\nreturn outType",
+                          "successors": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "parseDotH",
+      "type": "function",
+      "start_line": 47,
+      "end_line": 115,
+      "functions": [],
+      "classes": [],
+      "simplified_code": "func parseDotH(dotH: String): Tokens {\n    var outTokens = Tokens()\n    let file = File(dotH, Read)\n    let reader = StringReader(file)\n    var content = reader.readToEnd() //StringReader的分段读取未解决，暂时直接全部读完\n    let commentRegex = Regex(##\"/\\*.*\\*/|//.*(\\n|\\r)|\\*/|/\\*|\\*{2}\\s.*(\\n|\\r)\"##) //移除注释\n    content = commentRegex\n        .matcher(content)\n        .replaceAll(\"\")\n        .replace(\"void(*)(void*)\", \"void*\")\n        .replace(\"int (*callback)(void*,int,char**,char**)\", \"void *\")\n    let funcRegex = Regex(##\"\\w+\\s+\\**\\w+\\s*\\([^)]*\\)\\s*;\"##) //获得函数定义的匹配\n    let funcArr = funcRegex.matcher(content).findAll() ?? Array<MatchData>()\n    for (i in funcArr) {\n        var funcDefine = i.matchStr()\n        let funcDefineArray = funcDefine.split(\"(\")\n        let funcPrefix = funcDefineArray[0].split(\" \")\n        var funcReturn = Tokens()\n        if (typeMap.contains(funcPrefix[0])) {\n            funcReturn += Token(typeMap[funcPrefix[0]])\n        }else{\n            funcReturn += Token(TokenKind.UNIT)\n        }\n        var funcName = funcPrefix[1]\n        if (funcName.contains(\"*\")) { //判断是否可能为字符串\n            funcName = funcName.replace(\"*\", \"\")\n            if (funcPrefix[0] == \"char\") {\n                funcReturn = quote(CString)\n            } else {\n                funcReturn = quote(CPointer<Byte>)\n            }\n        }\n        let paramListStr = funcDefineArray[1]\n        let paramRegex = Regex(##\"(\\w+\\s*\\**|\\w+\\s+\\**\\w+|\\.{3})(\\s*,|\\s*\\))\"##) //匹配到参数列表\n        let paramMatchList = paramRegex.matcher(paramListStr).findAll() ?? Array<MatchData>()\n        let paramList = Array<String>(paramMatchList.size,\n            {i => Regex(##\"\\s*,|\\s*\\)|\\n|\\r\"##).matcher(paramMatchList[i].matchStr()).replace(\"\")}) //移除特殊字符并存入数组\n        var paramsToken = Tokens()\n        for (i in 0..paramList.size) {\n            println(\"${funcName}\\n${paramList}\\n${\"void\" == paramList[i]}\")\n            if (let Some(_) <- Regex(##\"\\w+\\s+\\**\\w+\"##).matches(paramList[i])) { //处理诸如int n的函数参数\n                let paramSplit = paramList[i].split(\" \")\n                let type_u = paramSplit[0].replace(\"*\", \"\")\n                let paramToken = Token(TokenKind.IDENTIFIER, paramSplit[1].replace(\"*\", \"\").replace(\"type\",\"type${i}\"))\n                let typeToken = parseType(type_u, paramList[i])\n                paramsToken += quote($(paramToken): $(typeToken))\n            } else if (\"void\" == paramList[i]) { //处理诸如void的函数参数\n                continue\n            } else if (let Some(_) <- Regex(##\"\\w+\\s*\\**\"##).matches(paramList[i])) { // 处理诸如int*的函数参数\n                let type_u = paramList[i].replace(\"*\", \"\")\n                let paramToken = Token(TokenKind.IDENTIFIER, \"param${i}\")\n                let typeToken = parseType(type_u, paramList[i])\n                paramsToken += quote($(paramToken): $(typeToken))\n            } else if (let Some(_) <- Regex(##\"\\.{3}|va_list\"##).matches(paramList[i])) { //处理诸如...的函数参数\n                paramsToken += Token(TokenKind.ELLIPSIS)\n            } else {\n                println(\"unknown param:${paramList[i]}\")\n            }\n            if (i != paramList.size - 1) {\n                paramsToken += Token(TokenKind.COMMA)\n            }\n        }\n        let nameToken = Token(TokenKind.IDENTIFIER, funcName)\n        outTokens += quote(foreign func $(nameToken)($(paramsToken)): $(funcReturn)\n        )\n    }\n    file.close()\n    outTokens\n}",
+      "blocks": [
+        {
+          "id": 1,
+          "label": "func parseDotH(dotH: String): Tokens {\nvar outTokens = Tokens()",
+          "successors": [
+            {
+              "id": 3,
+              "label": "let file = File(dotH, Read)\nlet reader = StringReader(file)",
+              "successors": [
+                {
+                  "id": 5,
+                  "label": "var content = reader.readToEnd()\nlet commentRegex = Regex(##\"/\\*.*\\*/|//.*(\\n|\\r)|\\*/|/\\*|\\*{2}\\s.*(\\n|\\r)\"##)",
+                  "successors": [
+                    {
+                      "id": 7,
+                      "label": "content = commentRegex.matcher(content).replaceAll(\"\").replace(\"void(*)(void*)\", \"void*\").replace(\"int (*callback)(void*,int,char**,char**)\", \"void *\")",
+                      "successors": [
+                        {
+                          "id": 8,
+                          "label": "let funcRegex = Regex(##\"\\w+\\s+\\**\\w+\\s*\\([^)]*\\)\\s*;\"##)\nlet funcArr = funcRegex.matcher(content).findAll() ?? Array<MatchData>()",
+                          "successors": [
+                            {
+                              "id": 10,
+                              "label": "for (i in funcArr) {",
+                              "successors": [
+                                {
+                                  "id": 11,
+                                  "label": "var funcDefine = i.matchStr()\nlet funcDefineArray = funcDefine.split(\"(\")",
+                                  "successors": [
+                                    {
+                                      "id": 13,
+                                      "label": "let funcPrefix = funcDefineArray[0].split(\" \")\nvar funcReturn = Tokens()",
+                                      "successors": [
+                                        {
+                                          "id": 15,
+                                          "label": "if (typeMap.contains(funcPrefix[0])) {",
+                                          "successors": [
+                                            {
+                                              "id": 16,
+                                              "label": "funcReturn += Token(typeMap[funcPrefix[0]])\nlet paramListStr = funcDefineArray[1]",
+                                              "successors": [
+                                                {
+                                                  "id": 19,
+                                                  "label": "let paramRegex = Regex(##\"(\\w+\\s*\\**|\\w+\\s+\\**\\w+|\\.{3})(\\s*,|\\s*\\))\"##)\nlet paramMatchList = paramRegex.matcher(paramListStr).findAll() ?? Array<MatchData>()",
+                                                  "successors": [
+                                                    {
+                                                      "id": 21,
+                                                      "label": "let paramList = Array<String>(paramMatchList.size, {i => Regex(##\"\\s*,|\\s*\\)|\\n|\\r\"##).matcher(paramMatchList[i].matchStr()).replace(\"\")})\nvar paramsToken = Tokens()",
+                                                      "successors": [
+                                                        {
+                                                          "id": 23,
+                                                          "label": "for (i in 0..paramList.size) {",
+                                                          "successors": [
+                                                            {
+                                                              "id": 24,
+                                                              "label": "println(\"${funcName}\\n${paramList}\\n${\"void\" == paramList[i]}\")",
+                                                              "successors": [
+                                                                {
+                                                                  "id": 25,
+                                                                  "label": "if (let Some(_) <- Regex(##\"\\w+\\s+\\**\\w+\"##).matches(paramList[i])) {\nlet paramSplit = paramList[i].split(\" \")",
+                                                                  "successors": [
+                                                                    {
+                                                                      "id": 27,
+                                                                      "label": "let type_u = paramSplit[0].replace(\"*\", \"\")\nlet paramToken = Token(TokenKind.IDENTIFIER, paramSplit[1].replace(\"*\", \"\").replace(\"type\",\"type${i}\"))",
+                                                                      "successors": [
+                                                                        {
+                                                                          "id": 29,
+                                                                          "label": "let typeToken = parseType(type_u, paramList[i])\nparamsToken += quote($(paramToken): $(typeToken))",
+                                                                          "successors": [
+                                                                            {
+                                                                              "id": 32,
+                                                                              "label": "if (i != paramList.size - 1) {\nparamsToken += Token(TokenKind.COMMA)",
+                                                                              "successors": []
+                                                                            }
+                                                                          ]
+                                                                        }
+                                                                      ]
+                                                                    }
+                                                                  ]
+                                                                },
+                                                                {
+                                                                  "id": 34,
+                                                                  "label": "} else if (\"void\" == paramList[i]) {\ncontinue",
+                                                                  "successors": []
+                                                                },
+                                                                {
+                                                                  "id": 36,
+                                                                  "label": "} else if (let Some(_) <- Regex(##\"\\w+\\s*\\**\"##).matches(paramList[i])) {\nlet type_u = paramList[i].replace(\"*\", \"\")",
+                                                                  "successors": [
+                                                                    {
+                                                                      "id": 38,
+                                                                      "label": "let paramToken = Token(TokenKind.IDENTIFIER, \"param${i}\")\nlet typeToken = parseType(type_u, paramList[i])",
+                                                                      "successors": [
+                                                                        {
+                                                                          "id": 40,
+                                                                          "label": "paramsToken += quote($(paramToken): $(typeToken))",
+                                                                          "successors": []
+                                                                        }
+                                                                      ]
+                                                                    }
+                                                                  ]
+                                                                },
+                                                                {
+                                                                  "id": 41,
+                                                                  "label": "} else if (let Some(_) <- Regex(##\"\\.{3}|va_list\"##).matches(paramList[i])) {\nparamsToken += Token(TokenKind.ELLIPSIS)",
+                                                                  "successors": []
+                                                                },
+                                                                {
+                                                                  "id": 43,
+                                                                  "label": "} else {\nprintln(\"unknown param:${paramList[i]}\")",
+                                                                  "successors": []
+                                                                }
+                                                              ]
+                                                            }
+                                                          ]
+                                                        },
+                                                        {
+                                                          "id": 45,
+                                                          "label": "let nameToken = Token(TokenKind.IDENTIFIER, funcName)\noutTokens += quote(foreign func $(nameToken)($(paramsToken)): $(funcReturn)\n)",
+                                                          "successors": []
+                                                        }
+                                                      ]
+                                                    }
+                                                  ]
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "id": 17,
+                                              "label": "} else {\nfuncReturn += Token(TokenKind.UNIT)",
+                                              "successors": []
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "id": 47,
+                                          "label": "var funcName = funcPrefix[1]\nif (funcName.contains(\"*\")) {",
+                                          "successors": [
+                                            {
+                                              "id": 49,
+                                              "label": "funcName = funcName.replace(\"*\", \"\")",
+                                              "successors": [
+                                                {
+                                                  "id": 50,
+                                                  "label": "if (funcPrefix[0] == \"char\") {\nfuncReturn = quote(CString)",
+                                                  "successors": []
+                                                },
+                                                {
+                                                  "id": 52,
+                                                  "label": "} else {\nfuncReturn = quote(CPointer<Byte>)",
+                                                  "successors": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "id": 54,
+                          "label": "}",
+                          "successors": [
+                            {
+                              "id": 55,
+                              "label": "file.close()",
+                              "successors": []
+                            },
+                            {
+                              "id": 56,
+                              "label": "outTokens",
+                              "successors": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "include",
+      "type": "function",
+      "start_line": 117,
+      "end_line": 119,
+      "functions": [],
+      "classes": [],
+      "simplified_code": "public macro include(input: Tokens): Tokens {\n    parseDotH(input.toString().replace('\"', \"\"))\n}",
+      "blocks": [
+        {
+          "id": 1,
+          "label": "public macro include(input: Tokens): Tokens {\n    parseDotH(input.toString().replace('\"', \"\"))",
+          "successors": []
+        }
+      ]
+    }
+  ],
+  "classes": [],
+  "simplified_code": "macro package opds_cj.macros\n\nimport std.ast.*\nimport std.fs.*\nimport std.io.*\nimport std.regex.*\nimport std.collection.HashMap\n\nlet typeMap = HashMap<String, TokenKind>(\n    [\n        (\"void\", TokenKind.UNIT),\n        (\"bool\", TokenKind.BOOLEAN),\n        (\"char\", TokenKind.UINT8),\n        (\"int8_t\", TokenKind.UINT8),\n        (\"uint8_t\", TokenKind.UINT8),\n        (\"int16_t\", TokenKind.INT16),\n        (\"uint16_t\", TokenKind.UINT16),\n        (\"int32_t\", TokenKind.INT32),\n        (\"uint32_t\", TokenKind.UINT32),\n        (\"int64_t\", TokenKind.INT64),\n        (\"uint64_t\", TokenKind.UINT64),\n        (\"ssize_t\", TokenKind.INTNATIVE),\n        (\"size_t\", TokenKind.UINTNATIVE),\n        (\"float\", TokenKind.FLOAT32),\n        (\"double\", TokenKind.FLOAT64), //以上为通用映射表\n        (\"int\", TokenKind.INT32), //根据平台变化\n        (\"sqlite3_int64\", TokenKind.INT64) //以上为当前项目特殊映射\n    ]\n)\n\n}\n\n}\n\n}",
+  "blocks": [
+    {
+      "id": 1,
+      "label": "macro package opds_cj.macros\nimport std.ast.*",
+      "successors": [
+        {
+          "id": 3,
+          "label": "import std.fs.*\nimport std.io.*",
+          "successors": [
+            {
+              "id": 5,
+              "label": "import std.regex.*\nimport std.collection.HashMap",
+              "successors": [
+                {
+                  "id": 7,
+                  "label": "let typeMap = HashMap<String, TokenKind>( [ (\"void\", TokenKind.UNIT), (\"bool\", TokenKind.BOOLEAN), (\"char\", TokenKind.UINT8), (\"int8_t\", TokenKind.UINT8), (\"uint8_t\", TokenKind.UINT8), (\"int16_t\", TokenKind.INT16), (\"uint16_t\", TokenKind.UINT16), (\"int32_t\", TokenKind.INT32), (\"uint32_t\", TokenKind.UINT32), (\"int64_t\", TokenKind.INT64), (\"uint64_t\", TokenKind.UINT64), (\"ssize_t\", TokenKind.INTNATIVE), (\"size_t\", TokenKind.UINTNATIVE), (\"float\", TokenKind.FLOAT32), (\"double\", TokenKind.FLOAT64), //(以内为通用映射表 (\"int\", TokenKind.INT32), //(根据平台变化 (\"sqlite3_int64\", TokenKind.INT64) //以上为当前项目特殊映射 ] )",
+                  "successors": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

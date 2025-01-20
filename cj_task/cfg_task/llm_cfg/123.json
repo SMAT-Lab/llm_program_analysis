@@ -1,0 +1,149 @@
+{
+  "name": "enum_enhance",
+  "type": "CFG",
+  "start_line": 1,
+  "end_line": 106,
+  "functions": [
+    {
+      "name": "ToStringEnum",
+      "type": "function",
+      "start_line": 6,
+      "end_line": 106,
+      "functions": [],
+      "classes": [],
+      "simplified_code": "public macro ToStringEnum(input: Tokens): Tokens {\n    let enumm = EnumDecl(input)\n    // match\u8868\u8fbe\u5f0f\n    var matchExprs = Array<MatchExpr>(2, { _ => MatchExpr()})\n    for (expr in matchExprs) {\n        expr.selector = RefExpr(quote(this))\n        expr.lParen = Token(TokenKind.LPAREN)\n        expr.rParen = Token(TokenKind.RPAREN)\n    }\n    // \u6784\u9020case\n    let matchCaseSet = Array<ArrayList<MatchCase>>(2, {_ => ArrayList<MatchCase>()})\n    for (constr in enumm.constructors) {\n        let matchCases = Array<MatchCase>(2, {_ => MatchCase()}) // 0: case Red => \"Red\" | 1\uff1a case Red => \"Enum.Red\"\n        let enumPatt = EnumPattern()\n        let litConstBuilders = Array<StringBuilder>(2, {_ => StringBuilder()})\n        // \u6dfb\u52a0 \"Enum.\"\n        litConstBuilders[1].append(enumm.identifier.value)\n        litConstBuilders[1].append(r'.')\n\n        litConstBuilders |> forEach{i => i.append(constr.identifier.value)}\n        enumPatt.constructor = parseExpr(constr.identifier.toTokens())\n        // \u7ec4\u88c5 MatchCase\n        var flag = false\n        let constrArgSize = constr.typeArguments.size\n        for (item in constr.typeArguments |> enumerate) {\n            if (!flag) {\n                litConstBuilders |> forEach{i => i.append(r\"(\")}\n                flag = true\n            }\n            let id = Token(TokenKind.IDENTIFIER, \"v\" + item[0].toString())\n            enumPatt.patterns.append(TypePattern(quote($id: $(item[1]))))\n\n            litConstBuilders[0].append(\"\\${${id.toTokens()}.toString()}\")\n            match (item[1]) {\n                case r: RefType where r.identifier.value == enumm.identifier.value =>\n                litConstBuilders[1].append(\"\\${${id.toTokens()}.toString(true)}\")\n                case p: TypeNode => \n                litConstBuilders[1].append(\"\\${${id.toTokens()}.toString()}\")\n            }\n\n            if (item[0] != constrArgSize - 1) {\n                litConstBuilders |> forEach{i => i.append(\", \")}\n            }\n        }\n        if (flag) {\n            litConstBuilders |> forEach{i => i.append(r')')}\n        }\n        for (((mat, lit), set) in matchCases |> zip(litConstBuilders) |> zip(matchCaseSet)) {\n            mat.patterns.append(enumPatt)\n            mat.block.nodes.append(LitConstExpr(quote($(lit.toString()))))\n            set.append(mat)\n        }\n    }\n    for ((expr, set) in matchExprs |> zip(matchCaseSet)) {\n        set |> forEach{i => expr.matchCases.append(i)}\n    }\n    // toString(): String\u51fd\u6570\n    let block = Block()\n    block.nodes.append(matchExprs[0])\n    let toString = FuncDecl(quote(\n        public func toString(): String {\n            $block\n        }))\n    // toString(b: Bool): String\u51fd\u6570\n    let block1 = Block()\n    block1.nodes.append(matchExprs[1])\n    let toStringBool = FuncDecl(quote(\n        public func toString(b: Bool): String {\n            if (b) {\n                $block1\n            } else {\n                this.toString()\n            }\n        }))\n    // \u5c06\u51fd\u6570\u52a0\u5165\u679a\u4e3e\n    let funcs = ArrayList<String>()\n    for (decl in enumm.decls) {\n        match (decl) {\n            // case d: FuncDecl => funcSet.put(d.identifier.toTokens().toString())\n            case d: FuncDecl => funcs.append(d.identifier.value)\n            case _ => ()\n        }\n    }\n    if (!funcs.contains(\"toString\")) {\n        enumm.decls.append(toString)\n        enumm.decls.append(toStringBool)\n    }\n    // \u7ee7\u627f\u63a5\u53e3\n    let intfs = ArrayList<String>()\n    for (i in enumm.superTypes) {\n        match (i) {\n            case r: RefType => intfs.append(r.toTokens().toString())\n            case r: TypeNode => ()\n        }\n    }\n    if (!intfs.contains(\"ToString\")) {\n        enumm.superTypes.append(RefType(quote(ToString)))\n    }\n\n    enumm.toTokens()\n}",
+      "blocks": [
+        {
+          "id": 1,
+          "label": "let enumm = EnumDecl(input)",
+          "successors": [
+            {
+              "id": 2,
+              "label": "var matchExprs = Array<MatchExpr>(2, { _ => MatchExpr()})",
+              "successors": [
+                {
+                  "id": 3,
+                  "label": "for (expr in matchExprs) {\n    expr.selector = RefExpr(quote(this))\n    expr.lParen = Token(TokenKind.LPAREN)\n    expr.rParen = Token(TokenKind.RPAREN)\n}",
+                  "successors": [
+                    {
+                      "id": 4,
+                      "label": "let matchCaseSet = Array<ArrayList<MatchCase>>(2, {_ => ArrayList<MatchCase>()})",
+                      "successors": [
+                        {
+                          "id": 5,
+                          "label": "for (constr in enumm.constructors) {\n    let matchCases = Array<MatchCase>(2, {_ => MatchCase()})\n    let enumPatt = EnumPattern()\n    let litConstBuilders = Array<StringBuilder>(2, {_ => StringBuilder()})\n    litConstBuilders[1].append(enumm.identifier.value)\n    litConstBuilders[1].append(r'.')\n\n    litConstBuilders |> forEach{i => i.append(constr.identifier.value)}\n    enumPatt.constructor = parseExpr(constr.identifier.toTokens())",
+                          "successors": [
+                            {
+                              "id": 6,
+                              "label": "var flag = false\nlet constrArgSize = constr.typeArguments.size\nfor (item in constr.typeArguments |> enumerate) {\n    if (!flag) {\n        litConstBuilders |> forEach{i => i.append(r\"(\")}\n        flag = true\n    }\n    let id = Token(TokenKind.IDENTIFIER, \"v\" + item[0].toString())\n    enumPatt.patterns.append(TypePattern(quote($id: $(item[1]))))\n\n    litConstBuilders[0].append(\"\\${${id.toTokens()}.toString()}\")",
+                              "successors": [
+                                {
+                                  "id": 7,
+                                  "label": "match (item[1]) {\n    case r: RefType where r.identifier.value == enumm.identifier.value =>\n    litConstBuilders[1].append(\"\\${${id.toTokens()}.toString(true)}\")\n    case p: TypeNode => \n    litConstBuilders[1].append(\"\\${${id.toTokens()}.toString()}\")\n}",
+                                  "successors": [
+                                    {
+                                      "id": 8,
+                                      "label": "if (item[0] != constrArgSize - 1) {\n    litConstBuilders |> forEach{i => i.append(\", \")}\n}",
+                                      "successors": [
+                                        {
+                                          "id": 9,
+                                          "label": "if (flag) {\n    litConstBuilders |> forEach{i => i.append(r')')}\n}",
+                                          "successors": [
+                                            {
+                                              "id": 10,
+                                              "label": "for (((mat, lit), set) in matchCases |> zip(litConstBuilders) |> zip(matchCaseSet)) {\n    mat.patterns.append(enumPatt)\n    mat.block.nodes.append(LitConstExpr(quote($(lit.toString()))))\n    set.append(mat)\n}",
+                                              "successors": []
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "id": 11,
+                          "label": "for ((expr, set) in matchExprs |> zip(matchCaseSet)) {\n    set |> forEach{i => expr.matchCases.append(i)}\n}",
+                          "successors": [
+                            {
+                              "id": 12,
+                              "label": "let block = Block()\nblock.nodes.append(matchExprs[0])\nlet toString = FuncDecl(quote(\n    public func toString(): String {\n        $block\n    }\n))",
+                              "successors": [
+                                {
+                                  "id": 13,
+                                  "label": "let block1 = Block()\nblock1.nodes.append(matchExprs[1])\nlet toStringBool = FuncDecl(quote(\n    public func toString(b: Bool): String {\n        if (b) {\n            $block1\n        } else {\n            this.toString()\n        }\n    }\n))",
+                                  "successors": [
+                                    {
+                                      "id": 14,
+                                      "label": "let funcs = ArrayList<String>()\nfor (decl in enumm.decls) {\n    match (decl) {\n        case d: FuncDecl => funcs.append(d.identifier.value)\n        case _ => ()\n    }\n}",
+                                      "successors": [
+                                        {
+                                          "id": 15,
+                                          "label": "if (!funcs.contains(\"toString\")) {\n    enumm.decls.append(toString)\n    enumm.decls.append(toStringBool)\n}",
+                                          "successors": [
+                                            {
+                                              "id": 16,
+                                              "label": "let intfs = ArrayList<String>()\nfor (i in enumm.superTypes) {\n    match (i) {\n        case r: RefType => intfs.append(r.toTokens().toString())\n        case r: TypeNode => ()\n    }\n}",
+                                              "successors": [
+                                                {
+                                                  "id": 17,
+                                                  "label": "if (!intfs.contains(\"ToString\")) {\n    enumm.superTypes.append(RefType(quote(ToString)))\n}",
+                                                  "successors": [
+                                                    {
+                                                      "id": 18,
+                                                      "label": "enumm.toTokens()",
+                                                      "successors": []
+                                                    }
+                                                  ]
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "classes": [],
+  "simplified_code": "macro package enum_enhance\n\nimport std.ast.*\nimport std.collection.*\n\n}",
+  "blocks": [
+    {
+      "id": 1,
+      "label": "macro package enum_enhance",
+      "successors": []
+    },
+    {
+      "id": 2,
+      "label": "import std.ast.*",
+      "successors": []
+    },
+    {
+      "id": 3,
+      "label": "import std.collection.*",
+      "successors": []
+    },
+    {
+      "id": 4,
+      "label": "}",
+      "successors": []
+    }
+  ]
+}

@@ -15,7 +15,7 @@
       "blocks": [
         {
           "id": 1,
-          "label": "def get_client() -> LDClient:\nreturn ldclient.get()",
+          "label": "def get_client() -> LDClient:\n    \"\"\"Get the LaunchDarkly client singleton.\"\"\"\n    return ldclient.get()",
           "successors": []
         }
       ]
@@ -31,18 +31,30 @@
       "blocks": [
         {
           "id": 1,
-          "label": "sdk_key = SETTINGS.launch_darkly_sdk_key\nlogger.debug(f\"Initializing LaunchDarkly with SDK key: {'present' if sdk_key else 'missing'}\")\nif not sdk_key:\nlogger.warning(\"LaunchDarkly SDK key not configured\")\nreturn",
-          "successors": []
-        },
-        {
-          "id": 5,
-          "label": "config = Config(sdk_key)\nldclient.set_config(config)\nif ldclient.get().is_initialized():\nlogger.info(\"LaunchDarkly client initialized successfully\")",
-          "successors": []
-        },
-        {
-          "id": 8,
-          "label": "logger.error(\"LaunchDarkly client failed to initialize\")",
-          "successors": []
+          "label": "def initialize_launchdarkly() -> None:\n    sdk_key = SETTINGS.launch_darkly_sdk_key\n    logger.debug(f\"Initializing LaunchDarkly with SDK key: {'present' if sdk_key else 'missing'}\")\nif not sdk_key:",
+          "successors": [
+            {
+              "id": 3,
+              "label": "    logger.warning(\"LaunchDarkly SDK key not configured\")\n    return",
+              "successors": []
+            },
+            {
+              "id": 4,
+              "label": "config = Config(sdk_key)\nldclient.set_config(config)\nif ldclient.get().is_initialized():",
+              "successors": [
+                {
+                  "id": 6,
+                  "label": "    logger.info(\"LaunchDarkly client initialized successfully\")",
+                  "successors": []
+                },
+                {
+                  "id": 7,
+                  "label": "    else:\n        logger.error(\"LaunchDarkly client failed to initialize\")",
+                  "successors": []
+                }
+              ]
+            }
+          ]
         }
       ]
     },
@@ -57,13 +69,14 @@
       "blocks": [
         {
           "id": 1,
-          "label": "def shutdown_launchdarkly() -> None:\nif ldclient.get().is_initialized():\nldclient.get().close()\nlogger.info(\"LaunchDarkly client closed successfully\")",
-          "successors": []
-        },
-        {
-          "id": 4,
-          "label": "",
-          "successors": []
+          "label": "def shutdown_launchdarkly() -> None:\n    if ldclient.get().is_initialized():",
+          "successors": [
+            {
+              "id": 3,
+              "label": "        ldclient.get().close()\n        logger.info(\"LaunchDarkly client closed successfully\")",
+              "successors": []
+            }
+          ]
         }
       ]
     },
@@ -78,23 +91,31 @@
       "blocks": [
         {
           "id": 1,
-          "label": "builder = Context.builder(str(user_id)).kind(\"user\")\nif additional_attributes:",
+          "label": "def create_context(\n    user_id: str, additional_attributes: Optional[Dict[str, Any]] = None\n) -> Context:\nbuilder = Context.builder(str(user_id)).kind(\"user\")",
           "successors": [
-            3,
-            5
+            {
+              "id": 3,
+              "label": "if additional_attributes:",
+              "successors": [
+                {
+                  "id": 4,
+                  "label": "for key, value in additional_attributes.items():",
+                  "successors": [
+                    {
+                      "id": 5,
+                      "label": "builder.set(key, value)\nreturn builder.build()",
+                      "successors": []
+                    }
+                  ]
+                },
+                {
+                  "id": 6,
+                  "label": "return builder.build()",
+                  "successors": []
+                }
+              ]
+            }
           ]
-        },
-        {
-          "id": 3,
-          "label": "for key, value in additional_attributes.items():\nbuilder.set(key, value)",
-          "successors": [
-            3
-          ]
-        },
-        {
-          "id": 5,
-          "label": "return builder.build()",
-          "successors": []
         }
       ]
     },
@@ -121,41 +142,103 @@
               "blocks": [
                 {
                   "id": 1,
-                  "label": "async def async_wrapper(*args: P.args, **kwargs: P.kwargs) -> T:\ntry:\nuser_id = kwargs.get(\"user_id\")\nif not user_id:\nraise ValueError(\"user_id is required\")",
+                  "label": "async def async_wrapper(*args: P.args, **kwargs: P.kwargs) -> T:\ntry:",
                   "successors": [
-                    16
+                    {
+                      "id": 3,
+                      "label": "user_id = kwargs.get(\"user_id\")\nif not user_id:",
+                      "successors": [
+                        {
+                          "id": 5,
+                          "label": "raise ValueError(\"user_id is required\")",
+                          "successors": []
+                        },
+                        {
+                          "id": 6,
+                          "label": "if not get_client().is_initialized():",
+                          "successors": [
+                            {
+                              "id": 7,
+                              "label": "logger.warning(f\"LaunchDarkly not initialized, using default={default}\")\nis_enabled = default",
+                              "successors": [
+                                {
+                                  "id": 13,
+                                  "label": "if not is_enabled:",
+                                  "successors": [
+                                    {
+                                      "id": 14,
+                                      "label": "raise HTTPException(status_code=404, detail=\"Feature not available\")",
+                                      "successors": []
+                                    },
+                                    {
+                                      "id": 15,
+                                      "label": "result = func(*args, **kwargs)\nif asyncio.iscoroutine(result):",
+                                      "successors": [
+                                        {
+                                          "id": 17,
+                                          "label": "return await result",
+                                          "successors": []
+                                        },
+                                        {
+                                          "id": 18,
+                                          "label": "return cast(T, result)",
+                                          "successors": []
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "id": 9,
+                              "label": "context = create_context(str(user_id))\nis_enabled = get_client().variation(flag_key, context, default)",
+                              "successors": [
+                                {
+                                  "id": 13,
+                                  "label": "if not is_enabled:",
+                                  "successors": [
+                                    {
+                                      "id": 14,
+                                      "label": "raise HTTPException(status_code=404, detail=\"Feature not available\")",
+                                      "successors": []
+                                    },
+                                    {
+                                      "id": 15,
+                                      "label": "result = func(*args, **kwargs)\nif asyncio.iscoroutine(result):",
+                                      "successors": [
+                                        {
+                                          "id": 17,
+                                          "label": "return await result",
+                                          "successors": []
+                                        },
+                                        {
+                                          "id": 18,
+                                          "label": "return cast(T, result)",
+                                          "successors": []
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "id": 11,
+                      "label": "except Exception as e:\nlogger.error(f\"Error evaluating feature flag {flag_key}: {e}\")",
+                      "successors": [
+                        {
+                          "id": 13,
+                          "label": "raise",
+                          "successors": []
+                        }
+                      ]
+                    }
                   ]
-                },
-                {
-                  "id": 6,
-                  "label": "if not get_client().is_initialized():\nlogger.warning(f\"LaunchDarkly not initialized, using default={default}\")\nis_enabled = default",
-                  "successors": [
-                    10
-                  ]
-                },
-                {
-                  "id": 9,
-                  "label": "context = create_context(str(user_id))",
-                  "successors": [
-                    10
-                  ]
-                },
-                {
-                  "id": 10,
-                  "label": "is_enabled = get_client().variation(flag_key, context, default)\nif not is_enabled:\nraise HTTPException(status_code=404, detail=\"Feature not available\")",
-                  "successors": [
-                    16
-                  ]
-                },
-                {
-                  "id": 13,
-                  "label": "result = func(*args, **kwargs)\nif asyncio.iscoroutine(result):\nreturn await result",
-                  "successors": []
-                },
-                {
-                  "id": 16,
-                  "label": "return cast(T, result)",
-                  "successors": []
                 }
               ]
             },
@@ -163,59 +246,75 @@
               "name": "sync_wrapper",
               "type": "function",
               "start_line": 105,
-              "end_line": 127,
+              "end_line": 126,
               "functions": [],
               "classes": [],
-              "simplified_code": "        def sync_wrapper(*args: P.args, **kwargs: P.kwargs) -> T:\n            try:\n                user_id = kwargs.get(\"user_id\")\n                if not user_id:\n                    raise ValueError(\"user_id is required\")\n\n                if not get_client().is_initialized():\n                    logger.warning(\n                        f\"LaunchDarkly not initialized, using default={default}\"\n                    )\n                    is_enabled = default\n                else:\n                    context = create_context(str(user_id))\n                    is_enabled = get_client().variation(flag_key, context, default)\n\n                if not is_enabled:\n                    raise HTTPException(status_code=404, detail=\"Feature not available\")\n\n                return cast(T, func(*args, **kwargs))\n            except Exception as e:\n                logger.error(f\"Error evaluating feature flag {flag_key}: {e}\")\n                raise\n",
+              "simplified_code": "        def sync_wrapper(*args: P.args, **kwargs: P.kwargs) -> T:\n            try:\n                user_id = kwargs.get(\"user_id\")\n                if not user_id:\n                    raise ValueError(\"user_id is required\")\n\n                if not get_client().is_initialized():\n                    logger.warning(\n                        f\"LaunchDarkly not initialized, using default={default}\"\n                    )\n                    is_enabled = default\n                else:\n                    context = create_context(str(user_id))\n                    is_enabled = get_client().variation(flag_key, context, default)\n\n                if not is_enabled:\n                    raise HTTPException(status_code=404, detail=\"Feature not available\")\n\n                return cast(T, func(*args, **kwargs))\n            except Exception as e:\n                logger.error(f\"Error evaluating feature flag {flag_key}: {e}\")\n                raise",
               "blocks": [
                 {
                   "id": 1,
-                  "label": "try:\nuser_id = kwargs.get(\"user_id\")\nif not user_id:\nraise ValueError(\"user_id is required\")",
+                  "label": "def sync_wrapper(*args: P.args, **kwargs: P.kwargs) -> T:",
                   "successors": [
-                    6
+                    {
+                      "id": 2,
+                      "label": "try:\nuser_id = kwargs.get(\"user_id\")",
+                      "successors": [
+                        {
+                          "id": 4,
+                          "label": "if not user_id:\nraise ValueError(\"user_id is required\")",
+                          "successors": []
+                        },
+                        {
+                          "id": 6,
+                          "label": "if not get_client().is_initialized():",
+                          "successors": [
+                            {
+                              "id": 7,
+                              "label": "logger.warning(f\"LaunchDarkly not initialized, using default={default}\")\nis_enabled = default",
+                              "successors": []
+                            },
+                            {
+                              "id": 8,
+                              "label": "context = create_context(str(user_id))\nis_enabled = get_client().variation(flag_key, context, default)",
+                              "successors": []
+                            }
+                          ]
+                        },
+                        {
+                          "id": 9,
+                          "label": "if not is_enabled:\nraise HTTPException(status_code=404, detail=\"Feature not available\")",
+                          "successors": []
+                        },
+                        {
+                          "id": 11,
+                          "label": "return cast(T, func(*args, **kwargs))",
+                          "successors": []
+                        }
+                      ]
+                    },
+                    {
+                      "id": 12,
+                      "label": "except Exception as e:\nlogger.error(f\"Error evaluating feature flag {flag_key}: {e}\")\nraise",
+                      "successors": []
+                    }
                   ]
-                },
-                {
-                  "id": 4,
-                  "label": "if not get_client().is_initialized():\nlogger.warning(\n    f\"LaunchDarkly not initialized, using default={default}\"\n)\nis_enabled = default",
-                  "successors": [
-                    8
-                  ]
-                },
-                {
-                  "id": 6,
-                  "label": "except Exception as e:\n    logger.error(f\"Error evaluating feature flag {flag_key}: {e}\")\n    raise",
-                  "successors": []
-                },
-                {
-                  "id": 7,
-                  "label": "context = create_context(str(user_id))\nis_enabled = get_client().variation(flag_key, context, default)",
-                  "successors": [
-                    8
-                  ]
-                },
-                {
-                  "id": 8,
-                  "label": "if not is_enabled:\nraise HTTPException(status_code=404, detail=\"Feature not available\")",
-                  "successors": [
-                    6
-                  ]
-                },
-                {
-                  "id": 10,
-                  "label": "return cast(T, func(*args, **kwargs))",
-                  "successors": []
                 }
               ]
             }
           ],
           "classes": [],
-          "simplified_code": "    def decorator(\n        func: Callable[P, Union[T, Awaitable[T]]],\n    ) -> Callable[P, Union[T, Awaitable[T]]]:\n        @wraps(func)\n\n        @wraps(func)\n\n        return cast(\n            Callable[P, Union[T, Awaitable[T]]],\n            async_wrapper if asyncio.iscoroutinefunction(func) else sync_wrapper,\n        )\n\n    return decorator",
+          "simplified_code": "    def decorator(\n        func: Callable[P, Union[T, Awaitable[T]]],\n    ) -> Callable[P, Union[T, Awaitable[T]]]:\n        @wraps(func)\n\n        @wraps(func)\n                raise\n\n        return cast(\n            Callable[P, Union[T, Awaitable[T]]],\n            async_wrapper if asyncio.iscoroutinefunction(func) else sync_wrapper,\n        )\n\n    return decorator",
           "blocks": [
             {
               "id": 1,
-              "label": "def decorator(func: Callable[P, Union[T, Awaitable[T]]]) -> Callable[P, Union[T, Awaitable[T]]]:\n@wraps(func)\nreturn cast(Callable[P, Union[T, Awaitable[T]]], async_wrapper if asyncio.iscoroutinefunction(func) else sync_wrapper,)",
-              "successors": []
+              "label": "def decorator(\n    func: Callable[P, Union[T, Awaitable[T]]],\n) -> Callable[P, Union[T, Awaitable[T]]]:\n@wraps(func)",
+              "successors": [
+                {
+                  "id": 3,
+                  "label": "raise\nreturn cast(\n    Callable[P, Union[T, Awaitable[T]]],\n    async_wrapper if asyncio.iscoroutinefunction(func) else sync_wrapper,\n)",
+                  "successors": []
+                }
+              ]
             }
           ]
         }
@@ -225,8 +324,14 @@
       "blocks": [
         {
           "id": 1,
-          "label": "def feature_flag(flag_key: str, default: bool = False) -> Callable[[Callable[P, Union[T, Awaitable[T]]]], Callable[P, Union[T, Awaitable[T]]]]:\n\"\"\"\n    Decorator for feature flag protected endpoints.\n    \"\"\"\nreturn decorator",
-          "successors": []
+          "label": "def feature_flag(\n    flag_key: str,\n    default: bool = False,\n) -> Callable[\n    [Callable[P, Union[T, Awaitable[T]]]], Callable[P, Union[T, Awaitable[T]]]\n]:\n\"\"\"\nDecorator for feature flag protected endpoints.\n\"\"\"",
+          "successors": [
+            {
+              "id": 3,
+              "label": "return decorator",
+              "successors": []
+            }
+          ]
         }
       ]
     },
@@ -241,8 +346,14 @@
       "blocks": [
         {
           "id": 1,
-          "label": "def percentage_rollout(flag_key: str, default: bool = False) -> Callable[[Callable[P, Union[T, Awaitable[T]]]], Callable[P, Union[T, Awaitable[T]]]]:\n\"\"\"Decorator for percentage-based rollouts.\"\"\"\nreturn feature_flag(flag_key, default)",
-          "successors": []
+          "label": "def percentage_rollout(\n    flag_key: str,\n    default: bool = False,\n) -> Callable[\n    [Callable[P, Union[T, Awaitable[T]]]], Callable[P, Union[T, Awaitable[T]]]\n]:\n    \"\"\"Decorator for percentage-based rollouts.\"\"\"",
+          "successors": [
+            {
+              "id": 3,
+              "label": "    return feature_flag(flag_key, default)",
+              "successors": []
+            }
+          ]
         }
       ]
     },
@@ -257,8 +368,14 @@
       "blocks": [
         {
           "id": 1,
-          "label": "def beta_feature(flag_key: Optional[str] = None, unauthorized_response: Any = {'message': 'Not available in beta'}) -> Callable[[Callable[P, Union[T, Awaitable[T]]]], Callable[P, Union[T, Awaitable[T]]]]:\nactual_key = f'beta-{flag_key}' if flag_key else 'beta'\nreturn feature_flag(actual_key, False)",
-          "successors": []
+          "label": "def beta_feature(\n    flag_key: Optional[str] = None,\n    unauthorized_response: Any = {\"message\": \"Not available in beta\"},\n) -> Callable[\n    [Callable[P, Union[T, Awaitable[T]]]], Callable[P, Union[T, Awaitable[T]]]\n]:\n    \"\"\"Decorator for beta features.\"\"\"\n    actual_key = f\"beta-{flag_key}\" if flag_key else \"beta\"",
+          "successors": [
+            {
+              "id": 3,
+              "label": "    return feature_flag(actual_key, False)",
+              "successors": []
+            }
+          ]
         }
       ]
     },
@@ -273,19 +390,25 @@
       "blocks": [
         {
           "id": 1,
-          "label": "original_variation = get_client().variation\nget_client().variation = lambda key, context, default: (return_value if key == flag_key else original_variation(key, context, default))\ntry: yield\nfinally: get_client().variation = original_variation",
-          "successors": []
+          "label": "def mock_flag_variation(flag_key: str, return_value: Any):\n\"\"\"Context manager for testing feature flags.\"\"\"\noriginal_variation = get_client().variation\nget_client().variation = lambda key, context, default: (\n    return_value if key == flag_key else original_variation(key, context, default)\n)",
+          "successors": [
+            {
+              "id": 3,
+              "label": "try:\nyield",
+              "successors": [
+                {
+                  "id": 5,
+                  "label": "finally:\nget_client().variation = original_variation",
+                  "successors": []
+                }
+              ]
+            }
+          ]
         }
       ]
     }
   ],
   "classes": [],
   "simplified_code": "import asyncio\nimport contextlib\nimport logging\nfrom functools import wraps\nfrom typing import Any, Awaitable, Callable, Dict, Optional, TypeVar, Union, cast\n\nimport ldclient\nfrom fastapi import HTTPException\nfrom ldclient import Context, LDClient\nfrom ldclient.config import Config\nfrom typing_extensions import ParamSpec\n\nfrom .config import SETTINGS\n\nlogger = logging.getLogger(__name__)\nlogging.basicConfig(level=logging.DEBUG)\n\nP = ParamSpec(\"P\")\nT = TypeVar(\"T\")\n\n\n    return ldclient.get()\n\n\n        logger.error(\"LaunchDarkly client failed to initialize\")\n\n\n        logger.info(\"LaunchDarkly client closed successfully\")\n\n\n    return builder.build()\n\n\n    return decorator\n\n\n    return feature_flag(flag_key, default)\n\n\n    return feature_flag(actual_key, False)\n\n\n@contextlib.contextmanager\n        get_client().variation = original_variation",
-  "blocks": [
-    {
-      "id": 1,
-      "label": "import asyncio\nimport contextlib\nimport logging\nfrom functools import wraps\nfrom typing import Any, Awaitable, Callable, Dict, Optional, TypeVar, Union, cast\n\nimport ldclient\nfrom fastapi import HTTPException\nfrom ldclient import Context, LDClient\nfrom ldclient.config import Config\nfrom typing_extensions import ParamSpec\n\nfrom .config import SETTINGS\n\nlogger = logging.getLogger(__name__)\nlogging.basicConfig(level=logging.DEBUG)\n\nP = ParamSpec(\"P\")\nT = TypeVar(\"T\")\nldclient.get()\nlogger.error(\"LaunchDarkly client failed to initialize\")\nlogger.info(\"LaunchDarkly client closed successfully\")\nbuilder.build()\ndecorator\nfeature_flag(flag_key, default)\nfeature_flag(actual_key, False)\n@contextlib.contextmanager\n        get_client().variation = original_variation",
-      "successors": []
-    }
-  ]
+  "blocks": []
 }

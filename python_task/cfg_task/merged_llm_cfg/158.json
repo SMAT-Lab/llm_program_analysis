@@ -15,7 +15,7 @@
       "blocks": [
         {
           "id": 1,
-          "label": "settings = Settings()\nsettings.config.media_gcs_bucket_name = \"test-bucket\"\nsettings.config.google_application_credentials = \"test-credentials\"\nmonkeypatch.setattr(\"backend.server.v2.store.media.Settings\", lambda: settings)\nreturn settings",
+          "label": "settings = Settings()\\nsettings.config.media_gcs_bucket_name = \"test-bucket\"\\nsettings.config.google_application_credentials = \"test-credentials\"\\nmonkeypatch.setattr(\"backend.server.v2.store.media.Settings\", lambda: settings)\nreturn settings",
           "successors": []
         }
       ]
@@ -31,8 +31,20 @@
       "blocks": [
         {
           "id": 1,
-          "label": "mock_client = unittest.mock.MagicMock()\nmock_bucket = unittest.mock.MagicMock()\nmock_blob = unittest.mock.MagicMock()\nmock_client.bucket.return_value = mock_bucket\nmock_bucket.blob.return_value = mock_blob\nmock_blob.public_url = \"http://test-url/media/laptop.jpeg\"\nmocker.patch(\"google.cloud.storage.Client\", return_value=mock_client)\nreturn mock_client",
-          "successors": []
+          "label": "def mock_storage_client(mocker):\nmock_client = unittest.mock.MagicMock()\nmock_bucket = unittest.mock.MagicMock()\nmock_blob = unittest.mock.MagicMock()",
+          "successors": [
+            {
+              "id": 3,
+              "label": "mock_client.bucket.return_value = mock_bucket\nmock_bucket.blob.return_value = mock_blob\nmock_blob.public_url = \"http://test-url/media/laptop.jpeg\"\nmocker.patch(\"google.cloud.storage.Client\", return_value=mock_client)",
+              "successors": [
+                {
+                  "id": 5,
+                  "label": "return mock_client",
+                  "successors": []
+                }
+              ]
+            }
+          ]
         }
       ]
     },
@@ -47,8 +59,26 @@
       "blocks": [
         {
           "id": 1,
-          "label": "async def test_upload_media_success(mock_settings, mock_storage_client):\n# Create test JPEG data with valid signature\ntest_data = b\"\\xFF\\xD8\\xFF\" + b\"test data\"\n\ntest_file = fastapi.UploadFile(\n    filename=\"laptop.jpeg\",\n    file=io.BytesIO(test_data),\n    headers=starlette.datastructures.Headers({\"content-type\": \"image/jpeg\"}),\n)\nresult = await backend.server.v2.store.media.upload_media(\"test-user\", test_file)\nassert result == \"http://test-url/media/laptop.jpeg\"\nmock_bucket = mock_storage_client.bucket.return_value\nmock_blob = mock_bucket.blob.return_value\nmock_blob.upload_from_string.assert_called_once()",
-          "successors": []
+          "label": "async def test_upload_media_success(mock_settings, mock_storage_client):\n    test_data = b\"\\xFF\\xD8\\xFF\" + b\"test data\"",
+          "successors": [
+            {
+              "id": 3,
+              "label": "    test_file = fastapi.UploadFile(\n        filename=\"laptop.jpeg\",\n        file=io.BytesIO(test_data),\n        headers=starlette.datastructures.Headers({\"content-type\": \"image/jpeg\"}),\n    )\n    result = await backend.server.v2.store.media.upload_media(\"test-user\", test_file)",
+              "successors": [
+                {
+                  "id": 5,
+                  "label": "    assert result == \"http://test-url/media/laptop.jpeg\"\n    mock_bucket = mock_storage_client.bucket.return_value",
+                  "successors": [
+                    {
+                      "id": 7,
+                      "label": "    mock_blob = mock_bucket.blob.return_value\n    mock_blob.upload_from_string.assert_called_once()",
+                      "successors": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
         }
       ]
     },
@@ -63,15 +93,20 @@
       "blocks": [
         {
           "id": 1,
-          "label": "async def test_upload_media_invalid_type(mock_settings, mock_storage_client):\ntest_file = fastapi.UploadFile(...)\nwith pytest.raises(backend.server.v2.store.exceptions.InvalidFileTypeError):\nawait backend.server.v2.store.media.upload_media(\"test-user\", test_file)",
+          "label": "async def test_upload_media_invalid_type(mock_settings, mock_storage_client):\ntest_file = fastapi.UploadFile(\n    filename=\"test.txt\",\n    file=io.BytesIO(b\"test data\"),\n    headers=starlette.datastructures.Headers({\"content-type\": \"text/plain\"}),\n)",
           "successors": [
-            5
+            {
+              "id": 3,
+              "label": "with pytest.raises(backend.server.v2.store.exceptions.InvalidFileTypeError):\nawait backend.server.v2.store.media.upload_media(\"test-user\", test_file)",
+              "successors": [
+                {
+                  "id": 5,
+                  "label": "mock_bucket = mock_storage_client.bucket.return_value\nmock_blob = mock_bucket.blob.return_value\nmock_blob.upload_from_string.assert_not_called()",
+                  "successors": []
+                }
+              ]
+            }
           ]
-        },
-        {
-          "id": 5,
-          "label": "mock_bucket = mock_storage_client.bucket.return_value\nmock_blob = mock_bucket.blob.return_value\nmock_blob.upload_from_string.assert_not_called()",
-          "successors": []
         }
       ]
     },
@@ -86,8 +121,14 @@
       "blocks": [
         {
           "id": 1,
-          "label": "settings = Settings()\nsettings.config.media_gcs_bucket_name = \"\"\nsettings.config.google_application_credentials = \"\"\nmonkeypatch.setattr(\"backend.server.v2.store.media.Settings\", lambda: settings)\ntest_file = fastapi.UploadFile(\n    filename=\"laptop.jpeg\",\n    file=io.BytesIO(b\"\\xFF\\xD8\\xFF\" + b\"test data\"),\n    headers=starlette.datastructures.Headers({\"content-type\": \"image/jpeg\"}),\n)\nwith pytest.raises(backend.server.v2.store.exceptions.StorageConfigError):\nawait backend.server.v2.store.media.upload_media(\"test-user\", test_file)",
-          "successors": []
+          "label": "async def test_upload_media_missing_credentials(monkeypatch):\nsettings = Settings()\nsettings.config.media_gcs_bucket_name = \"\"\nsettings.config.google_application_credentials = \"\"\nmonkeypatch.setattr(\"backend.server.v2.store.media.Settings\", lambda: settings)\n\ntest_file = fastapi.UploadFile(\n    filename=\"laptop.jpeg\",\n    file=io.BytesIO(b\"\\xFF\\xD8\\xFF\" + b\"test data\"),  # Valid JPEG signature\n    headers=starlette.datastructures.Headers({\"content-type\": \"image/jpeg\"}),\n)",
+          "successors": [
+            {
+              "id": 3,
+              "label": "with pytest.raises(backend.server.v2.store.exceptions.StorageConfigError):\nawait backend.server.v2.store.media.upload_media(\"test-user\", test_file)",
+              "successors": []
+            }
+          ]
         }
       ]
     },
@@ -102,8 +143,26 @@
       "blocks": [
         {
           "id": 1,
-          "label": "async def test_upload_media_video_type(mock_settings, mock_storage_client):\ntest_file = fastapi.UploadFile(\n    filename=\"test.mp4\",\n    file=io.BytesIO(b\"\\x00\\x00\\x00\\x18ftypmp42\"),  # Valid MP4 signature\n    headers=starlette.datastructures.Headers({\"content-type\": \"video/mp4\"}),\n)\nresult = await backend.server.v2.store.media.upload_media(\"test-user\", test_file)\nassert result == \"http://test-url/media/laptop.jpeg\"\nmock_bucket = mock_storage_client.bucket.return_value\nmock_blob = mock_bucket.blob.return_value\nmock_blob.upload_from_string.assert_called_once()",
-          "successors": []
+          "label": "async def test_upload_media_video_type(mock_settings, mock_storage_client):\ntest_file = fastapi.UploadFile(\n    filename=\"test.mp4\",\n    file=io.BytesIO(b\"\\x00\\x00\\x00\\x18ftypmp42\"),  # Valid MP4 signature\n    headers=starlette.datastructures.Headers({\"content-type\": \"video/mp4\"}),\n)",
+          "successors": [
+            {
+              "id": 3,
+              "label": "result = await backend.server.v2.store.media.upload_media(\"test-user\", test_file)\nassert result == \"http://test-url/media/laptop.jpeg\"",
+              "successors": [
+                {
+                  "id": 5,
+                  "label": "mock_bucket = mock_storage_client.bucket.return_value\nmock_blob = mock_bucket.blob.return_value",
+                  "successors": [
+                    {
+                      "id": 7,
+                      "label": "mock_blob.upload_from_string.assert_called_once()",
+                      "successors": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
         }
       ]
     },
@@ -118,8 +177,14 @@
       "blocks": [
         {
           "id": 1,
-          "label": "async def test_upload_media_file_too_large(mock_settings, mock_storage_client):\nlarge_data = b\"\\xFF\\xD8\\xFF\" + b\"x\" * (50 * 1024 * 1024 + 1)\ntest_file = fastapi.UploadFile(filename=\"laptop.jpeg\", file=io.BytesIO(large_data), headers=starlette.datastructures.Headers({\"content-type\": \"image/jpeg\"}))\nwith pytest.raises(backend.server.v2.store.exceptions.FileSizeTooLargeError):\nawait backend.server.v2.store.media.upload_media(\"test-user\", test_file)",
-          "successors": []
+          "label": "async def test_upload_media_file_too_large(mock_settings, mock_storage_client):\nlarge_data = b\"\\xFF\\xD8\\xFF\" + b\"x\" * ( 50 * 1024 * 1024 + 1 )  # 50MB + 1 byte with valid JPEG signature\n    test_file = fastapi.UploadFile( filename=\"laptop.jpeg\", file=io.BytesIO(large_data), headers=starlette.datastructures.Headers({\"content-type\": \"image/jpeg\"}), )",
+          "successors": [
+            {
+              "id": 3,
+              "label": "with pytest.raises(backend.server.v2.store.exceptions.FileSizeTooLargeError):\nawait backend.server.v2.store.media.upload_media(\"test-user\", test_file)",
+              "successors": []
+            }
+          ]
         }
       ]
     },
@@ -134,8 +199,20 @@
       "blocks": [
         {
           "id": 1,
-          "label": "async def test_upload_media_file_read_error(mock_settings, mock_storage_client):\ntest_file = fastapi.UploadFile(filename=\"laptop.jpeg\", file=io.BytesIO(b\"\"), headers=starlette.datastructures.Headers({\"content-type\": \"image/jpeg\"}))\ntest_file.read = unittest.mock.AsyncMock(side_effect=Exception(\"Read error\"))\nwith pytest.raises(backend.server.v2.store.exceptions.FileReadError):\nawait backend.server.v2.store.media.upload_media(\"test-user\", test_file)",
-          "successors": []
+          "label": "async def test_upload_media_file_read_error(mock_settings, mock_storage_client):\ntest_file = fastapi.UploadFile(\n    filename=\"laptop.jpeg\",\n    file=io.BytesIO(b\"\"),  # Empty file that will raise error on read\n    headers=starlette.datastructures.Headers({\"content-type\": \"image/jpeg\"}),\n)",
+          "successors": [
+            {
+              "id": 3,
+              "label": "test_file.read = unittest.mock.AsyncMock(side_effect=Exception(\"Read error\"))\nwith pytest.raises(backend.server.v2.store.exceptions.FileReadError):",
+              "successors": [
+                {
+                  "id": 5,
+                  "label": "await backend.server.v2.store.media.upload_media(\"test-user\", test_file)",
+                  "successors": []
+                }
+              ]
+            }
+          ]
         }
       ]
     },
@@ -150,8 +227,14 @@
       "blocks": [
         {
           "id": 1,
-          "label": "test_file = fastapi.UploadFile(filename=\"test.png\", file=io.BytesIO(b\"\\x89PNG\\r\\n\\x1a\\n\"), headers=starlette.datastructures.Headers({\"content-type\": \"image/png\"}))\nresult = await backend.server.v2.store.media.upload_media(\"test-user\", test_file)\nassert result == \"http://test-url/media/laptop.jpeg\"",
-          "successors": []
+          "label": "async def test_upload_media_png_success(mock_settings, mock_storage_client):\n    test_file = fastapi.UploadFile(\n        filename=\"test.png\",\n        file=io.BytesIO(b\"\\x89PNG\\r\\n\\x1a\\n\"),  # Valid PNG signature\n        headers=starlette.datastructures.Headers({\"content-type\": \"image/png\"}),\n    )",
+          "successors": [
+            {
+              "id": 3,
+              "label": "    result = await backend.server.v2.store.media.upload_media(\"test-user\", test_file)\n    assert result == \"http://test-url/media/laptop.jpeg\"",
+              "successors": []
+            }
+          ]
         }
       ]
     },
@@ -166,8 +249,14 @@
       "blocks": [
         {
           "id": 1,
-          "label": "async def test_upload_media_gif_success(mock_settings, mock_storage_client):\ntest_file = fastapi.UploadFile(filename=\"test.gif\", file=io.BytesIO(b\"GIF89a\"), headers=starlette.datastructures.Headers({\"content-type\": \"image/gif\"}),)\nresult = await backend.server.v2.store.media.upload_media(\"test-user\", test_file)\nassert result == \"http://test-url/media/laptop.jpeg\"",
-          "successors": []
+          "label": "async def test_upload_media_gif_success(mock_settings, mock_storage_client):\ntest_file = fastapi.UploadFile(\n    filename=\"test.gif\",\n    file=io.BytesIO(b\"GIF89a\"),  # Valid GIF signature\n    headers=starlette.datastructures.Headers({\"content-type\": \"image/gif\"}),\n)",
+          "successors": [
+            {
+              "id": 3,
+              "label": "result = await backend.server.v2.store.media.upload_media(\"test-user\", test_file)\nassert result == \"http://test-url/media/laptop.jpeg\"",
+              "successors": []
+            }
+          ]
         }
       ]
     },
@@ -182,8 +271,14 @@
       "blocks": [
         {
           "id": 1,
-          "label": "async def test_upload_media_webp_success(mock_settings, mock_storage_client):\ntest_file = fastapi.UploadFile(filename=\"test.webp\", file=io.BytesIO(b\"RIFF\\x00\\x00\\x00\\x00WEBP\"), headers=starlette.datastructures.Headers({\"content-type\": \"image/webp\"}))\nresult = await backend.server.v2.store.media.upload_media(\"test-user\", test_file)\nassert result == \"http://test-url/media/laptop.jpeg\"",
-          "successors": []
+          "label": "async def test_upload_media_webp_success(mock_settings, mock_storage_client):\ntest_file = fastapi.UploadFile(\n    filename=\"test.webp\",\n    file=io.BytesIO(b\"RIFF\\x00\\x00\\x00\\x00WEBP\"),  # Valid WebP signature\n    headers=starlette.datastructures.Headers({\"content-type\": \"image/webp\"}),\n)",
+          "successors": [
+            {
+              "id": 3,
+              "label": "result = await backend.server.v2.store.media.upload_media(\"test-user\", test_file)\nassert result == \"http://test-url/media/laptop.jpeg\"",
+              "successors": []
+            }
+          ]
         }
       ]
     },
@@ -198,8 +293,14 @@
       "blocks": [
         {
           "id": 1,
-          "label": "async def test_upload_media_webm_success(mock_settings, mock_storage_client):\ntest_file = fastapi.UploadFile(filename=\"test.webm\", file=io.BytesIO(b\"\\x1a\\x45\\xdf\\xa3\"), headers=starlette.datastructures.Headers({\"content-type\": \"video/webm\"}))\nresult = await backend.server.v2.store.media.upload_media(\"test-user\", test_file)\nassert result == \"http://test-url/media/laptop.jpeg\"",
-          "successors": []
+          "label": "async def test_upload_media_webm_success(mock_settings, mock_storage_client):\n    test_file = fastapi.UploadFile(\n        filename=\"test.webm\",\n        file=io.BytesIO(b\"\\x1a\\x45\\xdf\\xa3\"),  # Valid WebM signature\n        headers=starlette.datastructures.Headers({\"content-type\": \"video/webm\"}),\n    )",
+          "successors": [
+            {
+              "id": 3,
+              "label": "    result = await backend.server.v2.store.media.upload_media(\"test-user\", test_file)\n    assert result == \"http://test-url/media/laptop.jpeg\"",
+              "successors": []
+            }
+          ]
         }
       ]
     },
@@ -214,8 +315,14 @@
       "blocks": [
         {
           "id": 1,
-          "label": "async def test_upload_media_mismatched_signature(mock_settings, mock_storage_client):\ntest_file = fastapi.UploadFile(filename=\"test.jpeg\", file=io.BytesIO(b\"\\x89PNG\\r\\n\\x1a\\n\"), headers=starlette.datastructures.Headers({\"content-type\": \"image/jpeg\"}))\nwith pytest.raises(backend.server.v2.store.exceptions.InvalidFileTypeError):\nawait backend.server.v2.store.media.upload_media(\"test-user\", test_file)",
-          "successors": []
+          "label": "async def test_upload_media_mismatched_signature(mock_settings, mock_storage_client):\ntest_file = fastapi.UploadFile(\n    filename=\"test.jpeg\",\n    file=io.BytesIO(b\"\\x89PNG\\r\\n\\x1a\\n\"),  # PNG signature with JPEG content type\n    headers=starlette.datastructures.Headers({\"content-type\": \"image/jpeg\"}),\n)",
+          "successors": [
+            {
+              "id": 3,
+              "label": "with pytest.raises(backend.server.v2.store.exceptions.InvalidFileTypeError):\nawait backend.server.v2.store.media.upload_media(\"test-user\", test_file)",
+              "successors": []
+            }
+          ]
         }
       ]
     },
@@ -230,61 +337,19 @@
       "blocks": [
         {
           "id": 1,
-          "label": "test_file = fastapi.UploadFile(...)\nwith pytest.raises(backend.server.v2.store.exceptions.InvalidFileTypeError):\nawait backend.server.v2.store.media.upload_media(\"test-user\", test_file)",
+          "label": "async def test_upload_media_invalid_signature(mock_settings, mock_storage_client):\ntest_file = fastapi.UploadFile(\n    filename=\"test.jpeg\",\n    file=io.BytesIO(b\"invalid signature\"),\n    headers=starlette.datastructures.Headers({\"content-type\": \"image/jpeg\"}),\n)",
           "successors": [
-            4
+            {
+              "id": 3,
+              "label": "with pytest.raises(backend.server.v2.store.exceptions.InvalidFileTypeError):\nawait backend.server.v2.store.media.upload_media(\"test-user\", test_file)",
+              "successors": []
+            }
           ]
-        },
-        {
-          "id": 4,
-          "label": "End",
-          "successors": []
         }
       ]
     }
   ],
   "classes": [],
   "simplified_code": "import io\nimport unittest.mock\n\nimport fastapi\nimport pytest\nimport starlette.datastructures\n\nimport backend.server.v2.store.exceptions\nimport backend.server.v2.store.media\nfrom backend.util.settings import Settings\n\n\n@pytest.fixture\n    return settings\n\n\n@pytest.fixture\n    return mock_client\n\n\n    mock_blob.upload_from_string.assert_called_once()\n\n\n    mock_blob.upload_from_string.assert_not_called()\n\n\n        await backend.server.v2.store.media.upload_media(\"test-user\", test_file)\n\n\n    mock_blob.upload_from_string.assert_called_once()\n\n\n        await backend.server.v2.store.media.upload_media(\"test-user\", test_file)\n\n\n        await backend.server.v2.store.media.upload_media(\"test-user\", test_file)\n\n\n    assert result == \"http://test-url/media/laptop.jpeg\"\n\n\n    assert result == \"http://test-url/media/laptop.jpeg\"\n\n\n    assert result == \"http://test-url/media/laptop.jpeg\"\n\n\n    assert result == \"http://test-url/media/laptop.jpeg\"\n\n\n        await backend.server.v2.store.media.upload_media(\"test-user\", test_file)\n\n\n        await backend.server.v2.store.media.upload_media(\"test-user\", test_file)",
-  "blocks": [
-    {
-      "id": 1,
-      "label": "import io\nimport unittest.mock\nimport fastapi\nimport pytest\nimport starlette.datastructures\nimport backend.server.v2.store.exceptions\nimport backend.server.v2.store.media\nfrom backend.util.settings import Settings\n@pytest.fixture\nreturn settings",
-      "successors": []
-    },
-    {
-      "id": 11,
-      "label": "@pytest.fixture\nreturn mock_client",
-      "successors": []
-    },
-    {
-      "id": 13,
-      "label": "mock_blob.upload_from_string.assert_called_once()",
-      "successors": [
-        14,
-        15
-      ]
-    },
-    {
-      "id": 14,
-      "label": "mock_blob.upload_from_string.assert_not_called()",
-      "successors": [
-        16
-      ]
-    },
-    {
-      "id": 15,
-      "label": "await backend.server.v2.store.media.upload_media(\"test-user\", test_file)",
-      "successors": [
-        14,
-        16
-      ]
-    },
-    {
-      "id": 16,
-      "label": "assert result == \"http://test-url/media/laptop.jpeg\"\nawait backend.server.v2.store.media.upload_media(\"test-user\", test_file)",
-      "successors": [
-        16
-      ]
-    }
-  ]
+  "blocks": []
 }

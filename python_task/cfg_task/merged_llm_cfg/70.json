@@ -15,8 +15,20 @@
       "blocks": [
         {
           "id": 1,
-          "label": "handler = _get_provider_oauth_handler(request, provider)\nrequested_scopes = scopes.split(\",\") if scopes else []\nstate_token = creds_manager.store.store_state_token(user_id, provider, requested_scopes)\nlogin_url = handler.get_login_url(requested_scopes, state_token)\nreturn LoginResponse(login_url=login_url, state_token=state_token)",
-          "successors": []
+          "label": "def login(provider: Annotated[ProviderName, Path(title=\"The provider to initiate an OAuth flow for\")], user_id: Annotated[str, Depends(get_user_id)], request: Request, scopes: Annotated[str, Query(title=\"Comma-separated list of authorization scopes\")] = \"\") -> LoginResponse:\n    handler = _get_provider_oauth_handler(request, provider)",
+          "successors": [
+            {
+              "id": 3,
+              "label": "    requested_scopes = scopes.split(\",\") if scopes else []\n    state_token = creds_manager.store.store_state_token(user_id, provider, requested_scopes)",
+              "successors": [
+                {
+                  "id": 5,
+                  "label": "    login_url = handler.get_login_url(requested_scopes, state_token)\n    return LoginResponse(login_url=login_url, state_token=state_token)",
+                  "successors": []
+                }
+              ]
+            }
+          ]
         }
       ]
     },
@@ -31,25 +43,47 @@
       "blocks": [
         {
           "id": 1,
-          "label": "logger.debug(f\"Received OAuth callback for provider: {provider}\")\nhandler = _get_provider_oauth_handler(request, provider)\nif not creds_manager.store.verify_state_token(user_id, state_token, provider):\nlogger.warning(f\"Invalid or expired state token for user {user_id}\")\nraise HTTPException(status_code=400, detail=\"Invalid or expired state token\")",
-          "successors": []
-        },
-        {
-          "id": 4,
-          "label": "try:\nscopes = creds_manager.store.get_any_valid_scopes_from_state_token(user_id, state_token, provider)\nlogger.debug(f\"Retrieved scopes from state token: {scopes}\")\nscopes = handler.handle_default_scopes(scopes)\ncredentials = handler.exchange_code_for_tokens(code, scopes)\nlogger.debug(f\"Received credentials with final scopes: {credentials.scopes}\")\nif not set(scopes).issubset(set(credentials.scopes)):\nlogger.warning(f\"Granted scopes {credentials.scopes} for provider {provider.value} do not include all requested scopes {scopes}\")",
+          "label": "def callback(\n    provider: Annotated[\n        ProviderName, Path(title=\"The target provider for this OAuth exchange\")\n    ],\n    code: Annotated[str, Body(title=\"Authorization code acquired by user login\")],\n    state_token: Annotated[str, Body(title=\"Anti-CSRF nonce\")],\n    user_id: Annotated[str, Depends(get_user_id)],\n    request: Request,\n) -> CredentialsMetaResponse:\n    logger.debug(f\"Received OAuth callback for provider: {provider}\")\n    handler = _get_provider_oauth_handler(request, provider)",
           "successors": [
-            10
+            {
+              "id": 3,
+              "label": "if not creds_manager.store.verify_state_token(user_id, state_token, provider):",
+              "successors": [
+                {
+                  "id": 4,
+                  "label": "    logger.warning(f\"Invalid or expired state token for user {user_id}\")\n    raise HTTPException(status_code=400, detail=\"Invalid or expired state token\")",
+                  "successors": []
+                },
+                {
+                  "id": 5,
+                  "label": "try:",
+                  "successors": [
+                    {
+                      "id": 6,
+                      "label": "    scopes = creds_manager.store.get_any_valid_scopes_from_state_token(\n        user_id, state_token, provider\n    )\n    logger.debug(f\"Retrieved scopes from state token: {scopes}\")\n\n    scopes = handler.handle_default_scopes(scopes)\n\n    credentials = handler.exchange_code_for_tokens(code, scopes)\n    logger.debug(f\"Received credentials with final scopes: {credentials.scopes}\")\nif not set(scopes).issubset(set(credentials.scopes)):",
+                      "successors": [
+                        {
+                          "id": 8,
+                          "label": "    logger.warning(\n        f\"Granted scopes {credentials.scopes} for provider {provider.value} \"\n        f\"do not include all requested scopes {scopes}\"\n    )",
+                          "successors": []
+                        }
+                      ]
+                    },
+                    {
+                      "id": 9,
+                      "label": "except Exception as e:\n    logger.error(f\"Code->Token exchange failed for provider {provider.value}: {e}\")\n    raise HTTPException(\n        status_code=400, detail=f\"Failed to exchange code for tokens: {str(e)}\"\n    )",
+                      "successors": []
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": 11,
+              "label": "creds_manager.create(user_id, credentials)\n\nlogger.debug(\n    f\"Successfully processed OAuth callback for user {user_id} \"\n    f\"and provider {provider.value}\"\n)\nreturn CredentialsMetaResponse(\n    id=credentials.id,\n    provider=credentials.provider,\n    type=credentials.type,\n    title=credentials.title,\n    scopes=credentials.scopes,\n    username=credentials.username,\n)",
+              "successors": []
+            }
           ]
-        },
-        {
-          "id": 10,
-          "label": "creds_manager.create(user_id, credentials)\nlogger.debug(f\"Successfully processed OAuth callback for user {user_id} and provider {provider.value}\")\nreturn CredentialsMetaResponse(id=credentials.id, provider=credentials.provider, type=credentials.type, title=credentials.title, scopes=credentials.scopes, username=credentials.username)",
-          "successors": []
-        },
-        {
-          "id": 11,
-          "label": "except Exception as e:\nlogger.error(f\"Code->Token exchange failed for provider {provider.value}: {e}\")\nraise HTTPException(status_code=400, detail=f\"Failed to exchange code for tokens: {str(e)}\")",
-          "successors": []
         }
       ]
     },
@@ -64,8 +98,14 @@
       "blocks": [
         {
           "id": 1,
-          "label": "credentials = creds_manager.store.get_all_creds(user_id)\nreturn [CredentialsMetaResponse(id=cred.id, provider=cred.provider, type=cred.type, title=cred.title, scopes=cred.scopes if isinstance(cred, OAuth2Credentials) else None, username=cred.username if isinstance(cred, OAuth2Credentials) else None,) for cred in credentials]",
-          "successors": []
+          "label": "def list_credentials(user_id: Annotated[str, Depends(get_user_id)]) -> list[CredentialsMetaResponse]:\ncredentials = creds_manager.store.get_all_creds(user_id)",
+          "successors": [
+            {
+              "id": 3,
+              "label": "return [\n    CredentialsMetaResponse(\n        id=cred.id,\n        provider=cred.provider,\n        type=cred.type,\n        title=cred.title,\n        scopes=cred.scopes if isinstance(cred, OAuth2Credentials) else None,\n        username=cred.username if isinstance(cred, OAuth2Credentials) else None,\n    )\n    for cred in credentials\n]",
+              "successors": []
+            }
+          ]
         }
       ]
     },
@@ -80,8 +120,14 @@
       "blocks": [
         {
           "id": 1,
-          "label": "credentials = creds_manager.store.get_creds_by_provider(user_id, provider)\nreturn [CredentialsMetaResponse(id=cred.id, provider=cred.provider, type=cred.type, title=cred.title, scopes=cred.scopes if isinstance(cred, OAuth2Credentials) else None, username=cred.username if isinstance(cred, OAuth2Credentials) else None) for cred in credentials]",
-          "successors": []
+          "label": "def list_credentials_by_provider(provider: Annotated[ProviderName, Path(title=\"The provider to list credentials for\")], user_id: Annotated[str, Depends(get_user_id)]) -> list[CredentialsMetaResponse]:\n    credentials = creds_manager.store.get_creds_by_provider(user_id, provider)",
+          "successors": [
+            {
+              "id": 3,
+              "label": "    return [\n        CredentialsMetaResponse(\n            id=cred.id,\n            provider=cred.provider,\n            type=cred.type,\n            title=cred.title,\n            scopes=cred.scopes if isinstance(cred, OAuth2Credentials) else None,\n            username=cred.username if isinstance(cred, OAuth2Credentials) else None,\n        )\n        for cred in credentials\n    ]",
+              "successors": []
+            }
+          ]
         }
       ]
     },
@@ -96,18 +142,30 @@
       "blocks": [
         {
           "id": 1,
-          "label": "credential = creds_manager.get(user_id, cred_id)\nif not credential:\nraise HTTPException(status_code=404, detail=\"Credentials not found\")",
-          "successors": []
-        },
-        {
-          "id": 4,
-          "label": "if credential.provider != provider:\nraise HTTPException(status_code=404, detail=\"Credentials do not match the specified provider\")",
-          "successors": []
-        },
-        {
-          "id": 6,
-          "label": "return credential",
-          "successors": []
+          "label": "def get_credential(provider: Annotated[ProviderName, Path(title=\"The provider to retrieve credentials for\")], cred_id: Annotated[str, Path(title=\"The ID of the credentials to retrieve\")], user_id: Annotated[str, Depends(get_user_id)]) -> Credentials:\n    credential = creds_manager.get(user_id, cred_id)\nif not credential:",
+          "successors": [
+            {
+              "id": 3,
+              "label": "raise HTTPException(status_code=404, detail=\"Credentials not found\")",
+              "successors": []
+            },
+            {
+              "id": 4,
+              "label": "if credential.provider != provider:",
+              "successors": [
+                {
+                  "id": 5,
+                  "label": "raise HTTPException(status_code=404, detail=\"Credentials do not match the specified provider\")",
+                  "successors": []
+                },
+                {
+                  "id": 6,
+                  "label": "return credential",
+                  "successors": []
+                }
+              ]
+            }
+          ]
         }
       ]
     },
@@ -122,13 +180,25 @@
       "blocks": [
         {
           "id": 1,
-          "label": "new_credentials = APIKeyCredentials(provider=provider, api_key=SecretStr(api_key), title=title, expires_at=expires_at)\ntry:\ncreds_manager.create(user_id, new_credentials)\nreturn new_credentials",
-          "successors": []
-        },
-        {
-          "id": 4,
-          "label": "except Exception as e:\nraise HTTPException(status_code=500, detail=f\"Failed to store credentials: {str(e)}\")",
-          "successors": []
+          "label": "def create_api_key_credentials(    user_id: Annotated[str, Depends(get_user_id)],    provider: Annotated[        ProviderName, Path(title=\"The provider to create credentials for\")    ],    api_key: Annotated[str, Body(title=\"The API key to store\")],    title: Annotated[str, Body(title=\"Optional title for the credentials\")],    expires_at: Annotated[        int | None, Body(title=\"Unix timestamp when the key expires\")    ] = None,) -> APIKeyCredentials:\nnew_credentials = APIKeyCredentials(    provider=provider,    api_key=SecretStr(api_key),    title=title,    expires_at=expires_at,)",
+          "successors": [
+            {
+              "id": 3,
+              "label": "try:\n    creds_manager.create(user_id, new_credentials)",
+              "successors": [
+                {
+                  "id": 4,
+                  "label": "except Exception as e:\n    raise HTTPException(        status_code=500, detail=f\"Failed to store credentials: {str(e)}\")\nreturn new_credentials",
+                  "successors": []
+                },
+                {
+                  "id": 5,
+                  "label": "return new_credentials",
+                  "successors": []
+                }
+              ]
+            }
+          ]
         }
       ]
     },
@@ -143,39 +213,57 @@
       "blocks": [
         {
           "id": 1,
-          "label": "creds = creds_manager.store.get_creds_by_id(user_id, cred_id)\nif not creds:\nraise HTTPException(status_code=404, detail=\"Credentials not found\")",
-          "successors": []
-        },
-        {
-          "id": 4,
-          "label": "if creds.provider != provider:\nraise HTTPException(\n    status_code=404, detail=\"Credentials do not match the specified provider\"\n)",
-          "successors": []
-        },
-        {
-          "id": 6,
-          "label": "try:\n    await remove_all_webhooks_for_credentials(creds, force)\nexcept NeedConfirmation as e:\n    return CredentialsDeletionNeedsConfirmationResponse(message=str(e))",
+          "label": "creds = creds_manager.store.get_creds_by_id(user_id, cred_id)\nif not creds:",
           "successors": [
-            11
-          ]
-        },
-        {
-          "id": 8,
-          "label": "creds_manager.delete(user_id, cred_id)\ntokens_revoked = None\nif isinstance(creds, OAuth2Credentials):",
-          "successors": [
-            11,
-            12
-          ]
-        },
-        {
-          "id": 11,
-          "label": "return CredentialsDeletionResponse(revoked=tokens_revoked)",
-          "successors": []
-        },
-        {
-          "id": 12,
-          "label": "handler = _get_provider_oauth_handler(request, provider)\n    tokens_revoked = handler.revoke_tokens(creds)",
-          "successors": [
-            11
+            {
+              "id": 3,
+              "label": "raise HTTPException(status_code=404, detail=\"Credentials not found\")",
+              "successors": []
+            },
+            {
+              "id": 4,
+              "label": "if creds.provider != provider:",
+              "successors": [
+                {
+                  "id": 5,
+                  "label": "raise HTTPException(\n    status_code=404, detail=\"Credentials do not match the specified provider\"\n)",
+                  "successors": []
+                },
+                {
+                  "id": 6,
+                  "label": "try:",
+                  "successors": [
+                    {
+                      "id": 7,
+                      "label": "await remove_all_webhooks_for_credentials(creds, force)\ncreds_manager.delete(user_id, cred_id)",
+                      "successors": [
+                        {
+                          "id": 10,
+                          "label": "tokens_revoked = None\nif isinstance(creds, OAuth2Credentials):",
+                          "successors": [
+                            {
+                              "id": 12,
+                              "label": "handler = _get_provider_oauth_handler(request, provider)\ntokens_revoked = handler.revoke_tokens(creds)\nreturn CredentialsDeletionResponse(revoked=tokens_revoked)",
+                              "successors": []
+                            },
+                            {
+                              "id": 13,
+                              "label": "return CredentialsDeletionResponse(revoked=tokens_revoked)",
+                              "successors": []
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "id": 8,
+                      "label": "except NeedConfirmation as e:\nreturn CredentialsDeletionNeedsConfirmationResponse(message=str(e))",
+                      "successors": []
+                    }
+                  ]
+                }
+              ]
+            }
           ]
         }
       ]
@@ -191,44 +279,71 @@
       "blocks": [
         {
           "id": 1,
-          "label": "logger.debug(f\"Received {provider.value} webhook ingress for ID {webhook_id}\")\nwebhook_manager = WEBHOOK_MANAGERS_BY_NAME[provider]()\nwebhook = await get_webhook(webhook_id)\nlogger.debug(f\"Webhook #{webhook_id}: {webhook}\")\npayload, event_type = await webhook_manager.validate_payload(webhook, request)\nlogger.debug(f\"Validated {provider.value} {webhook.webhook_type} {event_type} event with payload {payload}\")\nwebhook_event = WebhookEvent(provider=provider, webhook_id=webhook_id, event_type=event_type, payload=payload)\nawait publish_webhook_event(webhook_event)\nlogger.debug(f\"Webhook event published: {webhook_event}\")\nif not webhook.attached_nodes:",
+          "label": "logger.debug(f\"Received {provider.value} webhook ingress for ID {webhook_id}\")\nwebhook_manager = WEBHOOK_MANAGERS_BY_NAME[provider]()",
           "successors": [
-            14,
-            11
-          ]
-        },
-        {
-          "id": 11,
-          "label": "return",
-          "successors": []
-        },
-        {
-          "id": 13,
-          "label": "for node in webhook.attached_nodes:",
-          "successors": [
-            14,
-            15
-          ]
-        },
-        {
-          "id": 14,
-          "label": "logger.debug(f\"Webhook-attached node: {node}\")",
-          "successors": [
-            15
-          ]
-        },
-        {
-          "id": 15,
-          "label": "if not node.is_triggered_by_event_type(event_type):\nlogger.debug(f\"Node #{node.id} doesn't trigger on event {event_type}\")\ncontinue",
-          "successors": [
-            13
-          ]
-        },
-        {
-          "id": 18,
-          "label": "logger.debug(f\"Executing graph #{node.graph_id} node #{node.id}\")\nexecutor.add_execution(node.graph_id, data={f\"webhook_{webhook_id}_payload\": payload}, user_id=webhook.user_id)",
-          "successors": [
-            13
+            {
+              "id": 3,
+              "label": "webhook = await get_webhook(webhook_id)\nlogger.debug(f\"Webhook #{webhook_id}: {webhook}\")",
+              "successors": [
+                {
+                  "id": 5,
+                  "label": "payload, event_type = await webhook_manager.validate_payload(webhook, request)\nlogger.debug(f\"Validated {provider.value} {webhook.webhook_type} {event_type} event with payload {payload}\")",
+                  "successors": [
+                    {
+                      "id": 7,
+                      "label": "webhook_event = WebhookEvent(provider=provider, webhook_id=webhook_id, event_type=event_type, payload=payload)\nawait publish_webhook_event(webhook_event)",
+                      "successors": [
+                        {
+                          "id": 9,
+                          "label": "logger.debug(f\"Webhook event published: {webhook_event}\")",
+                          "successors": [
+                            {
+                              "id": 10,
+                              "label": "if not webhook.attached_nodes:\nreturn",
+                              "successors": []
+                            },
+                            {
+                              "id": 12,
+                              "label": "executor = get_service_client(ExecutionManager)",
+                              "successors": [
+                                {
+                                  "id": 13,
+                                  "label": "for node in webhook.attached_nodes:",
+                                  "successors": [
+                                    {
+                                      "id": 14,
+                                      "label": "logger.debug(f\"Webhook-attached node: {node}\")",
+                                      "successors": [
+                                        {
+                                          "id": 15,
+                                          "label": "if not node.is_triggered_by_event_type(event_type):\nlogger.debug(f\"Node #{node.id} doesn't trigger on event {event_type}\")",
+                                          "successors": [
+                                            {
+                                              "id": 17,
+                                              "label": "continue",
+                                              "successors": []
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "id": 18,
+                                          "label": "logger.debug(f\"Executing graph #{node.graph_id} node #{node.id}\")\nexecutor.add_execution(node.graph_id, data={f\"webhook_{webhook_id}_payload\": payload}, user_id=webhook.user_id)",
+                                          "successors": []
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
           ]
         }
       ]
@@ -244,18 +359,31 @@
       "blocks": [
         {
           "id": 1,
-          "label": "webhook = await get_webhook(webhook_id); webhook_manager = WEBHOOK_MANAGERS_BY_NAME[webhook.provider](); credentials = (creds_manager.get(user_id, webhook.credentials_id) if webhook.credentials_id else None)\ntry:\nawait webhook_manager.trigger_ping(webhook, credentials)\nif not await wait_for_webhook_event(webhook_id, event_type=\"ping\", timeout=10):\nraise HTTPException(status_code=504, detail=\"Webhook ping timed out\")",
-          "successors": []
-        },
-        {
-          "id": 4,
-          "label": "except NotImplementedError: return False",
-          "successors": []
-        },
-        {
-          "id": 7,
-          "label": "return True",
-          "successors": []
+          "label": "async def webhook_ping(\n    webhook_id: Annotated[str, Path(title=\"Our ID for the webhook\")],\n    user_id: Annotated[str, Depends(get_user_id)],  # require auth\n):\n    webhook = await get_webhook(webhook_id)\n    webhook_manager = WEBHOOK_MANAGERS_BY_NAME[webhook.provider]()\n\n    credentials = (\n        creds_manager.get(user_id, webhook.credentials_id)\n        if webhook.credentials_id\n        else None\n    )",
+          "successors": [
+            {
+              "id": 2,
+              "label": "try:\n        await webhook_manager.trigger_ping(webhook, credentials)\nexcept NotImplementedError:\n        return False",
+              "successors": [
+                {
+                  "id": 6,
+                  "label": "if not await wait_for_webhook_event(webhook_id, event_type=\"ping\", timeout=10):\n        raise HTTPException(status_code=504, detail=\"Webhook ping timed out\")\nreturn True",
+                  "successors": []
+                }
+              ]
+            },
+            {
+              "id": 4,
+              "label": "await webhook_manager.trigger_ping(webhook, credentials)\nif not await wait_for_webhook_event(webhook_id, event_type=\"ping\", timeout=10):\n        raise HTTPException(status_code=504, detail=\"Webhook ping timed out\")",
+              "successors": [
+                {
+                  "id": 7,
+                  "label": "return True",
+                  "successors": []
+                }
+              ]
+            }
+          ]
         }
       ]
     },
@@ -270,32 +398,65 @@
       "blocks": [
         {
           "id": 1,
-          "label": "webhooks = await get_all_webhooks_by_creds(credentials.id)\nif credentials.provider not in WEBHOOK_MANAGERS_BY_NAME:\nif webhooks:\nlogger.error(f\"Credentials #{credentials.id} for provider {credentials.provider} are attached to {len(webhooks)} webhooks, but there is no available WebhooksHandler for {credentials.provider}\")",
+          "label": "webhooks = await get_all_webhooks_by_creds(credentials.id)",
           "successors": [
-            5
+            {
+              "id": 2,
+              "label": "if credentials.provider not in WEBHOOK_MANAGERS_BY_NAME:\nif webhooks:",
+              "successors": [
+                {
+                  "id": 4,
+                  "label": "logger.error(\n    f\"Credentials #{credentials.id} for provider {credentials.provider} \"\n    f\"are attached to {len(webhooks)} webhooks, \"\n    f\"but there is no available WebhooksHandler for {credentials.provider}\"\n)\nreturn",
+                  "successors": []
+                },
+                {
+                  "id": 5,
+                  "label": "return",
+                  "successors": []
+                }
+              ]
+            },
+            {
+              "id": 6,
+              "label": "if any(w.attached_nodes for w in webhooks) and not force:\nraise NeedConfirmation(\n    \"Some webhooks linked to these credentials are still in use by an agent\"\n)",
+              "successors": []
+            },
+            {
+              "id": 8,
+              "label": "for webhook in webhooks:",
+              "successors": [
+                {
+                  "id": 9,
+                  "label": "# Unlink all nodes\nfor node in webhook.attached_nodes or []:\n    await set_node_webhook(node.id, None)\n# Prune the webhook\nwebhook_manager = WEBHOOK_MANAGERS_BY_NAME[credentials.provider]()\nsuccess = await webhook_manager.prune_webhook_if_dangling(\n    webhook.id, credentials\n)",
+                  "successors": [
+                    {
+                      "id": 11,
+                      "label": "if not success:\nlogger.warning(f\"Webhook #{webhook.id} failed to prune\")",
+                      "successors": [
+                        {
+                          "id": 8,
+                          "label": "for webhook in webhooks:",
+                          "successors": [
+                            {
+                              "id": 9,
+                              "label": "# Unlink all nodes\nfor node in webhook.attached_nodes or []:\n    await set_node_webhook(node.id, None)\n# Prune the webhook\nwebhook_manager = WEBHOOK_MANAGERS_BY_NAME[credentials.provider]()\nsuccess = await webhook_manager.prune_webhook_if_dangling(\n    webhook.id, credentials\n)",
+                              "successors": [
+                                {
+                                  "id": 11,
+                                  "label": "if not success:\nlogger.warning(f\"Webhook #{webhook.id} failed to prune\")",
+                                  "successors": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
           ]
-        },
-        {
-          "id": 5,
-          "label": "return",
-          "successors": []
-        },
-        {
-          "id": 6,
-          "label": "if any(w.attached_nodes for w in webhooks) and not force:\nraise NeedConfirmation(\"Some webhooks linked to these credentials are still in use by an agent\")",
-          "successors": []
-        },
-        {
-          "id": 8,
-          "label": "for webhook in webhooks:\nfor node in webhook.attached_nodes or []:\n await set_node_webhook(node.id, None)\nwebhook_manager = WEBHOOK_MANAGERS_BY_NAME[credentials.provider]()\nsuccess = await webhook_manager.prune_webhook_if_dangling(webhook.id, credentials)\nif not success:\nlogger.warning(f\"Webhook #{webhook.id} failed to prune\")",
-          "successors": [
-            14
-          ]
-        },
-        {
-          "id": 14,
-          "label": "",
-          "successors": []
         }
       ]
     },
@@ -310,18 +471,30 @@
       "blocks": [
         {
           "id": 1,
-          "label": "if provider_name not in HANDLERS_BY_NAME:\nraise HTTPException(status_code=404, detail=f\"Provider '{provider_name.value}' does not support OAuth\")",
-          "successors": []
-        },
-        {
-          "id": 3,
-          "label": "client_id = getattr(settings.secrets, f\"{provider_name.value}_client_id\")\nclient_secret = getattr(settings.secrets, f\"{provider_name.value}_client_secret\")\nif not (client_id and client_secret):\nraise HTTPException(status_code=501, detail=(f\"Integration with provider '{provider_name.value}' is not configured\"))",
-          "successors": []
-        },
-        {
-          "id": 7,
-          "label": "handler_class = HANDLERS_BY_NAME[provider_name]\nfrontend_base_url = (settings.config.frontend_base_url or settings.config.platform_base_url or str(req.base_url))\nreturn handler_class(client_id=client_id, client_secret=client_secret, redirect_uri=f\"{frontend_base_url}/auth/integrations/oauth_callback\")",
-          "successors": []
+          "label": "def _get_provider_oauth_handler(\n    req: Request, provider_name: ProviderName\n) -> \"BaseOAuthHandler\":",
+          "successors": [
+            {
+              "id": 2,
+              "label": "if provider_name not in HANDLERS_BY_NAME:\nraise HTTPException(\n    status_code=404,\n    detail=f\"Provider '{provider_name.value}' does not support OAuth\",\n)",
+              "successors": []
+            },
+            {
+              "id": 4,
+              "label": "client_id = getattr(settings.secrets, f\"{provider_name.value}_client_id\")\nclient_secret = getattr(settings.secrets, f\"{provider_name.value}_client_secret\")",
+              "successors": [
+                {
+                  "id": 5,
+                  "label": "if not (client_id and client_secret):\nraise HTTPException(\n    status_code=501,\n    detail=(\n        f\"Integration with provider '{provider_name.value}' is not configured\"\n    ),\n)",
+                  "successors": []
+                },
+                {
+                  "id": 7,
+                  "label": "handler_class = HANDLERS_BY_NAME[provider_name]\nfrontend_base_url = (\n    settings.config.frontend_base_url\n    or settings.config.platform_base_url\n    or str(req.base_url)\n)\nreturn handler_class(\n    client_id=client_id,\n    client_secret=client_secret,\n    redirect_uri=f\"{frontend_base_url}/auth/integrations/oauth_callback\",\n)",
+                  "successors": []
+                }
+              ]
+            }
+          ]
         }
       ]
     }
@@ -338,7 +511,7 @@
       "blocks": [
         {
           "id": 1,
-          "label": "class LoginResponse(BaseModel):",
+          "label": "class LoginResponse(BaseModel):\n    login_url: str\n    state_token: str",
           "successors": []
         }
       ]
@@ -354,8 +527,26 @@
       "blocks": [
         {
           "id": 1,
-          "label": "class CredentialsMetaResponse(BaseModel):\nid: str\nprovider: str\ntype: CredentialsType\ntitle: str | None\nscopes: list[str] | None\nusername: str | None",
-          "successors": []
+          "label": "class CredentialsMetaResponse(BaseModel):\n    id: str",
+          "successors": [
+            {
+              "id": 3,
+              "label": "    provider: str\n    type: CredentialsType",
+              "successors": [
+                {
+                  "id": 5,
+                  "label": "    title: str | None\n    scopes: list[str] | None",
+                  "successors": [
+                    {
+                      "id": 7,
+                      "label": "    username: str | None",
+                      "successors": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
         }
       ]
     },
@@ -370,15 +561,14 @@
       "blocks": [
         {
           "id": 1,
-          "label": "class CredentialsDeletionResponse(BaseModel):\ndeleted: Literal[True] = True",
+          "label": "class CredentialsDeletionResponse(BaseModel):\n    deleted: Literal[True] = True",
           "successors": [
-            3
+            {
+              "id": 3,
+              "label": "    revoked: bool | None = Field(     description=\"Indicates whether the credentials were also revoked by their \"     \"provider. `None`/`null` if not applicable, e.g. when deleting \"     \"non-revocable credentials such as API keys.\")",
+              "successors": []
+            }
           ]
-        },
-        {
-          "id": 3,
-          "label": "revoked: bool | None = Field(...)",
-          "successors": []
         }
       ]
     },
@@ -393,18 +583,58 @@
       "blocks": [
         {
           "id": 1,
-          "label": "class CredentialsDeletionNeedsConfirmationResponse(BaseModel):\ndeleted: Literal[False] = False\nneed_confirmation: Literal[True] = True\nmessage: str",
-          "successors": []
+          "label": "class CredentialsDeletionNeedsConfirmationResponse(BaseModel):",
+          "successors": [
+            {
+              "id": 2,
+              "label": "    deleted: Literal[False] = False",
+              "successors": []
+            },
+            {
+              "id": 3,
+              "label": "    need_confirmation: Literal[True] = True",
+              "successors": []
+            },
+            {
+              "id": 4,
+              "label": "    message: str",
+              "successors": []
+            }
+          ]
         }
       ]
     }
   ],
-  "simplified_code": "import logging\nfrom typing import TYPE_CHECKING, Annotated, Literal\n\nfrom fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Request\nfrom pydantic import BaseModel, Field, SecretStr\n\nfrom backend.data.graph import set_node_webhook\nfrom backend.data.integrations import (\n    WebhookEvent,\n    get_all_webhooks_by_creds,\n    get_webhook,\n    publish_webhook_event,\n    wait_for_webhook_event,\n)\nfrom backend.data.model import (\n    APIKeyCredentials,\n    Credentials,\n    CredentialsType,\n    OAuth2Credentials,\n)\nfrom backend.executor.manager import ExecutionManager\nfrom backend.integrations.creds_manager import IntegrationCredentialsManager\nfrom backend.integrations.oauth import HANDLERS_BY_NAME\nfrom backend.integrations.providers import ProviderName\nfrom backend.integrations.webhooks import WEBHOOK_MANAGERS_BY_NAME\nfrom backend.util.exceptions import NeedConfirmation\nfrom backend.util.service import get_service_client\nfrom backend.util.settings import Settings\n\nif TYPE_CHECKING:\n    from backend.integrations.oauth import BaseOAuthHandler\n\nfrom ..utils import get_user_id\n\nlogger = logging.getLogger(__name__)\nsettings = Settings()\nrouter = APIRouter()\n\ncreds_manager = IntegrationCredentialsManager()\n\n\n    state_token: str\n\n\n@router.get(\"/{provider}/login\")\n    return LoginResponse(login_url=login_url, state_token=state_token)\n\n\n    username: str | None\n\n\n@router.post(\"/{provider}/callback\")\n    )\n\n\n@router.get(\"/credentials\")\n    ]\n\n\n@router.get(\"/{provider}/credentials\")\n    ]\n\n\n@router.get(\"/{provider}/credentials/{cred_id}\")\n    return credential\n\n\n@router.post(\"/{provider}/credentials\", status_code=201)\n    return new_credentials\n\n\n    )\n\n\n    message: str\n\n\n@router.delete(\"/{provider}/credentials/{cred_id}\")\n    return CredentialsDeletionResponse(revoked=tokens_revoked)\n\n\n# ------------------------- WEBHOOK STUFF -------------------------- #\n\n\n# \u26a0\ufe0f Note\n# No user auth check because this endpoint is for webhook ingress and relies on\n# validation by the provider-specific `WebhooksManager`.\n@router.post(\"/{provider}/webhooks/{webhook_id}/ingress\")\n        )\n\n\n@router.post(\"/webhooks/{webhook_id}/ping\")\n    return True\n\n\n# --------------------------- UTILITIES ---------------------------- #\n\n\n\n\n    )",
+  "simplified_code": "import logging\nfrom typing import TYPE_CHECKING, Annotated, Literal\n\nfrom fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Request\nfrom pydantic import BaseModel, Field, SecretStr\n\nfrom backend.data.graph import set_node_webhook\nfrom backend.data.integrations import (\n    WebhookEvent,\n    get_all_webhooks_by_creds,\n    get_webhook,\n    publish_webhook_event,\n    wait_for_webhook_event,\n)\nfrom backend.data.model import (\n    APIKeyCredentials,\n    Credentials,\n    CredentialsType,\n    OAuth2Credentials,\n)\nfrom backend.executor.manager import ExecutionManager\nfrom backend.integrations.creds_manager import IntegrationCredentialsManager\nfrom backend.integrations.oauth import HANDLERS_BY_NAME\nfrom backend.integrations.providers import ProviderName\nfrom backend.integrations.webhooks import WEBHOOK_MANAGERS_BY_NAME\nfrom backend.util.exceptions import NeedConfirmation\nfrom backend.util.service import get_service_client\nfrom backend.util.settings import Settings\n\nif TYPE_CHECKING:\n    from backend.integrations.oauth import BaseOAuthHandler\n\nfrom ..utils import get_user_id\n\nlogger = logging.getLogger(__name__)\nsettings = Settings()\nrouter = APIRouter()\n\ncreds_manager = IntegrationCredentialsManager()\n\n\n    state_token: str\n\n\n@router.get(\"/{provider}/login\")\n    return LoginResponse(login_url=login_url, state_token=state_token)\n\n\n    username: str | None\n\n\n@router.post(\"/{provider}/callback\")\n    )\n\n\n@router.get(\"/credentials\")\n    ]\n\n\n@router.get(\"/{provider}/credentials\")\n    ]\n\n\n@router.get(\"/{provider}/credentials/{cred_id}\")\n    return credential\n\n\n@router.post(\"/{provider}/credentials\", status_code=201)\n    return new_credentials\n\n\n    )\n\n\n    message: str\n\n\n@router.delete(\"/{provider}/credentials/{cred_id}\")\n    return CredentialsDeletionResponse(revoked=tokens_revoked)\n\n\n# ------------------------- WEBHOOK STUFF -------------------------- #\n\n\n# ⚠️ Note\n# No user auth check because this endpoint is for webhook ingress and relies on\n# validation by the provider-specific `WebhooksManager`.\n@router.post(\"/{provider}/webhooks/{webhook_id}/ingress\")\n        )\n\n\n@router.post(\"/webhooks/{webhook_id}/ping\")\n    return True\n\n\n# --------------------------- UTILITIES ---------------------------- #\n\n\n\n\n    )",
   "blocks": [
     {
       "id": 1,
-      "label": "import logging\nfrom typing import TYPE_CHECKING, Annotated, Literal\nfrom fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Request\nfrom pydantic import BaseModel, Field, SecretStr\nfrom backend.data.graph import set_node_webhook\nfrom backend.data.integrations import ( WebhookEvent, get_all_webhooks_by_creds, get_webhook, publish_webhook_event, wait_for_webhook_event, )\nfrom backend.data.model import ( APIKeyCredentials, Credentials, CredentialsType, OAuth2Credentials, )\nfrom backend.executor.manager import ExecutionManager\nfrom backend.integrations.creds_manager import IntegrationCredentialsManager\nfrom backend.integrations.oauth import HANDLERS_BY_NAME\nfrom backend.integrations.providers import ProviderName\nfrom backend.integrations.webhooks import WEBHOOK_MANAGERS_BY_NAME\nfrom backend.util.exceptions import NeedConfirmation\nfrom backend.util.service import get_service_client\nfrom backend.util.settings import Settings\nif TYPE_CHECKING: from backend.integrations.oauth import BaseOAuthHandler\nfrom ..utils import get_user_id\nlogger = logging.getLogger(__name__)\nsettings = Settings()\nrouter = APIRouter()\ncreds_manager = IntegrationCredentialsManager()\n@router.get(\"/{provider}/login\") return LoginResponse(login_url=login_url, state_token=state_token)\n@router.post(\"/{provider}/callback\")\n@router.get(\"/credentials\")\n@router.get(\"/{provider}/credentials\")\n@router.get(\"/{provider}/credentials/{cred_id}\") return credential\n@router.post(\"/{provider}/credentials\", status_code=201) return new_credentials\n@router.delete(\"/{provider}/credentials/{cred_id}\") return CredentialsDeletionResponse(revoked=tokens_revoked)\n# ------------------------- WEBHOOK STUFF -------------------------- #\n@router.post(\"/{provider}/webhooks/{webhook_id}/ingress\")\n@router.post(\"/webhooks/{webhook_id}/ping\") return True",
-      "successors": []
+      "label": "import logging\nfrom typing import TYPE_CHECKING, Annotated, Literal\n\nfrom fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Request\nfrom pydantic import BaseModel, Field, SecretStr\n\nfrom backend.data.graph import set_node_webhook\nfrom backend.data.integrations import (\n    WebhookEvent,\n    get_all_webhooks_by_creds,\n    get_webhook,\n    publish_webhook_event,\n    wait_for_webhook_event,\n)\nfrom backend.data.model import (\n    APIKeyCredentials,\n    Credentials,\n    CredentialsType,\n    OAuth2Credentials,\n)\nfrom backend.executor.manager import ExecutionManager\nfrom backend.integrations.creds_manager import IntegrationCredentialsManager\nfrom backend.integrations.oauth import HANDLERS_BY_NAME\nfrom backend.integrations.providers import ProviderName\nfrom backend.integrations.webhooks import WEBHOOK_MANAGERS_BY_NAME\nfrom backend.util.exceptions import NeedConfirmation\nfrom backend.util.service import get_service_client\nfrom backend.util.settings import Settings\n\nif TYPE_CHECKING:\n    from backend.integrations.oauth import BaseOAuthHandler\n\nfrom ..utils import get_user_id\n\nlogger = logging.getLogger(__name__)\nsettings = Settings()\nrouter = APIRouter()\n\ncreds_manager = IntegrationCredentialsManager()\n@router.get(\"/{provider}/login\")\n    return LoginResponse(login_url=login_url, state_token=state_token)",
+      "successors": [
+        {
+          "id": 3,
+          "label": "@router.post(\"/{provider}/callback\")\n@router.get(\"/credentials\")",
+          "successors": [
+            {
+              "id": 5,
+              "label": "@router.get(\"/{provider}/credentials\")\n@router.get(\"/{provider}/credentials/{cred_id}\")\n    return credential",
+              "successors": [
+                {
+                  "id": 7,
+                  "label": "@router.post(\"/{provider}/credentials\", status_code=201)\n    return new_credentials\n@router.delete(\"/{provider}/credentials/{cred_id}\")\n    return CredentialsDeletionResponse(revoked=tokens_revoked)",
+                  "successors": [
+                    {
+                      "id": 9,
+                      "label": "@router.post(\"/{provider}/webhooks/{webhook_id}/ingress\")\n@router.post(\"/webhooks/{webhook_id}/ping\")\n    return True",
+                      "successors": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
     }
   ]
 }

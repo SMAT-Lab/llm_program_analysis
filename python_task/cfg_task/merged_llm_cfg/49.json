@@ -22,7 +22,7 @@
           "blocks": [
             {
               "id": 1,
-              "label": "def __init__(self):\nsuper().__init__(...)",
+              "label": "def __init__(self):\nsuper().__init__(\n    id=\"acf7625e-d2cb-4941-bfeb-2819fc6fc015\",\n    input_schema=ReadCsvBlock.Input,\n    output_schema=ReadCsvBlock.Output,\n    description=\"Reads a CSV file and outputs the data as a list of dictionaries and individual rows via rows.\",\n    contributors=[ContributorDetails(name=\"Nicholas Tindle\")],\n    categories={BlockCategory.TEXT, BlockCategory.DATA},\n    test_input={\n        \"contents\": \"a, b, c\\n1,2,3\\n4,5,6\",\n    },\n    test_output=[\n        (\"row\", {\"a\": \"1\", \"b\": \"2\", \"c\": \"3\"}),\n        (\"row\", {\"a\": \"4\", \"b\": \"5\", \"c\": \"6\"}),\n        (\n            \"all_data\",\n            [\n                {\"a\": \"1\", \"b\": \"2\", \"c\": \"3\"},\n                {\"a\": \"4\", \"b\": \"5\", \"c\": \"6\"},\n            ],\n        ),\n    ],\n)",
               "successors": []
             }
           ]
@@ -44,22 +44,42 @@
               "blocks": [
                 {
                   "id": 1,
-                  "label": "data = {}\nfor i, value in enumerate(row):\nif i not in input_data.skip_columns:\nif input_data.has_header and header:\ndata[header[i]] = value.strip() if input_data.strip else value",
+                  "label": "def process_row(row):\ndata = {}",
                   "successors": [
-                    7
+                    {
+                      "id": 3,
+                      "label": "for i, value in enumerate(row):",
+                      "successors": [
+                        {
+                          "id": 4,
+                          "label": "if i not in input_data.skip_columns:\nif input_data.has_header and header:",
+                          "successors": [
+                            {
+                              "id": 6,
+                              "label": "data[header[i]] = value.strip() if input_data.strip else value\nreturn data",
+                              "successors": []
+                            },
+                            {
+                              "id": 7,
+                              "label": "else:\ndata[str(i)] = value.strip() if input_data.strip else value",
+                              "successors": [
+                                {
+                                  "id": 9,
+                                  "label": "return data",
+                                  "successors": []
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "id": 9,
+                          "label": "return data",
+                          "successors": []
+                        }
+                      ]
+                    }
                   ]
-                },
-                {
-                  "id": 6,
-                  "label": "data[str(i)] = value.strip() if input_data.strip else value",
-                  "successors": [
-                    7
-                  ]
-                },
-                {
-                  "id": 7,
-                  "label": "return data",
-                  "successors": []
                 }
               ]
             }
@@ -69,27 +89,37 @@
           "blocks": [
             {
               "id": 1,
-              "label": "import csv\nfrom io import StringIO\n\ncsv_file = StringIO(input_data.contents)\nreader = csv.reader(\n    csv_file,\n    delimiter=input_data.delimiter,\n    quotechar=input_data.quotechar,\n    escapechar=input_data.escapechar,\n)\nheader = None\nif input_data.has_header:\nheader = next(reader)\nif input_data.strip:\nheader = [h.strip() for h in header]",
+              "label": "def run(self, input_data: Input, **kwargs) -> BlockOutput:\nimport csv\nfrom io import StringIO",
               "successors": [
-                6
+                {
+                  "id": 3,
+                  "label": "csv_file = StringIO(input_data.contents)\nreader = csv.reader(\n    csv_file,\n    delimiter=input_data.delimiter,\n    quotechar=input_data.quotechar,\n    escapechar=input_data.escapechar,\n)\nheader = None",
+                  "successors": [
+                    {
+                      "id": 5,
+                      "label": "if input_data.has_header:\nheader = next(reader)\nif input_data.strip:\n    header = [h.strip() for h in header]",
+                      "successors": [
+                        {
+                          "id": 7,
+                          "label": "for _ in range(input_data.skip_rows):",
+                          "successors": [
+                            {
+                              "id": 8,
+                              "label": "next(reader)\nreturn data",
+                              "successors": []
+                            }
+                          ]
+                        },
+                        {
+                          "id": 9,
+                          "label": "all_data = []\nfor row in reader:\n    processed_row = process_row(row)\n    all_data.append(processed_row)\n    yield \"row\", processed_row\nyield \"all_data\", all_data",
+                          "successors": []
+                        }
+                      ]
+                    }
+                  ]
+                }
               ]
-            },
-            {
-              "id": 6,
-              "label": "for _ in range(input_data.skip_rows):\nnext(reader)\nreturn data",
-              "successors": []
-            },
-            {
-              "id": 9,
-              "label": "all_data = []\nfor row in reader:\nprocessed_row = process_row(row)\nall_data.append(processed_row)\nyield \"row\", processed_row",
-              "successors": [
-                9
-              ]
-            },
-            {
-              "id": 12,
-              "label": "yield \"all_data\", all_data",
-              "successors": []
             }
           ]
         }
@@ -106,8 +136,32 @@
           "blocks": [
             {
               "id": 1,
-              "label": "class Input(BlockSchema):\ncontents: str = SchemaField(description=\"The contents of the CSV file to read\", placeholder=\"a, b, c\\n1,2,3\\n4,5,6\")\ndelimiter: str = SchemaField(description=\"The delimiter used in the CSV file\", default=\",\")\nquotechar: str = SchemaField(description=\"The character used to quote fields\", default='\"')\nescapechar: str = SchemaField(description=\"The character used to escape the delimiter\", default=\"\\\\\")\nhas_header: bool = SchemaField(description=\"Whether the CSV file has a header row\", default=True)\nskip_rows: int = SchemaField(description=\"The number of rows to skip from the start of the file\", default=0)\nstrip: bool = SchemaField(description=\"Whether to strip whitespace from the values\", default=True)\nskip_columns: list[str] = SchemaField(description=\"The columns to skip from the start of the row\", default=[])",
-              "successors": []
+              "label": "class Input(BlockSchema):\ncontents: str = SchemaField(\n    description=\"The contents of the CSV file to read\",\n    placeholder=\"a, b, c\\n1,2,3\\n4,5,6\",\n)",
+              "successors": [
+                {
+                  "id": 3,
+                  "label": "delimiter: str = SchemaField(\n    description=\"The delimiter used in the CSV file\",\n    default=\",\",\n)\nquotechar: str = SchemaField(\n    description=\"The character used to quote fields\",\n    default='\"',\n)",
+                  "successors": [
+                    {
+                      "id": 5,
+                      "label": "escapechar: str = SchemaField(\n    description=\"The character used to escape the delimiter\",\n    default=\"\\\\\",\n)\nhas_header: bool = SchemaField(\n    description=\"Whether the CSV file has a header row\",\n    default=True,\n)",
+                      "successors": [
+                        {
+                          "id": 7,
+                          "label": "skip_rows: int = SchemaField(\n    description=\"The number of rows to skip from the start of the file\",\n    default=0,\n)\nstrip: bool = SchemaField(\n    description=\"Whether to strip whitespace from the values\",\n    default=True,\n)",
+                          "successors": [
+                            {
+                              "id": 9,
+                              "label": "skip_columns: list[str] = SchemaField(\n    description=\"The columns to skip from the start of the row\",\n    default=[],\n)",
+                              "successors": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
             }
           ]
         },
@@ -122,8 +176,14 @@
           "blocks": [
             {
               "id": 1,
-              "label": "class Output(BlockSchema):\nrow: dict[str, str] = SchemaField(description=\"The data produced from each row in the CSV file\")\nall_data: list[dict[str, str]] = SchemaField(description=\"All the data in the CSV file as a list of rows\")",
-              "successors": []
+              "label": "class Output(BlockSchema):\n    row: dict[str, str] = SchemaField(\n        description=\"The data produced from each row in the CSV file\"\n    )",
+              "successors": [
+                {
+                  "id": 3,
+                  "label": "    all_data: list[dict[str, str]] = SchemaField(\n        description=\"All the data in the CSV file as a list of rows\"\n    )",
+                  "successors": []
+                }
+              ]
             }
           ]
         }
@@ -132,8 +192,60 @@
       "blocks": [
         {
           "id": 1,
-          "label": "class ReadCsvBlock(Block):\nMETHOD PLACEHOLDER",
-          "successors": []
+          "label": "class ReadCsvBlock(Block):\n\n    def run(self):",
+          "successors": [
+            {
+              "id": 3,
+              "label": "df = pd.read_csv(self.path, nrows=50)\nprint(\"Initial data read successfully\")",
+              "successors": [
+                {
+                  "id": 5,
+                  "label": "for column in df.columns:",
+                  "successors": [
+                    {
+                      "id": 6,
+                      "label": "if df[column].dtype == 'object':",
+                      "successors": [
+                        {
+                          "id": 7,
+                          "label": "df[column] = df[column].astype(str)\nprint(f\"Converted column {column} to string\")",
+                          "successors": [
+                            {
+                              "id": 5,
+                              "label": "for column in df.columns:",
+                              "successors": []
+                            }
+                          ]
+                        },
+                        {
+                          "id": 8,
+                          "label": "else:\nprint(f\"Converted column {column} to string\")",
+                          "successors": [
+                            {
+                              "id": 5,
+                              "label": "for column in df.columns:",
+                              "successors": []
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "id": 10,
+                      "label": "all_data = df.to_dict(orient='list')\nprint(\"Data conversion to dict format complete\")",
+                      "successors": [
+                        {
+                          "id": 12,
+                          "label": "yield \"all_data\", all_data",
+                          "successors": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
         }
       ]
     }
@@ -142,8 +254,14 @@
   "blocks": [
     {
       "id": 1,
-      "label": "from backend.data.block import Block, BlockCategory, BlockOutput, BlockSchema\nfrom backend.data.model import ContributorDetails, SchemaField\nyield \"all_data\", all_data",
-      "successors": []
+      "label": "from backend.data.block import Block, BlockCategory, BlockOutput, BlockSchema\nfrom backend.data.model import ContributorDetails, SchemaField",
+      "successors": [
+        {
+          "id": 3,
+          "label": "yield \"all_data\", all_data",
+          "successors": []
+        }
+      ]
     }
   ]
 }

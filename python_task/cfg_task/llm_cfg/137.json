@@ -1,0 +1,224 @@
+{
+  "name": "example_script",
+  "type": "CFG",
+  "start_line": 1,
+  "end_line": 198,
+  "functions": [
+    {
+      "name": "check_media_exists",
+      "type": "function",
+      "start_line": 18,
+      "end_line": 51,
+      "functions": [],
+      "classes": [],
+      "simplified_code": "async def check_media_exists(user_id: str, filename: str) -> str | None:\n    \"\"\"\n    Check if a media file exists in storage for the given user.\n    Tries both images and videos directories.\n\n    Args:\n        user_id (str): ID of the user who uploaded the file\n        filename (str): Name of the file to check\n\n    Returns:\n        str | None: URL of the blob if it exists, None otherwise\n    \"\"\"\n    try:\n        settings = Settings()\n        storage_client = storage.Client()\n        bucket = storage_client.bucket(settings.config.media_gcs_bucket_name)\n\n        # Check images\n        image_path = f\"users/{user_id}/images/{filename}\"\n        image_blob = bucket.blob(image_path)\n        if image_blob.exists():\n            return image_blob.public_url\n\n        # Check videos\n        video_path = f\"users/{user_id}/videos/{filename}\"\n\n        video_blob = bucket.blob(video_path)\n        if video_blob.exists():\n            return video_blob.public_url\n\n        return None\n    except Exception as e:\n        logger.error(f\"Error checking if media file exists: {str(e)}\")\n        return None",
+      "blocks": [
+        {
+          "id": 1,
+          "label": "try:",
+          "successors": [
+            {
+              "id": 2,
+              "label": "settings = Settings()\nstorage_client = storage.Client()\nbucket = storage_client.bucket(settings.config.media_gcs_bucket_name)",
+              "successors": [
+                {
+                  "id": 3,
+                  "label": "# Check images\nimage_path = f\"users/{user_id}/images/{filename}\"\nimage_blob = bucket.blob(image_path)\nif image_blob.exists():",
+                  "successors": [
+                    {
+                      "id": 4,
+                      "label": "return image_blob.public_url",
+                      "successors": []
+                    }
+                  ]
+                },
+                {
+                  "id": 5,
+                  "label": "# Check videos\nvideo_path = f\"users/{user_id}/videos/{filename}\"\n\nvideo_blob = bucket.blob(video_path)\nif video_blob.exists():",
+                  "successors": [
+                    {
+                      "id": 6,
+                      "label": "return video_blob.public_url",
+                      "successors": []
+                    }
+                  ]
+                },
+                {
+                  "id": 7,
+                  "label": "return None",
+                  "successors": []
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": 8,
+          "label": "except Exception as e:",
+          "successors": [
+            {
+              "id": 9,
+              "label": "logger.error(f\"Error checking if media file exists: {str(e)}\")\nreturn None",
+              "successors": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "upload_media",
+      "type": "function",
+      "start_line": 54,
+      "end_line": 198,
+      "functions": [],
+      "classes": [],
+      "simplified_code": "async def upload_media(\n    user_id: str, file: fastapi.UploadFile, use_file_name: bool = False\n) -> str:\n\n    # Get file content for deeper validation\n    try:\n        content = await file.read(1024)  # Read first 1KB for validation\n        await file.seek(0)  # Reset file pointer\n    except Exception as e:\n        logger.error(f\"Error reading file content: {str(e)}\")\n        raise backend.server.v2.store.exceptions.FileReadError(\n            \"Failed to read file content\"\n        ) from e\n\n    # Validate file signature/magic bytes\n    if file.content_type in ALLOWED_IMAGE_TYPES:\n        # Check image file signatures\n        if content.startswith(b\"\\xFF\\xD8\\xFF\"):  # JPEG\n            if file.content_type != \"image/jpeg\":\n                raise backend.server.v2.store.exceptions.InvalidFileTypeError(\n                    \"File signature does not match content type\"\n                )\n        elif content.startswith(b\"\\x89PNG\\r\\n\\x1a\\n\"):  # PNG\n            if file.content_type != \"image/png\":\n                raise backend.server.v2.store.exceptions.InvalidFileTypeError(\n                    \"File signature does not match content type\"\n                )\n        elif content.startswith(b\"GIF87a\") or content.startswith(b\"GIF89a\"):  # GIF\n            if file.content_type != \"image/gif\":\n                raise backend.server.v2.store.exceptions.InvalidFileTypeError(\n                    \"File signature does not match content type\"\n                )\n        elif content.startswith(b\"RIFF\") and content[8:12] == b\"WEBP\":  # WebP\n            if file.content_type != \"image/webp\":\n                raise backend.server.v2.store.exceptions.InvalidFileTypeError(\n                    \"File signature does not match content type\"\n                )\n        else:\n            raise backend.server.v2.store.exceptions.InvalidFileTypeError(\n                \"Invalid image file signature\"\n            )\n\n    elif file.content_type in ALLOWED_VIDEO_TYPES:\n        # Check video file signatures\n        if content.startswith(b\"\\x00\\x00\\x00\") and (content[4:8] == b\"ftyp\"):  # MP4\n            if file.content_type != \"video/mp4\":\n                raise backend.server.v2.store.exceptions.InvalidFileTypeError(\n                    \"File signature does not match content type\"\n                )\n        elif content.startswith(b\"\\x1a\\x45\\xdf\\xa3\"):  # WebM\n            if file.content_type != \"video/webm\":\n                raise backend.server.v2.store.exceptions.InvalidFileTypeError(\n                    \"File signature does not match content type\"\n                )\n        else:\n            raise backend.server.v2.store.exceptions.InvalidFileTypeError(\n                \"Invalid video file signature\"\n            )\n\n    settings = Settings()\n\n    # Check required settings first before doing any file processing\n    if not settings.config.media_gcs_bucket_name:\n        logger.error(\"Missing GCS bucket name setting\")\n        raise backend.server.v2.store.exceptions.StorageConfigError(\n            \"Missing storage bucket configuration\"\n        )\n\n    try:\n        # Validate file type\n        content_type = file.content_type\n        if content_type is None:\n            content_type = \"image/jpeg\"\n\n        if (\n            content_type not in ALLOWED_IMAGE_TYPES\n            and content_type not in ALLOWED_VIDEO_TYPES\n        ):\n            logger.warning(f\"Invalid file type attempted: {content_type}\")\n            raise backend.server.v2.store.exceptions.InvalidFileTypeError(\n                f\"File type not supported. Must be jpeg, png, gif, webp, mp4 or webm. Content type: {content_type}\"\n            )\n\n        # Validate file size\n        file_size = 0\n        chunk_size = 8192  # 8KB chunks\n\n        try:\n            while chunk := await file.read(chunk_size):\n                file_size += len(chunk)\n                if file_size > MAX_FILE_SIZE:\n                    logger.warning(f\"File size too large: {file_size} bytes\")\n                    raise backend.server.v2.store.exceptions.FileSizeTooLargeError(\n                        \"File too large. Maximum size is 50MB\"\n                    )\n        except backend.server.v2.store.exceptions.FileSizeTooLargeError:\n            raise\n        except Exception as e:\n            logger.error(f\"Error reading file chunks: {str(e)}\")\n            raise backend.server.v2.store.exceptions.FileReadError(\n                \"Failed to read uploaded file\"\n            ) from e\n\n        # Reset file pointer\n        await file.seek(0)\n\n        # Generate unique filename\n        filename = file.filename or \"\"\n        file_ext = os.path.splitext(filename)[1].lower()\n        if use_file_name:\n            unique_filename = filename\n        else:\n            unique_filename = f\"{uuid.uuid4()}{file_ext}\"\n\n        # Construct storage path\n        media_type = \"images\" if content_type in ALLOWED_IMAGE_TYPES else \"videos\"\n        storage_path = f\"users/{user_id}/{media_type}/{unique_filename}\"\n\n        try:\n            storage_client = storage.Client()\n            bucket = storage_client.bucket(settings.config.media_gcs_bucket_name)\n            blob = bucket.blob(storage_path)\n            blob.content_type = content_type\n\n            file_bytes = await file.read()\n            blob.upload_from_string(file_bytes, content_type=content_type)\n\n            public_url = blob.public_url\n\n            logger.info(f\"Successfully uploaded file to: {storage_path}\")\n            return public_url\n\n        except Exception as e:\n            logger.error(f\"GCS storage error: {str(e)}\")\n            raise backend.server.v2.store.exceptions.StorageUploadError(\n                \"Failed to upload file to storage\"\n            ) from e\n\n    except backend.server.v2.store.exceptions.MediaUploadError:\n        raise\n    except Exception as e:\n        logger.exception(\"Unexpected error in upload_media\")\n        raise backend.server.v2.store.exceptions.MediaUploadError(\n            \"Unexpected error during media upload\"\n        ) from e",
+      "blocks": [
+        {
+          "id": 1,
+          "label": "async def upload_media(\n    user_id: str, file: fastapi.UploadFile, use_file_name: bool = False\n) -> str:",
+          "successors": [
+            {
+              "id": 2,
+              "label": "try:\n    content = await file.read(1024)  # Read first 1KB for validation\n    await file.seek(0)  # Reset file pointer",
+              "successors": [
+                {
+                  "id": 3,
+                  "label": "except Exception as e:\n    logger.error(f\"Error reading file content: {str(e)}\")\n    raise backend.server.v2.store.exceptions.FileReadError(\n        \"Failed to read file content\"\n    ) from e",
+                  "successors": []
+                },
+                {
+                  "id": 4,
+                  "label": "if file.content_type in ALLOWED_IMAGE_TYPES:",
+                  "successors": [
+                    {
+                      "id": 5,
+                      "label": "if content.startswith(b\"\\xFF\\xD8\\xFF\"):  # JPEG\n    if file.content_type != \"image/jpeg\":\n        raise backend.server.v2.store.exceptions.InvalidFileTypeError(\n            \"File signature does not match content type\"\n        )",
+                      "successors": []
+                    },
+                    {
+                      "id": 6,
+                      "label": "elif content.startswith(b\"\\x89PNG\\r\\n\\x1a\\n\"):  # PNG\n    if file.content_type != \"image/png\":\n        raise backend.server.v2.store.exceptions.InvalidFileTypeError(\n            \"File signature does not match content type\"\n        )",
+                      "successors": []
+                    },
+                    {
+                      "id": 7,
+                      "label": "elif content.startswith(b\"GIF87a\") or content.startswith(b\"GIF89a\"):  # GIF\n    if file.content_type != \"image/gif\":\n        raise backend.server.v2.store.exceptions.InvalidFileTypeError(\n            \"File signature does not match content type\"\n        )",
+                      "successors": []
+                    },
+                    {
+                      "id": 8,
+                      "label": "elif content.startswith(b\"RIFF\") and content[8:12] == b\"WEBP\":  # WebP\n    if file.content_type != \"image/webp\":\n        raise backend.server.v2.store.exceptions.InvalidFileTypeError(\n            \"File signature does not match content type\"\n        )",
+                      "successors": []
+                    },
+                    {
+                      "id": 9,
+                      "label": "else:\n    raise backend.server.v2.store.exceptions.InvalidFileTypeError(\n        \"Invalid image file signature\"\n    )",
+                      "successors": []
+                    }
+                  ]
+                },
+                {
+                  "id": 10,
+                  "label": "elif file.content_type in ALLOWED_VIDEO_TYPES:",
+                  "successors": [
+                    {
+                      "id": 11,
+                      "label": "if content.startswith(b\"\\x00\\x00\\x00\") and (content[4:8] == b\"ftyp\"):  # MP4\n    if file.content_type != \"video/mp4\":\n        raise backend.server.v2.store.exceptions.InvalidFileTypeError(\n            \"File signature does not match content type\"\n        )",
+                      "successors": []
+                    },
+                    {
+                      "id": 12,
+                      "label": "elif content.startswith(b\"\\x1a\\x45\\xdf\\xa3\"):  # WebM\n    if file.content_type != \"video/webm\":\n        raise backend.server.v2.store.exceptions.InvalidFileTypeError(\n            \"File signature does not match content type\"\n        )",
+                      "successors": []
+                    },
+                    {
+                      "id": 13,
+                      "label": "else:\n    raise backend.server.v2.store.exceptions.InvalidFileTypeError(\n        \"Invalid video file signature\"\n    )",
+                      "successors": []
+                    }
+                  ]
+                },
+                {
+                  "id": 14,
+                  "label": "settings = Settings()",
+                  "successors": []
+                },
+                {
+                  "id": 15,
+                  "label": "if not settings.config.media_gcs_bucket_name:\n    logger.error(\"Missing GCS bucket name setting\")\n    raise backend.server.v2.store.exceptions.StorageConfigError(\n        \"Missing storage bucket configuration\"\n    )",
+                  "successors": []
+                },
+                {
+                  "id": 16,
+                  "label": "try:\n    content_type = file.content_type\n    if content_type is None:\n        content_type = \"image/jpeg\"\n\n    if (\n        content_type not in ALLOWED_IMAGE_TYPES\n        and content_type not in ALLOWED_VIDEO_TYPES\n    ):\n        logger.warning(f\"Invalid file type attempted: {content_type}\")\n        raise backend.server.v2.store.exceptions.InvalidFileTypeError(\n            f\"File type not supported. Must be jpeg, png, gif, webp, mp4 or webm. Content type: {content_type}\"\n        )",
+                  "successors": []
+                },
+                {
+                  "id": 17,
+                  "label": "file_size = 0\nchunk_size = 8192  # 8KB chunks\n\ntry:\n    while chunk := await file.read(chunk_size):\n        file_size += len(chunk)\n        if file_size > MAX_FILE_SIZE:\n            logger.warning(f\"File size too large: {file_size} bytes\")\n            raise backend.server.v2.store.exceptions.FileSizeTooLargeError(\n                \"File too large. Maximum size is 50MB\"\n            )",
+                  "successors": [
+                    {
+                      "id": 18,
+                      "label": "except backend.server.v2.store.exceptions.FileSizeTooLargeError:\n    raise",
+                      "successors": []
+                    },
+                    {
+                      "id": 19,
+                      "label": "except Exception as e:\n    logger.error(f\"Error reading file chunks: {str(e)}\")\n    raise backend.server.v2.store.exceptions.FileReadError(\n        \"Failed to read uploaded file\"\n    ) from e",
+                      "successors": []
+                    }
+                  ]
+                },
+                {
+                  "id": 20,
+                  "label": "await file.seek(0)",
+                  "successors": []
+                },
+                {
+                  "id": 21,
+                  "label": "filename = file.filename or \"\"\nfile_ext = os.path.splitext(filename)[1].lower()\nif use_file_name:\n    unique_filename = filename\nelse:\n    unique_filename = f\"{uuid.uuid4()}{file_ext}\"",
+                  "successors": []
+                },
+                {
+                  "id": 22,
+                  "label": "media_type = \"images\" if content_type in ALLOWED_IMAGE_TYPES else \"videos\"\nstorage_path = f\"users/{user_id}/{media_type}/{unique_filename}\"",
+                  "successors": []
+                },
+                {
+                  "id": 23,
+                  "label": "try:\n    storage_client = storage.Client()\n    bucket = storage_client.bucket(settings.config.media_gcs_bucket_name)\n    blob = bucket.blob(storage_path)\n    blob.content_type = content_type\n\n    file_bytes = await file.read()\n    blob.upload_from_string(file_bytes, content_type=content_type)\n\n    public_url = blob.public_url\n\n    logger.info(f\"Successfully uploaded file to: {storage_path}\")\n    return public_url",
+                  "successors": []
+                },
+                {
+                  "id": 24,
+                  "label": "except Exception as e:\n    logger.error(f\"GCS storage error: {str(e)}\")\n    raise backend.server.v2.store.exceptions.StorageUploadError(\n        \"Failed to upload file to storage\"\n    ) from e",
+                  "successors": []
+                }
+              ]
+            },
+            {
+              "id": 25,
+              "label": "except backend.server.v2.store.exceptions.MediaUploadError:\n    raise",
+              "successors": []
+            },
+            {
+              "id": 26,
+              "label": "except Exception as e:\n    logger.exception(\"Unexpected error in upload_media\")\n    raise backend.server.v2.store.exceptions.MediaUploadError(\n        \"Unexpected error during media upload\"\n    ) from e",
+              "successors": []
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "classes": [],
+  "simplified_code": "import logging\nimport os\nimport uuid\n\nimport fastapi\nfrom google.cloud import storage\n\nimport backend.server.v2.store.exceptions\nfrom backend.util.settings import Settings\n\nlogger = logging.getLogger(__name__)\n\nALLOWED_IMAGE_TYPES = {\"image/jpeg\", \"image/png\", \"image/gif\", \"image/webp\"}\nALLOWED_VIDEO_TYPES = {\"video/mp4\", \"video/webm\"}\nMAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB\n\n\n        return None\n\n\n        ) from e",
+  "blocks": [
+    {
+      "id": 1,
+      "label": "import logging\nimport os\nimport uuid\n\nimport fastapi\nfrom google.cloud import storage\n\nimport backend.server.v2.store.exceptions\nfrom backend.util.settings import Settings\n\nlogger = logging.getLogger(__name__)\n\nALLOWED_IMAGE_TYPES = {\"image/jpeg\", \"image/png\", \"image/gif\", \"image/webp\"}\nALLOWED_VIDEO_TYPES = {\"video/mp4\", \"video/webm\"}\nMAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB",
+      "successors": []
+    }
+  ]
+}

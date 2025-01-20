@@ -15,7 +15,7 @@
       "blocks": [
         {
           "id": 1,
-          "label": "def _start_measurement() -> Tuple[float, float]:\nreturn time.time(), os.times()[0] + os.times()[1]",
+          "label": "def _start_measurement() -> Tuple[float, float]:\n    return time.time(), os.times()[0] + os.times()[1]",
           "successors": []
         }
       ]
@@ -31,8 +31,14 @@
       "blocks": [
         {
           "id": 1,
-          "label": "end_wall_time = time.time(); end_cpu_time = os.times()[0] + os.times()[1]\nreturn end_wall_time - start_wall_time, end_cpu_time - start_cpu_time",
-          "successors": []
+          "label": "end_wall_time = time.time()\nend_cpu_time = os.times()[0] + os.times()[1]",
+          "successors": [
+            {
+              "id": 3,
+              "label": "return end_wall_time - start_wall_time, end_cpu_time - start_cpu_time",
+              "successors": []
+            }
+          ]
         }
       ]
     },
@@ -53,15 +59,25 @@
           "blocks": [
             {
               "id": 1,
-              "label": "start_wall_time, start_cpu_time = _start_measurement()\ntry:\nresult = func(*args, **kwargs)",
+              "label": "start_wall_time, start_cpu_time = _start_measurement()\ntry:",
               "successors": [
-                4
+                {
+                  "id": 3,
+                  "label": "result = func(*args, **kwargs)\nreturn timing_info, result",
+                  "successors": []
+                },
+                {
+                  "id": 4,
+                  "label": "finally:\nwall_duration, cpu_duration = _end_measurement(start_wall_time, start_cpu_time)",
+                  "successors": [
+                    {
+                      "id": 7,
+                      "label": "timing_info = TimingInfo(cpu_time=cpu_duration, wall_time=wall_duration)\nreturn timing_info, result",
+                      "successors": []
+                    }
+                  ]
+                }
               ]
-            },
-            {
-              "id": 4,
-              "label": "finally:\nwall_duration, cpu_duration = _end_measurement(start_wall_time, start_cpu_time)\ntiming_info = TimingInfo(cpu_time=cpu_duration, wall_time=wall_duration)\nreturn timing_info, result",
-              "successors": []
             }
           ]
         }
@@ -71,8 +87,43 @@
       "blocks": [
         {
           "id": 1,
-          "label": "def time_measured(func: Callable[P, T]) -> Callable[P, Tuple[TimingInfo, T]]:\n\"\"\"\n    Decorator to measure the time taken by a function to execute.\n    \"\"\"\n@functools.wraps(func)\ndef wrapper(*args: P.args, **kwargs: P.kwargs) -> Tuple[TimingInfo, T]:\nstart_time = time.monotonic()\nresult = func(*args, **kwargs)\nend_time = time.monotonic()\ntiming_info = TimingInfo(\n    function_name=func.__name__,\n    execution_time=end_time - start_time\n)\nreturn timing_info, result\nreturn wrapper",
-          "successors": []
+          "label": "def time_measured(func: Callable[P, T]) -> Callable[P, Tuple[TimingInfo, T]]:\n\"\"\"\nDecorator to measure the time taken by a function to execute.\n\"\"\"",
+          "successors": [
+            {
+              "id": 3,
+              "label": "@functools.wraps(func)",
+              "successors": [
+                {
+                  "id": 4,
+                  "label": "def wrapper(*args: P.args, **kwargs: P.kwargs) -> Tuple[TimingInfo, T]:\nstart_time = time.monotonic()",
+                  "successors": [
+                    {
+                      "id": 6,
+                      "label": "result = func(*args, **kwargs)\nend_time = time.monotonic()",
+                      "successors": [
+                        {
+                          "id": 8,
+                          "label": "elapsed_time = end_time - start_time\ntiming_info = TimingInfo(start_time, end_time, elapsed_time)",
+                          "successors": [
+                            {
+                              "id": 10,
+                              "label": "return timing_info, result",
+                              "successors": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "id": 11,
+                  "label": "return wrapper",
+                  "successors": []
+                }
+              ]
+            }
+          ]
         }
       ]
     },
@@ -93,13 +144,19 @@
           "blocks": [
             {
               "id": 1,
-              "label": "def wrapper(*args: P.args, **kwargs: P.kwargs) -> T | None:\ntry:\nreturn func(*args, **kwargs)",
-              "successors": []
-            },
-            {
-              "id": 4,
-              "label": "except Exception as e:\nlogger.exception(f\"Error when calling function {func.__name__} with arguments {args} {kwargs}: {e}\")",
-              "successors": []
+              "label": "def wrapper(*args: P.args, **kwargs: P.kwargs) -> T | None:\ntry:",
+              "successors": [
+                {
+                  "id": 3,
+                  "label": "    return func(*args, **kwargs)",
+                  "successors": []
+                },
+                {
+                  "id": 4,
+                  "label": "except Exception as e:\n    logger.exception(f\"Error when calling function {func.__name__} with arguments {args} {kwargs}: {e}\")",
+                  "successors": []
+                }
+              ]
             }
           ]
         }
@@ -109,22 +166,37 @@
       "blocks": [
         {
           "id": 1,
-          "label": "def error_logged(func: Callable[P, T]) -> Callable[P, T | None]:\n\"\"\"\nDecorator to suppress and log any exceptions raised by a function.\n\"\"\"\n@functools.wraps(func)\ndef wrapper(*args: P.args, **kwargs: P.kwargs) -> T | None:\ntry:\nreturn func(*args, **kwargs)",
+          "label": "def error_logged(func: Callable[P, T]) -> Callable[P, T | None]:\n\"\"\"\\nDecorator to suppress and log any exceptions raised by a function.\\n\"\"\"",
           "successors": [
-            11
+            {
+              "id": 3,
+              "label": "@functools.wraps(func)\ndef wrapper(*args: P.args, **kwargs: P.kwargs) -> T | None:",
+              "successors": [
+                {
+                  "id": 5,
+                  "label": "try:",
+                  "successors": [
+                    {
+                      "id": 6,
+                      "label": "return func(*args, **kwargs)\nreturn wrapper",
+                      "successors": []
+                    },
+                    {
+                      "id": 7,
+                      "label": "except Exception as e:\nlogger.error(\"An error occurred: %s\", e)\nreturn None",
+                      "successors": [
+                        {
+                          "id": 9,
+                          "label": "return wrapper",
+                          "successors": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
           ]
-        },
-        {
-          "id": 8,
-          "label": "logger.error(\"Error occurred: %s\", str(e))\nfinally:",
-          "successors": [
-            11
-          ]
-        },
-        {
-          "id": 11,
-          "label": "return wrapper",
-          "successors": []
         }
       ]
     }
@@ -141,7 +213,7 @@
       "blocks": [
         {
           "id": 1,
-          "label": "class TimingInfo(BaseModel):\ncpu_time: float\nwall_time: float",
+          "label": "class TimingInfo(BaseModel):\n    cpu_time: float\n    wall_time: float",
           "successors": []
         }
       ]
@@ -151,8 +223,79 @@
   "blocks": [
     {
       "id": 1,
-      "label": "import statements\nclass TimerResult(BaseModel):\n        user_cpu_time: float\n        wall_time: float\ndef get_current_time() -> Tuple[float, float]:\n        return time.time(), os.times()[0] + os.times()[1]\ndef subtract_times(start: Tuple[float, float], end: Tuple[float, float]) -> TimerResult:\n        end_wall_time, end_cpu_time = end\n        start_wall_time, start_cpu_time = start\n        return TimerResult(wall_time=end_wall_time - start_wall_time, user_cpu_time=end_cpu_time - start_cpu_time)\ndef some_decorator(func: Callable[P, T]) -> Callable[P, T]:\n    @functools.wraps(func)\n    def wrapper(*args: P.args, **kwargs: P.kwargs) -> T:\n        start = get_current_time()\n        try:\n            result = func(*args, **kwargs)\n        finally:\n            end = get_current_time()\n            elapsed = subtract_times(start, end)\n            logger.info(f\"Elapsed time: {elapsed}\")\n        return result\n    return wrapper",
-      "successors": []
+      "label": "import functools\nimport logging",
+      "successors": [
+        {
+          "id": 3,
+          "label": "import os\nimport time",
+          "successors": [
+            {
+              "id": 5,
+              "label": "from typing import Callable, ParamSpec, Tuple, TypeVar\nfrom pydantic import BaseModel",
+              "successors": [
+                {
+                  "id": 7,
+                  "label": "def timer() -> Tuple[float, float]:\n    start_wall_time, start_cpu_time = time.time(), os.times()[0] + os.times()[1]",
+                  "successors": [
+                    {
+                      "id": 9,
+                      "label": "    def decorator(func: Callable[P, T]) -> Callable[P, T]:",
+                      "successors": [
+                        {
+                          "id": 10,
+                          "label": "        def wrapper(*args: P.args, **kwargs: P.kwargs) -> T:",
+                          "successors": [
+                            {
+                              "id": 11,
+                              "label": "            result = func(*args, **kwargs)",
+                              "successors": []
+                            },
+                            {
+                              "id": 12,
+                              "label": "            end_wall_time, end_cpu_time = time.time(), os.times()[0] + os.times()[1]",
+                              "successors": []
+                            },
+                            {
+                              "id": 13,
+                              "label": "            logger.info(\"Elapsed wall time: %f\", end_wall_time - start_wall_time)",
+                              "successors": []
+                            },
+                            {
+                              "id": 14,
+                              "label": "            logger.info(\"Elapsed CPU time: %f\", end_cpu_time - start_cpu_time)",
+                              "successors": []
+                            },
+                            {
+                              "id": 15,
+                              "label": "            return result",
+                              "successors": []
+                            }
+                          ]
+                        },
+                        {
+                          "id": 16,
+                          "label": "        return wrapper",
+                          "successors": []
+                        }
+                      ]
+                    },
+                    {
+                      "id": 17,
+                      "label": "    return decorator",
+                      "successors": []
+                    }
+                  ]
+                },
+                {
+                  "id": 18,
+                  "label": "",
+                  "successors": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
     }
   ]
 }

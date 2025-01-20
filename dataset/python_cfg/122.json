@@ -5,6 +5,8 @@
     {
       "id": 1,
       "label": "#1\nfrom collections import defaultdict\nfrom datetime import datetime, timezone\nfrom multiprocessing import Manager\nfrom typing import Any, AsyncGenerator, Generator, Generic, TypeVar\nfrom prisma.enums import AgentExecutionStatus\nfrom prisma.models import AgentGraphExecution, AgentNodeExecution, AgentNodeExecutionInputOutput\nfrom pydantic import BaseModel\nfrom backend.data.block import BlockData, BlockInput, CompletedBlockOutput\nfrom backend.data.includes import EXECUTION_RESULT_INCLUDE, GRAPH_EXECUTION_INCLUDE\nfrom backend.data.queue import AsyncRedisEventBus, RedisEventBus\nfrom backend.util import json, mock\nfrom backend.util.settings import Config\nExecutionStatus = AgentExecutionStatus\nT = TypeVar('T')\nLIST_SPLIT = '_$_'\nDICT_SPLIT = '_#_'\nOBJC_SPLIT = '_@_'\nconfig = Config()",
+      "start_line": 1,
+      "end_line": 484,
       "successors": []
     }
   ],
@@ -16,10 +18,14 @@
         {
           "id": 47,
           "label": "#47\n\"\"\"\n    Create a new AgentGraphExecution record.\n    Returns:\n        The id of the AgentGraphExecution and the list of ExecutionResult for each node.\n    \"\"\"\nresult = await AgentGraphExecution.prisma().create(data={'agentGraphId':\n    graph_id, 'agentGraphVersion': graph_version, 'executionStatus':\n    ExecutionStatus.QUEUED, 'AgentNodeExecutions': {'create': [{\n    'agentNodeId': node_id, 'executionStatus': ExecutionStatus.INCOMPLETE,\n    'Input': {'create': [{'name': name, 'data': json.dumps(data)} for name,\n    data in node_input.items()]}} for node_id, node_input in nodes_input]},\n    'userId': user_id}, include=GRAPH_EXECUTION_INCLUDE)",
+          "start_line": 140,
+          "end_line": 168,
           "successors": [
             {
               "id": 48,
               "label": "#48\nreturn result.id, [ExecutionResult.from_db(execution) for execution in \n    result.AgentNodeExecutions or []]",
+              "start_line": 170,
+              "end_line": 173,
               "successors": []
             }
           ]
@@ -35,18 +41,26 @@
         {
           "id": 52,
           "label": "#52\n\"\"\"\n    Insert AgentNodeExecutionInputOutput record for as one of AgentNodeExecution.Input.\n    If there is no AgentNodeExecution that has no `input_name` as input, create new one.\n\n    Args:\n        node_id: The id of the AgentNode.\n        graph_exec_id: The id of the AgentGraphExecution.\n        input_name: The name of the input data.\n        input_data: The input data to be inserted.\n        node_exec_id: [Optional] The id of the AgentNodeExecution that has no `input_name` as input. If not provided, it will find the eligible incomplete AgentNodeExecution or create a new one.\n\n    Returns:\n        * The id of the created or existing AgentNodeExecution.\n        * Dict of node input data, key is the input name, value is the input data.\n    \"\"\"\nexisting_execution = await AgentNodeExecution.prisma().find_first(where={**\n    {'id': node_exec_id} if node_exec_id else {}, 'agentNodeId': node_id,\n    'agentGraphExecutionId': graph_exec_id, 'executionStatus':\n    ExecutionStatus.INCOMPLETE, 'Input': {'every': {'name': {'not':\n    input_name}}}}, order={'addedTime': 'asc'}, include={'Input': True})",
+          "start_line": 183,
+          "end_line": 208,
           "successors": [
             {
               "id": 53,
               "label": "#53\njson_input_data = json.dumps(input_data)\nif existing_execution:",
+              "start_line": 209,
+              "end_line": 241,
               "successors": [
                 {
                   "id": 54,
                   "label": "#54\nawait AgentNodeExecutionInputOutput.prisma().create(data={'name':\n    input_name, 'data': json_input_data, 'referencedByInputExecId':\n    existing_execution.id})",
+                  "start_line": 212,
+                  "end_line": 218,
                   "successors": [
                     {
                       "id": 63,
                       "label": "#63\nreturn existing_execution.id, {**{input_data.name: json.loads(input_data.\n    data) for input_data in existing_execution.Input or []}, input_name:\n    input_data}",
+                      "start_line": 219,
+                      "end_line": 225,
                       "successors": []
                     }
                   ]
@@ -54,14 +68,20 @@
                 {
                   "id": 56,
                   "label": "#56\nif not node_exec_id:",
+                  "start_line": 227,
+                  "end_line": 241,
                   "successors": [
                     {
                       "id": 57,
                       "label": "#57\nresult = await AgentNodeExecution.prisma().create(data={'agentNodeId':\n    node_id, 'agentGraphExecutionId': graph_exec_id, 'executionStatus':\n    ExecutionStatus.INCOMPLETE, 'Input': {'create': {'name': input_name,\n    'data': json_input_data}}})",
+                      "start_line": 228,
+                      "end_line": 235,
                       "successors": [
                         {
                           "id": 61,
                           "label": "#61\nreturn result.id, {input_name: input_data}",
+                          "start_line": 236,
+                          "end_line": 236,
                           "successors": []
                         }
                       ]
@@ -69,6 +89,8 @@
                     {
                       "id": 59,
                       "label": "#59\nraise ValueError(\n    f'NodeExecution {node_exec_id} not found or already has input {input_name}.'\n    )",
+                      "start_line": 239,
+                      "end_line": 241,
                       "successors": []
                     }
                   ]
@@ -88,6 +110,8 @@
         {
           "id": 67,
           "label": "#67\n\"\"\"\n    Insert AgentNodeExecutionInputOutput record for as one of AgentNodeExecution.Output.\n    \"\"\"\nawait AgentNodeExecutionInputOutput.prisma().create(data={'name':\n    output_name, 'data': json.dumps(output_data),\n    'referencedByOutputExecId': node_exec_id})",
+          "start_line": 249,
+          "end_line": 258,
           "successors": []
         }
       ],
@@ -101,6 +125,8 @@
         {
           "id": 71,
           "label": "#71\nawait AgentGraphExecution.prisma().update(where={'id': graph_exec_id}, data\n    ={'executionStatus': ExecutionStatus.RUNNING, 'startedAt': datetime.now\n    (tz=timezone.utc)})",
+          "start_line": 262,
+          "end_line": 268,
           "successors": []
         }
       ],
@@ -114,19 +140,27 @@
         {
           "id": 75,
           "label": "#75\nstatus = ExecutionStatus.FAILED if stats.get('error'\n    ) else ExecutionStatus.COMPLETED\nres = await AgentGraphExecution.prisma().update(where={'id': graph_exec_id},\n    data={'executionStatus': status, 'stats': json.dumps(stats)})",
+          "start_line": 275,
+          "end_line": 282,
           "successors": [
             {
               "id": 76,
               "label": "#76\nif not res:",
+              "start_line": 283,
+              "end_line": 284,
               "successors": [
                 {
                   "id": 77,
                   "label": "#77\nraise ValueError(f'Execution {graph_exec_id} not found.')",
+                  "start_line": 284,
+                  "end_line": 284,
                   "successors": []
                 },
                 {
                   "id": 78,
                   "label": "#78\nreturn ExecutionResult.from_graph(res)",
+                  "start_line": 286,
+                  "end_line": 286,
                   "successors": []
                 }
               ]
@@ -144,6 +178,8 @@
         {
           "id": 83,
           "label": "#83\nawait AgentNodeExecution.prisma().update(where={'id': node_exec_id}, data={\n    'stats': json.dumps(stats)})",
+          "start_line": 290,
+          "end_line": 293,
           "successors": []
         }
       ],
@@ -157,28 +193,40 @@
         {
           "id": 87,
           "label": "#87\nif status == ExecutionStatus.QUEUED and execution_data is None:",
+          "start_line": 302,
+          "end_line": 303,
           "successors": [
             {
               "id": 88,
               "label": "#88\nraise ValueError('Execution data must be provided when queuing an execution.')",
+              "start_line": 303,
+              "end_line": 303,
               "successors": []
             },
             {
               "id": 89,
               "label": "#89\nnow = datetime.now(tz=timezone.utc)\ndata = {**{'executionStatus': status}, **{'queuedTime': now} if status ==\n    ExecutionStatus.QUEUED else {}, **{'startedTime': now} if status ==\n    ExecutionStatus.RUNNING else {}, **{'endedTime': now} if status ==\n    ExecutionStatus.FAILED else {}, **{'endedTime': now} if status ==\n    ExecutionStatus.COMPLETED else {}, **{'executionData': json.dumps(\n    execution_data)} if execution_data else {}, **{'stats': json.dumps(\n    stats)} if stats else {}}\nres = await AgentNodeExecution.prisma().update(where={'id': node_exec_id},\n    data=data, include=EXECUTION_RESULT_INCLUDE)",
+              "start_line": 305,
+              "end_line": 320,
               "successors": [
                 {
                   "id": 91,
                   "label": "#91\nif not res:",
+                  "start_line": 321,
+                  "end_line": 322,
                   "successors": [
                     {
                       "id": 92,
                       "label": "#92\nraise ValueError(f'Execution {node_exec_id} not found.')",
+                      "start_line": 322,
+                      "end_line": 322,
                       "successors": []
                     },
                     {
                       "id": 93,
                       "label": "#93\nreturn ExecutionResult.from_db(res)",
+                      "start_line": 324,
+                      "end_line": 324,
                       "successors": []
                     }
                   ]
@@ -198,10 +246,14 @@
         {
           "id": 98,
           "label": "#98\nexecutions = await AgentNodeExecution.prisma().find_many(where={\n    'agentGraphExecutionId': graph_exec_id}, include=\n    EXECUTION_RESULT_INCLUDE, order=[{'queuedTime': 'asc'}, {'addedTime':\n    'asc'}])",
+          "start_line": 328,
+          "end_line": 335,
           "successors": [
             {
               "id": 99,
               "label": "#99\nres = [ExecutionResult.from_db(execution) for execution in executions]\nreturn res",
+              "start_line": 336,
+              "end_line": 337,
               "successors": []
             }
           ]
@@ -217,28 +269,40 @@
         {
           "id": 103,
           "label": "#103\noutput_name, output_data = output\nif name == output_name:",
+          "start_line": 347,
+          "end_line": 350,
           "successors": [
             {
               "id": 104,
               "label": "#104\nreturn output_data",
+              "start_line": 350,
+              "end_line": 350,
               "successors": []
             },
             {
               "id": 105,
               "label": "#105\nif name.startswith(f'{output_name}{LIST_SPLIT}'):",
+              "start_line": 352,
+              "end_line": 356,
               "successors": [
                 {
                   "id": 107,
                   "label": "#107\nindex = int(name.split(LIST_SPLIT)[1])\nif not isinstance(output_data, list) or len(output_data) <= index:",
+                  "start_line": 353,
+                  "end_line": 355,
                   "successors": [
                     {
                       "id": 109,
                       "label": "#109\nreturn None",
+                      "start_line": 355,
+                      "end_line": 355,
                       "successors": []
                     },
                     {
                       "id": 110,
                       "label": "#110\nreturn output_data[int(name.split(LIST_SPLIT)[1])]",
+                      "start_line": 356,
+                      "end_line": 356,
                       "successors": []
                     }
                   ]
@@ -246,19 +310,27 @@
                 {
                   "id": 108,
                   "label": "#108\nif name.startswith(f'{output_name}{DICT_SPLIT}'):",
+                  "start_line": 358,
+                  "end_line": 362,
                   "successors": [
                     {
                       "id": 113,
                       "label": "#113\nindex = name.split(DICT_SPLIT)[1]\nif not isinstance(output_data, dict) or index not in output_data:",
+                      "start_line": 359,
+                      "end_line": 361,
                       "successors": [
                         {
                           "id": 115,
                           "label": "#115\nreturn None",
+                          "start_line": 361,
+                          "end_line": 361,
                           "successors": []
                         },
                         {
                           "id": 116,
                           "label": "#116\nreturn output_data[index]",
+                          "start_line": 362,
+                          "end_line": 362,
                           "successors": []
                         }
                       ]
@@ -266,19 +338,27 @@
                     {
                       "id": 114,
                       "label": "#114\nif name.startswith(f'{output_name}{OBJC_SPLIT}'):",
+                      "start_line": 364,
+                      "end_line": 368,
                       "successors": [
                         {
                           "id": 119,
                           "label": "#119\nindex = name.split(OBJC_SPLIT)[1]\nif isinstance(output_data, object) and hasattr(output_data, index):",
+                          "start_line": 365,
+                          "end_line": 367,
                           "successors": [
                             {
                               "id": 121,
                               "label": "#121\nreturn getattr(output_data, index)",
+                              "start_line": 367,
+                              "end_line": 367,
                               "successors": []
                             },
                             {
                               "id": 122,
                               "label": "#122\nreturn None",
+                              "start_line": 368,
+                              "end_line": 368,
                               "successors": []
                             }
                           ]
@@ -286,6 +366,8 @@
                         {
                           "id": 120,
                           "label": "#120\nreturn None",
+                          "start_line": 370,
+                          "end_line": 370,
                           "successors": []
                         }
                       ]
@@ -307,35 +389,51 @@
         {
           "id": 128,
           "label": "#128\n\"\"\"\n    Merge all dynamic input pins which described by the following pattern:\n    - <input_name>_$_<index> for list input.\n    - <input_name>_#_<index> for dict input.\n    - <input_name>_@_<index> for object input.\n    This function will construct pins with the same name into a single list/dict/object.\n    \"\"\"\nitems = list(data.items())",
+          "start_line": 374,
+          "end_line": 383,
           "successors": [
             {
               "id": 129,
               "label": "#129\nfor key, value in items:",
+              "start_line": 385,
+              "end_line": 396,
               "successors": [
                 {
                   "id": 130,
                   "label": "#130\nif LIST_SPLIT not in key:",
+                  "start_line": 386,
+                  "end_line": 387,
                   "successors": [
                     {
                       "id": 133,
                       "label": "#133\nname, index = key.split(LIST_SPLIT)\nif not index.isdigit():",
+                      "start_line": 388,
+                      "end_line": 390,
                       "successors": [
                         {
                           "id": 134,
                           "label": "#134\nraise ValueError(f'Invalid key: {key}, #{index} index must be an integer.')",
+                          "start_line": 390,
+                          "end_line": 390,
                           "successors": []
                         },
                         {
                           "id": 135,
                           "label": "#135\ndata[name] = data.get(name, [])\nif int(index) >= len(data[name]):",
+                          "start_line": 392,
+                          "end_line": 395,
                           "successors": [
                             {
                               "id": 137,
                               "label": "#137\ndata[name].extend([''] * (int(index) - len(data[name]) + 1))",
+                              "start_line": 395,
+                              "end_line": 395,
                               "successors": [
                                 {
                                   "id": 138,
                                   "label": "#138\ndata[name][int(index)] = value",
+                                  "start_line": 396,
+                                  "end_line": 396,
                                   "successors": []
                                 }
                               ]
@@ -349,14 +447,20 @@
                 {
                   "id": 131,
                   "label": "#131\nfor key, value in items:",
+                  "start_line": 399,
+                  "end_line": 404,
                   "successors": [
                     {
                       "id": 139,
                       "label": "#139\nif DICT_SPLIT not in key:",
+                      "start_line": 400,
+                      "end_line": 401,
                       "successors": [
                         {
                           "id": 142,
                           "label": "#142\nname, index = key.split(DICT_SPLIT)\ndata[name] = data.get(name, {})\ndata[name][index] = value",
+                          "start_line": 402,
+                          "end_line": 404,
                           "successors": []
                         }
                       ]
@@ -364,22 +468,32 @@
                     {
                       "id": 140,
                       "label": "#140\nfor key, value in items:",
+                      "start_line": 407,
+                      "end_line": 413,
                       "successors": [
                         {
                           "id": 143,
                           "label": "#143\nif OBJC_SPLIT not in key:",
+                          "start_line": 408,
+                          "end_line": 409,
                           "successors": [
                             {
                               "id": 146,
                               "label": "#146\nname, index = key.split(OBJC_SPLIT)\nif name not in data or not isinstance(data[name], object):",
+                              "start_line": 410,
+                              "end_line": 412,
                               "successors": [
                                 {
                                   "id": 147,
                                   "label": "#147\ndata[name] = mock.MockObject()",
+                                  "start_line": 412,
+                                  "end_line": 412,
                                   "successors": [
                                     {
                                       "id": 148,
                                       "label": "#148\nsetattr(data[name], index, value)",
+                                      "start_line": 413,
+                                      "end_line": 413,
                                       "successors": []
                                     }
                                   ]
@@ -391,6 +505,8 @@
                         {
                           "id": 144,
                           "label": "#144\nreturn data",
+                          "start_line": 415,
+                          "end_line": 415,
                           "successors": []
                         }
                       ]
@@ -412,19 +528,27 @@
         {
           "id": 152,
           "label": "#152\nexecution = await AgentNodeExecution.prisma().find_first(where={\n    'agentNodeId': node_id, 'agentGraphExecutionId': graph_eid,\n    'executionStatus': {'not': ExecutionStatus.INCOMPLETE}, 'executionData':\n    {'not': None}}, order={'queuedTime': 'desc'}, include=\n    EXECUTION_RESULT_INCLUDE)",
+          "start_line": 419,
+          "end_line": 428,
           "successors": [
             {
               "id": 153,
               "label": "#153\nif not execution:",
+              "start_line": 429,
+              "end_line": 430,
               "successors": [
                 {
                   "id": 154,
                   "label": "#154\nreturn None",
+                  "start_line": 430,
+                  "end_line": 430,
                   "successors": []
                 },
                 {
                   "id": 155,
                   "label": "#155\nreturn ExecutionResult.from_db(execution)",
+                  "start_line": 431,
+                  "end_line": 431,
                   "successors": []
                 }
               ]
@@ -442,10 +566,14 @@
         {
           "id": 160,
           "label": "#160\nexecutions = await AgentNodeExecution.prisma().find_many(where={\n    'agentNodeId': node_id, 'agentGraphExecutionId': graph_eid,\n    'executionStatus': ExecutionStatus.INCOMPLETE}, include=\n    EXECUTION_RESULT_INCLUDE)",
+          "start_line": 437,
+          "end_line": 444,
           "successors": [
             {
               "id": 161,
               "label": "#161\nreturn [ExecutionResult.from_db(execution) for execution in executions]",
+              "start_line": 445,
+              "end_line": 445,
               "successors": []
             }
           ]
@@ -463,6 +591,8 @@
         {
           "id": 3,
           "label": "#3\nuser_id: str\ngraph_exec_id: str\ngraph_id: str\nstart_node_execs: list['NodeExecutionEntry']",
+          "start_line": 22,
+          "end_line": 25,
           "successors": []
         }
       ],
@@ -476,6 +606,8 @@
         {
           "id": 6,
           "label": "#6\nuser_id: str\ngraph_exec_id: str\ngraph_id: str\nnode_exec_id: str\nnode_id: str\ndata: BlockInput",
+          "start_line": 29,
+          "end_line": 34,
           "successors": []
         }
       ],
@@ -489,6 +621,8 @@
         {
           "id": 9,
           "label": "#9\n\"\"\"\n    Queue for managing the execution of agents.\n    This will be shared between different processes\n    \"\"\"",
+          "start_line": 43,
+          "end_line": 59,
           "successors": []
         }
       ],
@@ -500,6 +634,8 @@
             {
               "id": 11,
               "label": "#11\nself.queue = Manager().Queue()",
+              "start_line": 49,
+              "end_line": 49,
               "successors": []
             }
           ],
@@ -513,6 +649,8 @@
             {
               "id": 14,
               "label": "#14\nself.queue.put(execution)\nreturn execution",
+              "start_line": 52,
+              "end_line": 53,
               "successors": []
             }
           ],
@@ -526,6 +664,8 @@
             {
               "id": 18,
               "label": "#18\nreturn self.queue.get()",
+              "start_line": 56,
+              "end_line": 56,
               "successors": []
             }
           ],
@@ -539,6 +679,8 @@
             {
               "id": 22,
               "label": "#22\nreturn self.queue.empty()",
+              "start_line": 59,
+              "end_line": 59,
               "successors": []
             }
           ],
@@ -555,6 +697,8 @@
         {
           "id": 27,
           "label": "#27\ngraph_id: str\ngraph_version: int\ngraph_exec_id: str\nnode_exec_id: str\nnode_id: str\nblock_id: str\nstatus: ExecutionStatus\ninput_data: BlockInput\noutput_data: CompletedBlockOutput\nadd_time: datetime\nqueue_time: datetime | None\nstart_time: datetime | None\nend_time: datetime | None",
+          "start_line": 63,
+          "end_line": 128,
           "successors": []
         }
       ],
@@ -566,6 +710,8 @@
             {
               "id": 29,
               "label": "#29\nreturn ExecutionResult(graph_id=graph.agentGraphId, graph_version=graph.\n    agentGraphVersion, graph_exec_id=graph.id, node_exec_id='', node_id='',\n    block_id='', status=graph.executionStatus, input_data={}, output_data={\n    }, add_time=graph.createdAt, queue_time=graph.createdAt, start_time=\n    graph.startedAt, end_time=graph.updatedAt)",
+              "start_line": 79,
+              "end_line": 95,
               "successors": []
             }
           ],
@@ -579,27 +725,39 @@
             {
               "id": 33,
               "label": "#33\nif execution.executionData:",
+              "start_line": 99,
+              "end_line": 106,
               "successors": [
                 {
                   "id": 34,
                   "label": "#34\ninput_data = json.loads(execution.executionData, target_type=dict[str, Any])",
+                  "start_line": 101,
+                  "end_line": 101,
                   "successors": [
                     {
                       "id": 35,
                       "label": "#35\noutput_data: CompletedBlockOutput = defaultdict(list)",
+                      "start_line": 108,
+                      "end_line": 108,
                       "successors": [
                         {
                           "id": 40,
                           "label": "#40\nfor data in (execution.Output or []):",
+                          "start_line": 109,
+                          "end_line": 110,
                           "successors": [
                             {
                               "id": 41,
                               "label": "#41\noutput_data[data.name].append(json.loads(data.data))",
+                              "start_line": 110,
+                              "end_line": 110,
                               "successors": []
                             },
                             {
                               "id": 42,
                               "label": "#42\ngraph_execution: AgentGraphExecution | None = execution.AgentGraphExecution\nreturn ExecutionResult(graph_id=graph_execution.agentGraphId if\n    graph_execution else '', graph_version=graph_execution.\n    agentGraphVersion if graph_execution else 0, graph_exec_id=execution.\n    agentGraphExecutionId, block_id=execution.AgentNode.agentBlockId if\n    execution.AgentNode else '', node_exec_id=execution.id, node_id=\n    execution.agentNodeId, status=execution.executionStatus, input_data=\n    input_data, output_data=output_data, add_time=execution.addedTime,\n    queue_time=execution.queuedTime, start_time=execution.startedTime,\n    end_time=execution.endedTime)",
+                              "start_line": 112,
+                              "end_line": 128,
                               "successors": []
                             }
                           ]
@@ -611,14 +769,20 @@
                 {
                   "id": 36,
                   "label": "#36\ninput_data: BlockInput = defaultdict()",
+                  "start_line": 104,
+                  "end_line": 104,
                   "successors": [
                     {
                       "id": 37,
                       "label": "#37\nfor data in (execution.Input or []):",
+                      "start_line": 105,
+                      "end_line": 106,
                       "successors": [
                         {
                           "id": 38,
                           "label": "#38\ninput_data[data.name] = json.loads(data.data)",
+                          "start_line": 106,
+                          "end_line": 106,
                           "successors": []
                         }
                       ]
@@ -641,6 +805,8 @@
         {
           "id": 165,
           "label": "#165\nModel = ExecutionResult",
+          "start_line": 454,
+          "end_line": 467,
           "successors": []
         }
       ],
@@ -652,6 +818,8 @@
             {
               "id": 167,
               "label": "#167\nreturn config.execution_event_bus_name",
+              "start_line": 458,
+              "end_line": 458,
               "successors": []
             }
           ],
@@ -665,6 +833,8 @@
             {
               "id": 171,
               "label": "#171\nself.publish_event(res, f'{res.graph_id}/{res.graph_exec_id}')",
+              "start_line": 461,
+              "end_line": 461,
               "successors": []
             }
           ],
@@ -678,10 +848,14 @@
             {
               "id": 174,
               "label": "#174\nfor execution_result in self.listen_events(f'{graph_id}/{graph_exec_id}'):",
+              "start_line": 466,
+              "end_line": 467,
               "successors": [
                 {
                   "id": 175,
                   "label": "#175\nyield execution_result",
+                  "start_line": 467,
+                  "end_line": 467,
                   "successors": []
                 }
               ]
@@ -700,6 +874,8 @@
         {
           "id": 181,
           "label": "#181\nModel = ExecutionResult",
+          "start_line": 471,
+          "end_line": 484,
           "successors": []
         }
       ],
@@ -711,6 +887,8 @@
             {
               "id": 183,
               "label": "#183\nreturn config.execution_event_bus_name",
+              "start_line": 475,
+              "end_line": 475,
               "successors": []
             }
           ],
@@ -724,6 +902,8 @@
             {
               "id": 187,
               "label": "#187\nawait self.publish_event(res, f'{res.graph_id}/{res.graph_exec_id}')",
+              "start_line": 478,
+              "end_line": 478,
               "successors": []
             }
           ],
@@ -737,10 +917,14 @@
             {
               "id": 191,
               "label": "#191\nasync for execution_result in self.listen_events(f'{graph_id}/{graph_exec_id}'\n    ):\n    yield execution_result",
+              "start_line": 483,
+              "end_line": 484,
               "successors": [
                 {
                   "id": 192,
                   "label": "#192\nyield execution_result",
+                  "start_line": 484,
+                  "end_line": 484,
                   "successors": []
                 }
               ]

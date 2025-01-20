@@ -15,21 +15,29 @@
       "blocks": [
         {
           "id": 1,
-          "label": "if settings.config.app_env != backend.util.settings.AppEnvironment.LOCAL:\ninitialize_launchdarkly()\ntry:",
+          "label": "def launch_darkly_context():\nif settings.config.app_env != backend.util.settings.AppEnvironment.LOCAL:",
           "successors": [
-            4
-          ]
-        },
-        {
-          "id": 4,
-          "label": "yield\nfinally:\nshutdown_launchdarkly()",
-          "successors": []
-        },
-        {
-          "id": 5,
-          "label": "else:",
-          "successors": [
-            4
+            {
+              "id": 3,
+              "label": "initialize_launchdarkly()\ntry:",
+              "successors": [
+                {
+                  "id": 5,
+                  "label": "yield",
+                  "successors": []
+                },
+                {
+                  "id": 6,
+                  "label": "finally:\nshutdown_launchdarkly()",
+                  "successors": []
+                }
+              ]
+            },
+            {
+              "id": 8,
+              "label": "yield",
+              "successors": []
+            }
           ]
         }
       ]
@@ -45,15 +53,19 @@
       "blocks": [
         {
           "id": 1,
-          "label": "await backend.data.db.connect()\nawait backend.data.block.initialize_blocks()\nawait backend.data.user.migrate_and_encrypt_user_integrations()\nawait backend.data.graph.fix_llm_provider_credentials()\nwith launch_darkly_context():\nyield",
+          "label": "async def lifespan_context(app: fastapi.FastAPI):\nawait backend.data.db.connect()\nawait backend.data.block.initialize_blocks()\nawait backend.data.user.migrate_and_encrypt_user_integrations()\nawait backend.data.graph.fix_llm_provider_credentials()",
           "successors": [
-            7
+            {
+              "id": 3,
+              "label": "with launch_darkly_context():\nyield",
+              "successors": []
+            },
+            {
+              "id": 5,
+              "label": "await backend.data.db.disconnect()",
+              "successors": []
+            }
           ]
-        },
-        {
-          "id": 7,
-          "label": "await backend.data.db.disconnect()",
-          "successors": []
         }
       ]
     },
@@ -74,15 +86,19 @@
           "blocks": [
             {
               "id": 1,
-              "label": "if log_error:\nlogger.exception(f\"{request.method} {request.url.path} failed: {exc}\")",
+              "label": "def handler(request: fastapi.Request, exc: Exception):",
               "successors": [
-                3
+                {
+                  "id": 2,
+                  "label": "if log_error:\nlogger.exception(f\"{request.method} {request.url.path} failed: {exc}\")",
+                  "successors": []
+                },
+                {
+                  "id": 4,
+                  "label": "return fastapi.responses.JSONResponse(\n    content={\n        \"message\": f\"{request.method} {request.url.path} failed\",\n        \"detail\": str(exc),\n    },\n    status_code=status_code,\n)",
+                  "successors": []
+                }
               ]
-            },
-            {
-              "id": 3,
-              "label": "return fastapi.responses.JSONResponse(content={\"message\": f\"{request.method} {request.url.path} failed\",\"detail\": str(exc),},status_code=status_code,)",
-              "successors": []
             }
           ]
         }
@@ -92,15 +108,25 @@
       "blocks": [
         {
           "id": 1,
-          "label": "def handle_internal_http_error(status_code: int = 500, log_error: bool = True):\nif log_error:\nprint(f\"Error with status code {status_code}\")",
+          "label": "def handle_internal_http_error(status_code: int = 500, log_error: bool = True):\n    def handler(req, exc): pass",
           "successors": [
-            4
+            {
+              "id": 3,
+              "label": "    if log_error:",
+              "successors": [
+                {
+                  "id": 4,
+                  "label": "        print(\"Error logged\")\n    return handler",
+                  "successors": []
+                },
+                {
+                  "id": 5,
+                  "label": "    return handler",
+                  "successors": []
+                }
+              ]
+            }
           ]
-        },
-        {
-          "id": 4,
-          "label": "def handler(status_code, log_error):\nreturn handler",
-          "successors": []
         }
       ]
     },
@@ -115,7 +141,7 @@
       "blocks": [
         {
           "id": 1,
-          "label": "async def health():\nreturn {\"status\": \"healthy\"}",
+          "label": "async def health():\n    return {\"status\": \"healthy\"}",
           "successors": []
         }
       ]
@@ -139,8 +165,14 @@
           "blocks": [
             {
               "id": 1,
-              "label": "server_app = starlette.middleware.cors.CORSMiddleware(...)\nuvicorn.run(...)",
-              "successors": []
+              "label": "def run(self):\nserver_app = starlette.middleware.cors.CORSMiddleware(\n    app=app,\n    allow_origins=settings.config.backend_cors_allow_origins,\n    allow_credentials=True,\n    allow_methods=[\"*\"],  # Allows all methods\n    allow_headers=[\"*\"],  # Allows all headers\n)",
+              "successors": [
+                {
+                  "id": 3,
+                  "label": "uvicorn.run(\n    server_app,\n    host=backend.util.settings.Config().agent_api_host,\n    port=backend.util.settings.Config().agent_api_port,\n)",
+                  "successors": []
+                }
+              ]
             }
           ]
         },
@@ -155,7 +187,7 @@
           "blocks": [
             {
               "id": 1,
-              "label": "async def test_execute_graph( graph_id: str, node_input: dict[typing.Any, typing.Any], user_id: str ):\nreturn backend.server.routers.v1.execute_graph(graph_id, node_input, user_id)",
+              "label": "async def test_execute_graph(\n    graph_id: str, node_input: dict[typing.Any, typing.Any], user_id: str\n):\n    return backend.server.routers.v1.execute_graph(graph_id, node_input, user_id)",
               "successors": []
             }
           ]
@@ -171,7 +203,7 @@
           "blocks": [
             {
               "id": 1,
-              "label": "async def test_create_graph(create_graph: backend.server.routers.v1.CreateGraph, user_id: str):\nreturn await backend.server.routers.v1.create_new_graph(create_graph, user_id)",
+              "label": "async def test_create_graph(\n    create_graph: backend.server.routers.v1.CreateGraph,\n    user_id: str,\n):\n    return await backend.server.routers.v1.create_new_graph(create_graph, user_id)",
               "successors": []
             }
           ]
@@ -187,13 +219,25 @@
           "blocks": [
             {
               "id": 1,
-              "label": "execution = await backend.data.graph.get_execution(user_id=user_id, execution_id=graph_exec_id)\nif not execution:\nraise ValueError(f\"Execution {graph_exec_id} not found\")",
-              "successors": []
-            },
-            {
-              "id": 4,
-              "label": "return execution.status",
-              "successors": []
+              "label": "async def test_get_graph_run_status(graph_exec_id: str, user_id: str):\nexecution = await backend.data.graph.get_execution(user_id=user_id, execution_id=graph_exec_id)",
+              "successors": [
+                {
+                  "id": 3,
+                  "label": "if not execution:",
+                  "successors": [
+                    {
+                      "id": 4,
+                      "label": "raise ValueError(f\"Execution {graph_exec_id} not found\")",
+                      "successors": []
+                    },
+                    {
+                      "id": 5,
+                      "label": "return execution.status",
+                      "successors": []
+                    }
+                  ]
+                }
+              ]
             }
           ]
         },
@@ -246,47 +290,44 @@
           ]
         }
       ],
+      "classes": [],
       "simplified_code": "class AgentServer(backend.util.service.AppProcess):\n        )\n\n    @staticmethod\n        return backend.server.routers.v1.execute_graph(graph_id, node_input, user_id)\n\n    @staticmethod\n        return await backend.server.routers.v1.create_new_graph(create_graph, user_id)\n\n    @staticmethod\n        return execution.status\n\n    @staticmethod\n        )\n\n    @staticmethod\n        return await backend.server.routers.v1.delete_graph(graph_id, user_id)\n\n        app.dependency_overrides.update(overrides)",
       "blocks": [
         {
           "id": 1,
-          "label": "class AgentServer(backend.util.service.AppProcess):\n@staticmethod\nreturn backend.server.routers.v1.execute_graph(graph_id, node_input, user_id)",
+          "label": "class AgentServer(backend.util.service.AppProcess):",
           "successors": [
-            7
+            {
+              "id": 2,
+              "label": "@staticmethod\nreturn backend.server.routers.v1.execute_graph(graph_id, node_input, user_id)",
+              "successors": []
+            },
+            {
+              "id": 3,
+              "label": "@staticmethod\nreturn await backend.server.routers.v1.create_new_graph(create_graph, user_id)",
+              "successors": []
+            },
+            {
+              "id": 4,
+              "label": "@staticmethod\nreturn execution.status",
+              "successors": []
+            },
+            {
+              "id": 5,
+              "label": "@staticmethod",
+              "successors": []
+            },
+            {
+              "id": 6,
+              "label": "@staticmethod\nreturn await backend.server.routers.v1.delete_graph(graph_id, user_id)",
+              "successors": []
+            },
+            {
+              "id": 7,
+              "label": "app.dependency_overrides.update(overrides)",
+              "successors": []
+            }
           ]
-        },
-        {
-          "id": 3,
-          "label": "@staticmethod\nreturn await backend.server.routers.v1.create_new_graph(create_graph, user_id)",
-          "successors": [
-            7
-          ]
-        },
-        {
-          "id": 4,
-          "label": "@staticmethod\nreturn execution.status",
-          "successors": [
-            7
-          ]
-        },
-        {
-          "id": 5,
-          "label": "@staticmethod",
-          "successors": [
-            7
-          ]
-        },
-        {
-          "id": 6,
-          "label": "@staticmethod\nreturn await backend.server.routers.v1.delete_graph(graph_id, user_id)",
-          "successors": [
-            7
-          ]
-        },
-        {
-          "id": 7,
-          "label": "app.dependency_overrides.update(overrides)",
-          "successors": []
         }
       ]
     }
@@ -295,8 +336,38 @@
   "blocks": [
     {
       "id": 1,
-      "label": "import contextlib; import logging; import typing; import fastapi; import fastapi.responses; import starlette.middleware.cors; import uvicorn; from autogpt_libs.feature_flag.client import (initialize_launchdarkly, shutdown_launchdarkly,); import backend.data.block; import backend.data.db; import backend.data.graph; import backend.data.user; import backend.server.routers.v1; import backend.server.v2.library.routes; import backend.server.v2.store.routes; import backend.util.service; import backend.util.settings; settings = backend.util.settings.Settings(); logger = logging.getLogger(__name__); logging.getLogger(\"autogpt_libs\").setLevel(logging.INFO);\n@contextlib.contextmanager\n        yield;\n@contextlib.asynccontextmanager\n    await backend.data.db.disconnect();\ndocs_url = (\n    \"/docs\"\n    if settings.config.app_env == backend.util.settings.AppEnvironment.LOCAL\n    else None\n);\napp = fastapi.FastAPI(\n    title=\"AutoGPT Agent Server\",\n    description=(\n        \"This server is used to execute agents that are created by the \"\n        \"AutoGPT system.\"\n    ),\n    summary=\"AutoGPT Agent Server\",\n    version=\"0.1\",\n    lifespan=lifespan_context,\n    docs_url=docs_url,\n);\napp.add_exception_handler(ValueError, handle_internal_http_error(400)); app.add_exception_handler(Exception, handle_internal_http_error(500)); app.include_router(backend.server.routers.v1.v1_router, tags=[\"v1\"], prefix=\"/api\"); app.include_router(\n    backend.server.v2.store.routes.router, tags=[\"v2\"], prefix=\"/api/store\"\n); app.include_router(\n    backend.server.v2.library.routes.router, tags=[\"v2\"], prefix=\"/api/library\"\n);\n@app.get(path=\"/health\", tags=[\"health\"], dependencies=[])\n    return {\"status\": \"healthy\"};\napp.dependency_overrides.update(overrides);",
-      "successors": []
+      "label": "import contextlib\nimport logging\nimport typing\n\nimport fastapi\nimport fastapi.responses\nimport starlette.middleware.cors\nimport uvicorn\nfrom autogpt_libs.feature_flag.client import (initialize_launchdarkly, shutdown_launchdarkly,)\n\nimport backend.data.block\nimport backend.data.db\nimport backend.data.graph\nimport backend.data.user\nimport backend.server.routers.v1\nimport backend.server.v2.library.routes\nimport backend.server.v2.store.routes\nimport backend.util.service\nimport backend.util.settings\n\nsettings = backend.util.settings.Settings()\nlogger = logging.getLogger(__name__)\n\nlogging.getLogger(\"autogpt_libs\").setLevel(logging.INFO)\n@contextlib.contextmanager",
+      "successors": [
+        {
+          "id": 3,
+          "label": "yield\n@contextlib.asynccontextmanager",
+          "successors": [
+            {
+              "id": 5,
+              "label": "await backend.data.db.disconnect()\ndocs_url = (\"/docs\" if settings.config.app_env == backend.util.settings.AppEnvironment.LOCAL else None)",
+              "successors": [
+                {
+                  "id": 7,
+                  "label": "app = fastapi.FastAPI(title=\"AutoGPT Agent Server\", description=(\"This server is used to execute agents that are created by the \" \"AutoGPT system.\"), summary=\"AutoGPT Agent Server\", version=\"0.1\", lifespan=lifespan_context, docs_url=docs_url)\nreturn handler",
+                  "successors": [
+                    {
+                      "id": 9,
+                      "label": "app.add_exception_handler(ValueError, handle_internal_http_error(400))\napp.add_exception_handler(Exception, handle_internal_http_error(500))\napp.include_router(backend.server.routers.v1.v1_router, tags=[\"v1\"], prefix=\"/api\")\napp.include_router(backend.server.v2.store.routes.router, tags=[\"v2\"], prefix=\"/api/store\")\napp.include_router(backend.server.v2.library.routes.router, tags=[\"v2\"], prefix=\"/api/library\")\n@app.get(path=\"/health\", tags=[\"health\"], dependencies=[])",
+                      "successors": [
+                        {
+                          "id": 11,
+                          "label": "return {\"status\": \"healthy\"}\napp.dependency_overrides.update(overrides)",
+                          "successors": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
     }
   ]
 }

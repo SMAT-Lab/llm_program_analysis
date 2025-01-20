@@ -22,7 +22,7 @@
           "blocks": [
             {
               "id": 1,
-              "label": "def __init__(self):\nsuper().__init__(id=\"5267326e-c4c1-4016-9f54-4e72ad02f813\", description=\"Manages HubSpot contacts - create, update, and retrieve contact information\", categories={BlockCategory.CRM}, input_schema=HubSpotContactBlock.Input, output_schema=HubSpotContactBlock.Output)",
+              "label": "def __init__(self):\nsuper().__init__(\n    id=\"5267326e-c4c1-4016-9f54-4e72ad02f813\",\n    description=\"Manages HubSpot contacts - create, update, and retrieve contact information\",\n    categories={BlockCategory.CRM},\n    input_schema=HubSpotContactBlock.Input,\n    output_schema=HubSpotContactBlock.Output,\n)",
               "successors": []
             }
           ]
@@ -38,29 +38,41 @@
           "blocks": [
             {
               "id": 1,
-              "label": "base_url = 'https://api.hubapi.com/crm/v3/objects/contacts'\nheaders = {\n    'Authorization': f'Bearer {credentials.api_key.get_secret_value()}',\n    'Content-Type': 'application/json',\n}\nif input_data.operation == 'create':\nresponse = requests.post(\n    base_url, headers=headers, json={'properties': input_data.contact_data}\n)\nresult = response.json()\nyield 'contact', result\nyield 'status', 'created'",
+              "label": "def run(\n    self, input_data: Input, *, credentials: HubSpotCredentials, **kwargs\n) -> BlockOutput:\n    base_url = \"https://api.hubapi.com/crm/v3/objects/contacts\"\n    headers = {\n        \"Authorization\": f\"Bearer {credentials.api_key.get_secret_value()}\",\n        \"Content-Type\": \"application/json\",\n    }\n\n    if input_data.operation == \"create\":",
               "successors": [
-                6
+                {
+                  "id": 2,
+                  "label": "response = requests.post(\n    base_url, headers=headers, json={\"properties\": input_data.contact_data}\n)\nresult = response.json()\nyield \"contact\", result\nyield \"status\", \"created\"",
+                  "successors": []
+                },
+                {
+                  "id": 3,
+                  "label": "elif input_data.operation == \"get\":",
+                  "successors": [
+                    {
+                      "id": 4,
+                      "label": "search_url = f\"{base_url}/search\"\nsearch_data = {\n    \"filterGroups\": [\n        {\n            \"filters\": [\n                {\n                    \"propertyName\": \"email\",\n                    \"operator\": \"EQ\",\n                    \"value\": input_data.email,\n                }\n            ]\n        }\n    ]\n}\nresponse = requests.post(search_url, headers=headers, json=search_data)\nresult = response.json()\nyield \"contact\", result.get(\"results\", [{}])[0]\nyield \"status\", \"retrieved\"",
+                      "successors": []
+                    },
+                    {
+                      "id": 5,
+                      "label": "elif input_data.operation == \"update\":\nsearch_response = requests.post(\n    f\"{base_url}/search\",\n    headers=headers,\n    json={\n        \"filterGroups\": [\n            {\n                \"filters\": [\n                    {\n                        \"propertyName\": \"email\",\n                        \"operator\": \"EQ\",\n                        \"value\": input_data.email,\n                    }\n                ]\n            }\n        ]\n    },\n)\ncontact_id = search_response.json().get(\"results\", [{}])[0].get(\"id\")\n\nif contact_id:",
+                      "successors": [
+                        {
+                          "id": 7,
+                          "label": "response = requests.patch(\n    f\"{base_url}/{contact_id}\",\n    headers=headers,\n    json={\"properties\": input_data.contact_data},\n)\nresult = response.json()\nyield \"contact\", result\nyield \"status\", \"updated\"",
+                          "successors": []
+                        },
+                        {
+                          "id": 8,
+                          "label": "else:\nyield \"contact\", {}\nyield \"status\", \"contact_not_found\"",
+                          "successors": []
+                        }
+                      ]
+                    }
+                  ]
+                }
               ]
-            },
-            {
-              "id": 6,
-              "label": "elif input_data.operation == 'get':\nsearch_url = f'{base_url}/search'\nsearch_data = {\n    'filterGroups': [\n        {\n            'filters': [\n                {\n                    'propertyName': 'email',\n                    'operator': 'EQ',\n                    'value': input_data.email,\n                }\n            ]\n        }\n    ]\n}\nresponse = requests.post(search_url, headers=headers, json=search_data)\nresult = response.json()\nyield 'contact', result.get('results', [{}])[0]\nyield 'status', 'retrieved'",
-              "successors": [
-                16
-              ]
-            },
-            {
-              "id": 16,
-              "label": "elif input_data.operation == 'update':\nsearch_response = requests.post(\n    f'{base_url}/search',\n    headers=headers,\n    json={\n        'filterGroups': [\n            {\n                'filters': [\n                    {\n                        'propertyName': 'email',\n                        'operator': 'EQ',\n                        'value': input_data.email,\n                    }\n                ]\n            }\n        ]\n    },\n)\ncontact_id = search_response.json().get('results', [{}])[0].get('id')\n\nif contact_id:\nresponse = requests.patch(\n    f'{base_url}/{contact_id}',\n    headers=headers,\n    json={'properties': input_data.contact_data},\n)\nresult = response.json()\nyield 'contact', result\nyield 'status', 'updated'",
-              "successors": [
-                25
-              ]
-            },
-            {
-              "id": 25,
-              "label": "else:\nyield 'contact', {}\nyield 'status', 'contact_not_found'",
-              "successors": []
             }
           ]
         }
@@ -77,8 +89,29 @@
           "blocks": [
             {
               "id": 1,
-              "label": "class Input(BlockSchema):\ncredentials: HubSpotCredentialsInput = HubSpotCredentialsField()\noperation: str = SchemaField(description=\"Operation to perform (create, update, get)\", default=\"get\")\ncontact_data: dict = SchemaField(description=\"Contact data for create/update operations\", default={})\nemail: str = SchemaField(description=\"Email address for get/update operations\", default=\"\")",
-              "successors": []
+              "label": "class Input(BlockSchema):",
+              "successors": [
+                {
+                  "id": 2,
+                  "label": "    credentials: HubSpotCredentialsInput = HubSpotCredentialsField()",
+                  "successors": []
+                },
+                {
+                  "id": 3,
+                  "label": "    operation: str = SchemaField(description=\"Operation to perform (create, update, get)\", default=\"get\")",
+                  "successors": []
+                },
+                {
+                  "id": 4,
+                  "label": "    contact_data: dict = SchemaField(description=\"Contact data for create/update operations\", default={})",
+                  "successors": []
+                },
+                {
+                  "id": 5,
+                  "label": "    email: str = SchemaField(description=\"Email address for get/update operations\", default=\"\")",
+                  "successors": []
+                }
+              ]
             }
           ]
         },
@@ -93,8 +126,14 @@
           "blocks": [
             {
               "id": 1,
-              "label": "class Output(BlockSchema):\ncontact: dict = SchemaField(description=\"Contact information\")\nstatus: str = SchemaField(description=\"Operation status\")",
-              "successors": []
+              "label": "class Output(BlockSchema):\n    contact: dict = SchemaField(description=\"Contact information\")",
+              "successors": [
+                {
+                  "id": 3,
+                  "label": "    status: str = SchemaField(description=\"Operation status\")",
+                  "successors": []
+                }
+              ]
             }
           ]
         }
@@ -103,8 +142,14 @@
       "blocks": [
         {
           "id": 1,
-          "label": "class HubSpotContactBlock(Block):\nstatus: str = SchemaField(description=\"Operation status\")\nyield \"status\", \"contact_not_found\"",
-          "successors": []
+          "label": "class HubSpotContactBlock(Block):\nstatus: str = SchemaField(description=\"Operation status\")",
+          "successors": [
+            {
+              "id": 3,
+              "label": "yield \"status\", \"contact_not_found\"",
+              "successors": []
+            }
+          ]
         }
       ]
     }
@@ -113,7 +158,7 @@
   "blocks": [
     {
       "id": 1,
-      "label": "from backend.blocks.hubspot._auth import (HubSpotCredentials, HubSpotCredentialsField, HubSpotCredentialsInput,)\nfrom backend.data.block import Block, BlockCategory, BlockOutput, BlockSchema\nfrom backend.data.model import SchemaField\nfrom backend.util.request import requests\nyield \"status\", \"contact_not_found\"",
+      "label": "from backend.blocks.hubspot._auth import (\n    HubSpotCredentials,\n    HubSpotCredentialsField,\n    HubSpotCredentialsInput,\n)\nfrom backend.data.block import Block, BlockCategory, BlockOutput, BlockSchema\nfrom backend.data.model import SchemaField\nfrom backend.util.request import requests\nyield \"status\", \"contact_not_found\"",
       "successors": []
     }
   ]

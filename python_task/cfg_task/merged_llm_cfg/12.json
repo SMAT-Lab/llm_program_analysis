@@ -22,7 +22,7 @@
           "blocks": [
             {
               "id": 1,
-              "label": "def __init__(self):\nsuper().__init__(\n    id=\"358924e7-9a11-4d1a-a0f2-13c67fe59e2e\",\n    description=\"This block lists all tags for a specified GitHub repository.\",\n    categories={BlockCategory.DEVELOPER_TOOLS},\n    input_schema=GithubListTagsBlock.Input,\n    output_schema=GithubListTagsBlock.Output,\n    test_input={\n        \"repo_url\": \"https://github.com/owner/repo\",\n        \"credentials\": TEST_CREDENTIALS_INPUT,\n    },\n    test_credentials=TEST_CREDENTIALS,\n    test_output=[\n        (\n            \"tag\",\n            {\n                \"name\": \"v1.0.0\",\n                \"url\": \"https://github.com/owner/repo/tree/v1.0.0\",\n            },\n        )\n    ],\n    test_mock={\n        \"list_tags\": lambda *args, **kwargs: [\n            {\n                \"name\": \"v1.0.0\",\n                \"url\": \"https://github.com/owner/repo/tree/v1.0.0\",\n            }\n        ]\n    },\n)",
+              "label": "def __init__(self):\n    super().__init__(\n        id=\"358924e7-9a11-4d1a-a0f2-13c67fe59e2e\",\n        description=\"This block lists all tags for a specified GitHub repository.\",\n        categories={BlockCategory.DEVELOPER_TOOLS},\n        input_schema=GithubListTagsBlock.Input,\n        output_schema=GithubListTagsBlock.Output,\n        test_input={\n            \"repo_url\": \"https://github.com/owner/repo\",\n            \"credentials\": TEST_CREDENTIALS_INPUT,\n        },\n        test_credentials=TEST_CREDENTIALS,\n        test_output=[\n            (\n                \"tag\",\n                {\n                    \"name\": \"v1.0.0\",\n                    \"url\": \"https://github.com/owner/repo/tree/v1.0.0\",\n                },\n            )\n        ],\n        test_mock={\n            \"list_tags\": lambda *args, **kwargs: [\n                {\n                    \"name\": \"v1.0.0\",\n                    \"url\": \"https://github.com/owner/repo/tree/v1.0.0\",\n                }\n            ]\n        },\n    )",
               "successors": []
             }
           ]
@@ -38,7 +38,7 @@
           "blocks": [
             {
               "id": 1,
-              "label": "api = get_api(credentials)\ntags_url = repo_url + \"/tags\"\nresponse = api.get(tags_url)\ndata = response.json()\nrepo_path = repo_url.replace(\"https://github.com/\", \"\")\ntags: list[GithubListTagsBlock.Output.TagItem] = [{...} for tag in data]\nreturn tags",
+              "label": "def list_tags(credentials: GithubCredentials, repo_url: str) -> list[Output.TagItem]:\napi = get_api(credentials)\ntags_url = repo_url + \"/tags\"\nresponse = api.get(tags_url)\ndata = response.json()\nrepo_path = repo_url.replace(\"https://github.com/\", \"\")\ntags: list[GithubListTagsBlock.Output.TagItem] = [\n    {\n        \"name\": tag[\"name\"],\n        \"url\": f\"https://github.com/{repo_path}/tree/{tag['name']}\"\n    }\n    for tag in data\n]\nreturn tags",
               "successors": []
             }
           ]
@@ -54,8 +54,14 @@
           "blocks": [
             {
               "id": 1,
-              "label": "tags = self.list_tags(credentials, input_data.repo_url)\nyield from (('tag', tag) for tag in tags)",
-              "successors": []
+              "label": "def run(self, input_data: Input, *, credentials: GithubCredentials, **kwargs) -> BlockOutput:\ntags = self.list_tags(credentials, input_data.repo_url)",
+              "successors": [
+                {
+                  "id": 3,
+                  "label": "yield from (('tag', tag) for tag in tags)",
+                  "successors": []
+                }
+              ]
             }
           ]
         }
@@ -72,15 +78,19 @@
           "blocks": [
             {
               "id": 1,
-              "label": "class Input(BlockSchema):\ncredentials: GithubCredentialsInput = GithubCredentialsField(\"repo\")",
+              "label": "class Input(BlockSchema):",
               "successors": [
-                3
+                {
+                  "id": 2,
+                  "label": "    credentials: GithubCredentialsInput = GithubCredentialsField(\"repo\")",
+                  "successors": []
+                },
+                {
+                  "id": 3,
+                  "label": "    repo_url: str = SchemaField(description=\"URL of the GitHub repository\", placeholder=\"https://github.com/owner/repo\")",
+                  "successors": []
+                }
               ]
-            },
-            {
-              "id": 3,
-              "label": "repo_url: str = SchemaField(description=\"URL of the GitHub repository\", placeholder=\"https://github.com/owner/repo\")",
-              "successors": []
             }
           ]
         },
@@ -102,7 +112,7 @@
               "blocks": [
                 {
                   "id": 1,
-                  "label": "class TagItem(TypedDict):\nname: str\nurl: str",
+                  "label": "class TagItem(TypedDict):\n    name: str\n    url: str",
                   "successors": []
                 }
               ]
@@ -112,7 +122,7 @@
           "blocks": [
             {
               "id": 1,
-              "label": "class Output(BlockSchema):\nurl: str\ntag: TagItem = SchemaField(title=\"Tag\", description=\"Tags with their name and file tree browser URL\")\nerror: str = SchemaField(description=\"Error message if listing tags failed\")",
+              "label": "class Output(BlockSchema):\nurl: str",
               "successors": []
             }
           ]
@@ -122,8 +132,20 @@
       "blocks": [
         {
           "id": 1,
-          "label": "class GithubListTagsBlock(Block):\nerror: str = SchemaField(description=\"Error message if listing tags failed\")\n@staticmethod\nreturn tags\nyield from ((\"tag\", tag) for tag in tags)",
-          "successors": []
+          "label": "class GithubListTagsBlock(Block):\n    error: str = SchemaField(description=\"Error message if listing tags failed\")",
+          "successors": [
+            {
+              "id": 3,
+              "label": "    @staticmethod\n        return tags",
+              "successors": [
+                {
+                  "id": 5,
+                  "label": "        yield from ((\"tag\", tag) for tag in tags)",
+                  "successors": []
+                }
+              ]
+            }
+          ]
         }
       ]
     },
@@ -144,7 +166,7 @@
           "blocks": [
             {
               "id": 1,
-              "label": "def __init__(self):\nsuper().__init__(...)",
+              "label": "def __init__(self):\nsuper().__init__(\n    id=\"74243e49-2bec-4916-8bf4-db43d44aead5\",\n    description=\"This block lists all branches for a specified GitHub repository.\",\n    categories={BlockCategory.DEVELOPER_TOOLS},\n    input_schema=GithubListBranchesBlock.Input,\n    output_schema=GithubListBranchesBlock.Output,\n    test_input={\n        \"repo_url\": \"https://github.com/owner/repo\",\n        \"credentials\": TEST_CREDENTIALS_INPUT,\n    },\n    test_credentials=TEST_CREDENTIALS,\n    test_output=[\n        (\n            \"branch\",\n            {\n                \"name\": \"main\",\n                \"url\": \"https://github.com/owner/repo/tree/main\",\n            },\n        )\n    ],\n    test_mock={\n        \"list_branches\": lambda *args, **kwargs: [\n            {\n                \"name\": \"main\",\n                \"url\": \"https://github.com/owner/repo/tree/main\",\n            }\n        ]\n    },\n)",
               "successors": []
             }
           ]
@@ -160,8 +182,14 @@
           "blocks": [
             {
               "id": 1,
-              "label": "api = get_api(credentials)\nbranches_url = repo_url + \"/branches\"\nresponse = api.get(branches_url)\ndata = response.json()\nrepo_path = repo_url.replace(\"https://github.com/\", \"\")\nbranches: list[GithubListBranchesBlock.Output.BranchItem] = [ ... ]\nreturn branches",
-              "successors": []
+              "label": "def list_branches(credentials: GithubCredentials, repo_url: str) -> list[Output.BranchItem]:\napi = get_api(credentials)\nbranches_url = repo_url + \"/branches\"\nresponse = api.get(branches_url)\ndata = response.json()\nrepo_path = repo_url.replace(\"https://github.com/\", \"\")",
+              "successors": [
+                {
+                  "id": 3,
+                  "label": "branches: list[GithubListBranchesBlock.Output.BranchItem] = [\n    {\n        \"name\": branch[\"name\"],\n        \"url\": f\"https://github.com/{repo_path}/tree/{branch['name']}\"\n    }\n    for branch in data\n]\nreturn branches",
+                  "successors": []
+                }
+              ]
             }
           ]
         },
@@ -176,8 +204,14 @@
           "blocks": [
             {
               "id": 1,
-              "label": "branches = self.list_branches(credentials, input_data.repo_url)\nyield from (('branch', branch) for branch in branches)",
-              "successors": []
+              "label": "def run(\n    self,\n    input_data: Input,\n    *,\n    credentials: GithubCredentials,\n    **kwargs,\n) -> BlockOutput:\nbranches = self.list_branches(\n    credentials,\n    input_data.repo_url,\n)",
+              "successors": [
+                {
+                  "id": 3,
+                  "label": "yield from ((\"branch\", branch) for branch in branches)",
+                  "successors": []
+                }
+              ]
             }
           ]
         }
@@ -194,7 +228,7 @@
           "blocks": [
             {
               "id": 1,
-              "label": "class Input(BlockSchema):\ncredentials: GithubCredentialsInput = GithubCredentialsField(\"repo\")\nrepo_url: str = SchemaField(description=\"URL of the GitHub repository\", placeholder=\"https://github.com/owner/repo\",",
+              "label": "class Input(BlockSchema):\n    credentials: GithubCredentialsInput = GithubCredentialsField(\"repo\")\n    repo_url: str = SchemaField(\n        description=\"URL of the GitHub repository\",\n        placeholder=\"https://github.com/owner/repo\",\n    )",
               "successors": []
             }
           ]
@@ -217,7 +251,7 @@
               "blocks": [
                 {
                   "id": 1,
-                  "label": "class BranchItem(TypedDict):\nname: str\nurl: str",
+                  "label": "class BranchItem(TypedDict):\n    name: str\n    url: str",
                   "successors": []
                 }
               ]
@@ -227,8 +261,14 @@
           "blocks": [
             {
               "id": 1,
-              "label": "class Output(BlockSchema):\nurl: str\n\nbranch: BranchItem = SchemaField(title=\"Branch\", description=\"Branches with their name and file tree browser URL\")\nerror: str = SchemaField(description=\"Error message if listing branches failed\")",
-              "successors": []
+              "label": "class Output(BlockSchema):\n    url: str",
+              "successors": [
+                {
+                  "id": 3,
+                  "label": "branch: BranchItem = SchemaField(title=\"Branch\", description=\"Branches with their name and file tree browser URL\")\nerror: str = SchemaField(description=\"Error message if listing branches failed\")",
+                  "successors": []
+                }
+              ]
             }
           ]
         }
@@ -237,8 +277,30 @@
       "blocks": [
         {
           "id": 1,
-          "label": "class GithubListBranchesBlock(Block):\nerror: str = SchemaField(description=\"Error message if listing branches failed\")\n@staticmethod\nreturn branches\nyield from ((\"branch\", branch) for branch in branches)",
-          "successors": []
+          "label": "class GithubListBranchesBlock(Block):",
+          "successors": [
+            {
+              "id": 2,
+              "label": "error: str = SchemaField(description=\"Error message if listing branches failed\")",
+              "successors": []
+            },
+            {
+              "id": 3,
+              "label": "@staticmethod",
+              "successors": [
+                {
+                  "id": 4,
+                  "label": "return branches",
+                  "successors": []
+                },
+                {
+                  "id": 5,
+                  "label": "yield from ((\"branch\", branch) for branch in branches)",
+                  "successors": []
+                }
+              ]
+            }
+          ]
         }
       ]
     },
@@ -259,7 +321,7 @@
           "blocks": [
             {
               "id": 1,
-              "label": "super().__init__(id=\"3ef1a419-3d76-4e07-b761-de9dad4d51d7\", description=\"This block lists recent discussions for a specified GitHub repository.\", categories={BlockCategory.DEVELOPER_TOOLS}, input_schema=GithubListDiscussionsBlock.Input, output_schema=GithubListDiscussionsBlock.Output, test_input={\"repo_url\": \"https://github.com/owner/repo\", \"num_discussions\": 3, \"credentials\": TEST_CREDENTIALS_INPUT,}, test_credentials=TEST_CREDENTIALS, test_output=[(\"discussion\", {\"title\": \"Discussion 1\", \"url\": \"https://github.com/owner/repo/discussions/1\",}),], test_mock={\"list_discussions\": lambda *args, **kwargs: [{\"title\": \"Discussion 1\", \"url\": \"https://github.com/owner/repo/discussions/1\",}],},)",
+              "label": "def __init__(self):\nsuper().__init__(\n    id=\"3ef1a419-3d76-4e07-b761-de9dad4d51d7\",\n    description=\"This block lists recent discussions for a specified GitHub repository.\",\n    categories={BlockCategory.DEVELOPER_TOOLS},\n    input_schema=GithubListDiscussionsBlock.Input,\n    output_schema=GithubListDiscussionsBlock.Output,\n    test_input={\n        \"repo_url\": \"https://github.com/owner/repo\",\n        \"num_discussions\": 3,\n        \"credentials\": TEST_CREDENTIALS_INPUT,\n    },\n    test_credentials=TEST_CREDENTIALS,\n    test_output=[\n        (\n            \"discussion\",\n            {\n                \"title\": \"Discussion 1\",\n                \"url\": \"https://github.com/owner/repo/discussions/1\",\n            },\n        )\n    ],\n    test_mock={\n        \"list_discussions\": lambda *args, **kwargs: [\n            {\n                \"title\": \"Discussion 1\",\n                \"url\": \"https://github.com/owner/repo/discussions/1\",\n            }\n        ]\n    },\n)",
               "successors": []
             }
           ]
@@ -275,8 +337,32 @@
           "blocks": [
             {
               "id": 1,
-              "label": "def list_discussions(credentials: GithubCredentials, repo_url: str, num_discussions: int) -> list[Output.DiscussionItem]:\napi = get_api(credentials)\nrepo_path = repo_url.replace(\"https://github.com/\", \"\")\nowner, repo = repo_path.split(\"/\")\nquery = \"\"\"\n        query($owner: String!, $repo: String!, $num: Int!) {\n            repository(owner: $owner, name: $repo) {\n                discussions(first: $num) {\n                    nodes {\n                        title\n                        url\n                    }\n                }\n            }\n        }\n        \"\"\"\nvariables = {\"owner\": owner, \"repo\": repo, \"num\": num_discussions}\nresponse = api.post(\"https://api.github.com/graphql\", json={\"query\": query, \"variables\": variables})\ndata = response.json()\ndiscussions: list[GithubListDiscussionsBlock.Output.DiscussionItem] = [{\"title\": discussion[\"title\"], \"url\": discussion[\"url\"]} for discussion in data[\"data\"][\"repository\"][\"discussions\"][\"nodes\"]]\nreturn discussions",
-              "successors": []
+              "label": "def list_discussions(\n    credentials: GithubCredentials, repo_url: str, num_discussions: int\n) -> list[Output.DiscussionItem]:\napi = get_api(credentials)",
+              "successors": [
+                {
+                  "id": 3,
+                  "label": "repo_path = repo_url.replace(\"https://github.com/\", \"\")\nowner, repo = repo_path.split(\"/\")",
+                  "successors": [
+                    {
+                      "id": 5,
+                      "label": "query = \"\"\"\n        query($owner: String!, $repo: String!, $num: Int!) {\n            repository(owner: $owner, name: $repo) {\n                discussions(first: $num) {\n                    nodes {\n                        title\n                        url\n                    }\n                }\n            }\n        }\n        \"\"\"\nvariables = {\"owner\": owner, \"repo\": repo, \"num\": num_discussions}",
+                      "successors": [
+                        {
+                          "id": 7,
+                          "label": "response = api.post(\n    \"https://api.github.com/graphql\",\n    json={\"query\": query, \"variables\": variables},\n)\ndata = response.json()",
+                          "successors": [
+                            {
+                              "id": 9,
+                              "label": "discussions: list[GithubListDiscussionsBlock.Output.DiscussionItem] = [\n    {\"title\": discussion[\"title\"], \"url\": discussion[\"url\"]}\n    for discussion in data[\"data\"][\"repository\"][\"discussions\"][\"nodes\"]\n]\nreturn discussions",
+                              "successors": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
             }
           ]
         },
@@ -291,8 +377,14 @@
           "blocks": [
             {
               "id": 1,
-              "label": "def run( self, input_data: Input, *, credentials: GithubCredentials, **kwargs, ) -> BlockOutput:\ndiscussions = self.list_discussions( credentials, input_data.repo_url, input_data.num_discussions )\nyield from ((\"discussion\", discussion) for discussion in discussions)",
-              "successors": []
+              "label": "def run(\n        self,\n        input_data: Input,\n        *,\n        credentials: GithubCredentials,\n        **kwargs,\n    ) -> BlockOutput:\ndiscussions = self.list_discussions(\n            credentials, input_data.repo_url, input_data.num_discussions\n        )",
+              "successors": [
+                {
+                  "id": 3,
+                  "label": "yield from ((\"discussion\", discussion) for discussion in discussions)",
+                  "successors": []
+                }
+              ]
             }
           ]
         }
@@ -309,7 +401,7 @@
           "blocks": [
             {
               "id": 1,
-              "label": "class Input(BlockSchema):\ncredentials: GithubCredentialsInput = GithubCredentialsField(\"repo\")\nrepo_url: str = SchemaField(description=\"URL of the GitHub repository\", placeholder=\"https://github.com/owner/repo\")\nnum_discussions: int = SchemaField(description=\"Number of discussions to fetch\", default=5)",
+              "label": "class Input(BlockSchema):\n    credentials: GithubCredentialsInput = GithubCredentialsField(\"repo\")\n    repo_url: str = SchemaField(\n        description=\"URL of the GitHub repository\",\n        placeholder=\"https://github.com/owner/repo\",\n    )\n    num_discussions: int = SchemaField(\n        description=\"Number of discussions to fetch\", default=5\n    )",
               "successors": []
             }
           ]
@@ -332,7 +424,7 @@
               "blocks": [
                 {
                   "id": 1,
-                  "label": "class DiscussionItem(TypedDict):\ntitle: str\nurl: str",
+                  "label": "class DiscussionItem(TypedDict):\n    title: str\n    url: str",
                   "successors": []
                 }
               ]
@@ -342,7 +434,7 @@
           "blocks": [
             {
               "id": 1,
-              "label": "class Output(BlockSchema):\nurl: str\ndiscussion: DiscussionItem = SchemaField(title=\"Discussion\", description=\"Discussions with their title and URL\")\nerror: str = SchemaField(description=\"Error message if listing discussions failed\")",
+              "label": "class Output(BlockSchema):\nurl: str",
               "successors": []
             }
           ]
@@ -354,20 +446,12 @@
           "id": 1,
           "label": "class GithubListDiscussionsBlock(Block):\n@staticmethod",
           "successors": [
-            3
+            {
+              "id": 3,
+              "label": "return discussions",
+              "successors": []
+            }
           ]
-        },
-        {
-          "id": 3,
-          "label": "return discussions",
-          "successors": [
-            4
-          ]
-        },
-        {
-          "id": 4,
-          "label": "yield from (('discussion', discussion) for discussion in discussions)",
-          "successors": []
         }
       ]
     },
@@ -375,7 +459,7 @@
       "name": "GithubListReleasesBlock",
       "type": "class",
       "start_line": 281,
-      "end_line": 356,
+      "end_line": 357,
       "functions": [
         {
           "name": "__init__",
@@ -388,7 +472,7 @@
           "blocks": [
             {
               "id": 1,
-              "label": "def __init__(self):\nsuper().__init__(",
+              "label": "def __init__(self):\nsuper().__init__(\n    id=\"3460367a-6ba7-4645-8ce6-47b05d040b92\",\n    description=\"This block lists all releases for a specified GitHub repository.\",\n    categories={BlockCategory.DEVELOPER_TOOLS},\n    input_schema=GithubListReleasesBlock.Input,\n    output_schema=GithubListReleasesBlock.Output,\n    test_input={\n        \"repo_url\": \"https://github.com/owner/repo\",\n        \"credentials\": TEST_CREDENTIALS_INPUT,\n    },\n    test_credentials=TEST_CREDENTIALS,\n    test_output=[\n        (\n            \"release\",\n            {\n                \"name\": \"v1.0.0\",\n                \"url\": \"https://github.com/owner/repo/releases/tag/v1.0.0\",\n            },\n        )\n    ],\n    test_mock={\n        \"list_releases\": lambda *args, **kwargs: [\n            {\n                \"name\": \"v1.0.0\",\n                \"url\": \"https://github.com/owner/repo/releases/tag/v1.0.0\",\n            }\n        ]\n    },\n)",
               "successors": []
             }
           ]
@@ -404,8 +488,26 @@
           "blocks": [
             {
               "id": 1,
-              "label": "api = get_api(credentials)\nreleases_url = repo_url + \"/releases\"\nresponse = api.get(releases_url)\ndata = response.json()\nreleases: list[GithubListReleasesBlock.Output.ReleaseItem] = [{\"name\": release[\"name\"], \"url\": release[\"html_url\"]} for release in data]\nreturn releases",
-              "successors": []
+              "label": "def list_releases( credentials: GithubCredentials, repo_url: str ) -> list[Output.ReleaseItem]:\napi = get_api(credentials)",
+              "successors": [
+                {
+                  "id": 3,
+                  "label": "releases_url = repo_url + \"/releases\"\nresponse = api.get(releases_url)",
+                  "successors": [
+                    {
+                      "id": 5,
+                      "label": "data = response.json()\nreleases: list[GithubListReleasesBlock.Output.ReleaseItem] = [ {\"name\": release[\"name\"], \"url\": release[\"html_url\"]} for release in data ]",
+                      "successors": [
+                        {
+                          "id": 7,
+                          "label": "return releases",
+                          "successors": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
             }
           ]
         },
@@ -420,8 +522,14 @@
           "blocks": [
             {
               "id": 1,
-              "label": "def run(self, input_data: Input, *, credentials: GithubCredentials, **kwargs) -> BlockOutput:\nreleases = self.list_releases(credentials, input_data.repo_url)\nyield from (('release', release) for release in releases)",
-              "successors": []
+              "label": "def run(self, input_data: Input, *, credentials: GithubCredentials, **kwargs) -> BlockOutput:\nreleases = self.list_releases(credentials, input_data.repo_url)",
+              "successors": [
+                {
+                  "id": 3,
+                  "label": "yield from ((\"release\", release) for release in releases)",
+                  "successors": []
+                }
+              ]
             }
           ]
         }
@@ -438,14 +546,7 @@
           "blocks": [
             {
               "id": 1,
-              "label": "class Input(BlockSchema):\ncredentials: GithubCredentialsInput = GithubCredentialsField(\"repo\")",
-              "successors": [
-                3
-              ]
-            },
-            {
-              "id": 3,
-              "label": "repo_url: str = SchemaField(description=\"URL of the GitHub repository\", placeholder=\"https://github.com/owner/repo\")",
+              "label": "class Input(BlockSchema):\n    credentials: GithubCredentialsInput = GithubCredentialsField(\"repo\")\n    repo_url: str = SchemaField(\n        description=\"URL of the GitHub repository\",\n        placeholder=\"https://github.com/owner/repo\",\n    )",
               "successors": []
             }
           ]
@@ -468,8 +569,19 @@
               "blocks": [
                 {
                   "id": 1,
-                  "label": "class ReleaseItem(TypedDict):\nname: str\nurl: str",
-                  "successors": []
+                  "label": "class ReleaseItem(TypedDict):",
+                  "successors": [
+                    {
+                      "id": 2,
+                      "label": "    name: str",
+                      "successors": []
+                    },
+                    {
+                      "id": 3,
+                      "label": "    url: str",
+                      "successors": []
+                    }
+                  ]
                 }
               ]
             }
@@ -478,32 +590,42 @@
           "blocks": [
             {
               "id": 1,
-              "label": "class Output(BlockSchema):\nurl: str",
+              "label": "class Output(BlockSchema):\n    url: str\nrelease: ReleaseItem = SchemaField(\n    title=\"Release\",\n    description=\"Releases with their name and file tree browser URL\",\n)",
               "successors": [
-                5
+                {
+                  "id": 3,
+                  "label": "error: str = SchemaField(description=\"Error message if listing releases failed\")",
+                  "successors": []
+                }
               ]
-            },
-            {
-              "id": 3,
-              "label": "release: ReleaseItem = SchemaField(title=\"Release\", description=\"Releases with their name and file tree browser URL\")",
-              "successors": [
-                5
-              ]
-            },
-            {
-              "id": 4,
-              "label": "error: str = SchemaField(description=\"Error message if listing releases failed\")",
-              "successors": []
             }
           ]
         }
       ],
-      "simplified_code": "class GithubListReleasesBlock(Block):\n        )\n\n        error: str = SchemaField(description=\"Error message if listing releases failed\")\n\n        )\n\n    @staticmethod\n        return releases\n\n        yield from ((\"release\", release) for release in releases)\n",
+      "simplified_code": "class GithubListReleasesBlock(Block):\n        )\n\n        error: str = SchemaField(description=\"Error message if listing releases failed\")\n\n        )\n\n    @staticmethod\n        return releases\n\n        yield from ((\"release\", release) for release in releases)\n\n",
       "blocks": [
         {
           "id": 1,
-          "label": "class GithubListReleasesBlock(Block):\nerror: str = SchemaField(description=\"Error message if listing releases failed\")\n@staticmethod\nreturn releases\nyield from ((\"release\", release) for release in releases)",
-          "successors": []
+          "label": "class GithubListReleasesBlock(Block):\n)",
+          "successors": [
+            {
+              "id": 3,
+              "label": "error: str = SchemaField(description=\"Error message if listing releases failed\")\n)",
+              "successors": [
+                {
+                  "id": 5,
+                  "label": "@staticmethod\nreturn releases",
+                  "successors": [
+                    {
+                      "id": 7,
+                      "label": "yield from ((\"release\", release) for release in releases)",
+                      "successors": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
         }
       ]
     },
@@ -524,7 +646,7 @@
           "blocks": [
             {
               "id": 1,
-              "label": "def __init__(self):\nsuper().__init__(id=\"87ce6c27-5752-4bbc-8e26-6da40a3dcfd3\", description=\"This block reads the content of a specified file from a GitHub repository.\", categories={BlockCategory.DEVELOPER_TOOLS}, input_schema=GithubReadFileBlock.Input, output_schema=GithubReadFileBlock.Output, test_input={\"repo_url\": \"https://github.com/owner/repo\", \"file_path\": \"path/to/file\", \"branch\": \"master\", \"credentials\": TEST_CREDENTIALS_INPUT}, test_credentials=TEST_CREDENTIALS, test_output=[(\"raw_content\", \"RmlsZSBjb250ZW50\"), (\"text_content\", \"File content\"), (\"size\", 13)], test_mock={\"read_file\": lambda *args, **kwargs: (\"RmlsZSBjb250ZW50\", 13)})",
+              "label": "def __init__(self):\nsuper().__init__(\n    id=\"87ce6c27-5752-4bbc-8e26-6da40a3dcfd3\",\n    description=\"This block reads the content of a specified file from a GitHub repository.\",\n    categories={BlockCategory.DEVELOPER_TOOLS},\n    input_schema=GithubReadFileBlock.Input,\n    output_schema=GithubReadFileBlock.Output,\n    test_input={\n        \"repo_url\": \"https://github.com/owner/repo\",\n        \"file_path\": \"path/to/file\",\n        \"branch\": \"master\",\n        \"credentials\": TEST_CREDENTIALS_INPUT,\n    },\n    test_credentials=TEST_CREDENTIALS,\n    test_output=[\n        (\"raw_content\", \"RmlsZSBjb250ZW50\"),\n        (\"text_content\", \"File content\"),\n        (\"size\", 13),\n    ],\n    test_mock={\"read_file\": lambda *args, **kwargs: (\"RmlsZSBjb250ZW50\", 13)},\n)",
               "successors": []
             }
           ]
@@ -540,25 +662,24 @@
           "blocks": [
             {
               "id": 1,
-              "label": "api = get_api(credentials)\ncontent_url = repo_url + f\"/contents/{file_path}?ref={branch}\"\nresponse = api.get(content_url)\ncontent = response.json()\nif isinstance(content, list):\nif not (file := next((f for f in content if f[\"type\"] == \"file\"), None)):\nraise TypeError(\"Not a file\")",
-              "successors": []
-            },
-            {
-              "id": 5,
-              "label": "content = file",
+              "label": "def read_file(credentials: GithubCredentials, repo_url: str, file_path: str, branch: str) -> tuple[str, int]:\napi = get_api(credentials)\ncontent_url = repo_url + f\"/contents/{file_path}?ref={branch}\"\nresponse = api.get(content_url)\ncontent = response.json()",
               "successors": [
-                6
+                {
+                  "id": 3,
+                  "label": "if isinstance(content, list):\nif not (file := next((f for f in content if f[\"type\"] == \"file\"), None)):\n    raise TypeError(\"Not a file\")\ncontent = file",
+                  "successors": []
+                },
+                {
+                  "id": 5,
+                  "label": "if content[\"type\"] != \"file\":\n    raise TypeError(\"Not a file\")",
+                  "successors": []
+                },
+                {
+                  "id": 6,
+                  "label": "return content[\"content\"], content[\"size\"]",
+                  "successors": []
+                }
               ]
-            },
-            {
-              "id": 6,
-              "label": "if content[\"type\"] != \"file\":\nraise TypeError(\"Not a file\")",
-              "successors": []
-            },
-            {
-              "id": 8,
-              "label": "return content[\"content\"], content[\"size\"]",
-              "successors": []
             }
           ]
         },
@@ -573,8 +694,20 @@
           "blocks": [
             {
               "id": 1,
-              "label": "def run(self, input_data: Input, *, credentials: GithubCredentials, **kwargs) -> BlockOutput:\nraw_content, size = self.read_file(credentials, input_data.repo_url, input_data.file_path.lstrip(\"/\"), input_data.branch)\nyield \"raw_content\", raw_content\nyield \"text_content\", base64.b64decode(raw_content).decode(\"utf-8\")\nyield \"size\", size",
-              "successors": []
+              "label": "def run( self, input_data: Input, *, credentials: GithubCredentials, **kwargs, ) -> BlockOutput:\n    raw_content, size = self.read_file( credentials, input_data.repo_url, input_data.file_path.lstrip(\"/\"), input_data.branch, )",
+              "successors": [
+                {
+                  "id": 3,
+                  "label": "    yield \"raw_content\", raw_content\n    yield \"text_content\", base64.b64decode(raw_content).decode(\"utf-8\")",
+                  "successors": [
+                    {
+                      "id": 5,
+                      "label": "    yield \"size\", size",
+                      "successors": []
+                    }
+                  ]
+                }
+              ]
             }
           ]
         }
@@ -591,8 +724,29 @@
           "blocks": [
             {
               "id": 1,
-              "label": "class Input(BlockSchema):\ncredentials: GithubCredentialsInput = GithubCredentialsField(\"repo\")\nrepo_url: str = SchemaField(...)\nfile_path: str = SchemaField(...)\nbranch: str = SchemaField(...)",
-              "successors": []
+              "label": "class Input(BlockSchema):",
+              "successors": [
+                {
+                  "id": 2,
+                  "label": "credentials: GithubCredentialsInput = GithubCredentialsField(\"repo\")",
+                  "successors": []
+                },
+                {
+                  "id": 3,
+                  "label": "repo_url: str = SchemaField(description=\"URL of the GitHub repository\", placeholder=\"https://github.com/owner/repo\")",
+                  "successors": []
+                },
+                {
+                  "id": 4,
+                  "label": "file_path: str = SchemaField(description=\"Path to the file in the repository\", placeholder=\"path/to/file\")",
+                  "successors": []
+                },
+                {
+                  "id": 5,
+                  "label": "branch: str = SchemaField(description=\"Branch to read from\", placeholder=\"branch_name\", default=\"master\")",
+                  "successors": []
+                }
+              ]
             }
           ]
         },
@@ -607,8 +761,20 @@
           "blocks": [
             {
               "id": 1,
-              "label": "class Output(BlockSchema):\ntext_content: str = SchemaField(description=\"Content of the file (decoded as UTF-8 text)\")\nraw_content: str = SchemaField(description=\"Raw base64-encoded content of the file\")\nsize: int = SchemaField(description=\"The size of the file (in bytes)\")\nerror: str = SchemaField(description=\"Error message if the file reading failed\")",
-              "successors": []
+              "label": "class Output(BlockSchema):\ntext_content: str = SchemaField(\n    description=\"Content of the file (decoded as UTF-8 text)\"\n)",
+              "successors": [
+                {
+                  "id": 3,
+                  "label": "raw_content: str = SchemaField(\n    description=\"Raw base64-encoded content of the file\"\n)\nsize: int = SchemaField(description=\"The size of the file (in bytes)\")",
+                  "successors": [
+                    {
+                      "id": 5,
+                      "label": "error: str = SchemaField(description=\"Error message if the file reading failed\")",
+                      "successors": []
+                    }
+                  ]
+                }
+              ]
             }
           ]
         }
@@ -617,8 +783,20 @@
       "blocks": [
         {
           "id": 1,
-          "label": "class GithubReadFileBlock(Block):\npass",
-          "successors": []
+          "label": "class GithubReadFileBlock(Block):\nerror: str = SchemaField(description=\"Error message if the file reading failed\")",
+          "successors": [
+            {
+              "id": 3,
+              "label": "@staticmethod\nreturn content[\"content\"], content[\"size\"]",
+              "successors": [
+                {
+                  "id": 5,
+                  "label": "yield \"size\", size",
+                  "successors": []
+                }
+              ]
+            }
+          ]
         }
       ]
     },
@@ -639,7 +817,7 @@
           "blocks": [
             {
               "id": 1,
-              "label": "super().__init__(id=\"1355f863-2db3-4d75-9fba-f91e8a8ca400\", description=\"This block reads the content of a specified folder from a GitHub repository.\", categories={BlockCategory.DEVELOPER_TOOLS}, input_schema=GithubReadFolderBlock.Input, output_schema=GithubReadFolderBlock.Output, test_input={\"repo_url\": \"https://github.com/owner/repo\", \"folder_path\": \"path/to/folder\", \"branch\": \"master\", \"credentials\": TEST_CREDENTIALS_INPUT}, test_credentials=TEST_CREDENTIALS, test_output=[ ( \"file\", { \"name\": \"file1.txt\", \"path\": \"path/to/folder/file1.txt\", \"size\": 1337, }, ), (\"dir\", {\"name\": \"dir2\", \"path\": \"path/to/folder/dir2\"}), ], test_mock={ \"read_folder\": lambda *args, **kwargs: ( [ { \"name\": \"file1.txt\", \"path\": \"path/to/folder/file1.txt\", \"size\": 1337, } ], [{\"name\": \"dir2\", \"path\": \"path/to/folder/dir2\"}], ) }, )",
+              "label": "def __init__(self):\nsuper().__init__(\n    id=\"1355f863-2db3-4d75-9fba-f91e8a8ca400\",\n    description=\"This block reads the content of a specified folder from a GitHub repository.\",\n    categories={BlockCategory.DEVELOPER_TOOLS},\n    input_schema=GithubReadFolderBlock.Input,\n    output_schema=GithubReadFolderBlock.Output,\n    test_input={\n        \"repo_url\": \"https://github.com/owner/repo\",\n        \"folder_path\": \"path/to/folder\",\n        \"branch\": \"master\",\n        \"credentials\": TEST_CREDENTIALS_INPUT,\n    },\n    test_credentials=TEST_CREDENTIALS,\n    test_output=[\n        (\n            \"file\",\n            {\n                \"name\": \"file1.txt\",\n                \"path\": \"path/to/folder/file1.txt\",\n                \"size\": 1337,\n            },\n        ),\n        (\"dir\", {\"name\": \"dir2\", \"path\": \"path/to/folder/dir2\"}),\n    ],\n    test_mock={\n        \"read_folder\": lambda *args, **kwargs: (\n            [\n                {\n                    \"name\": \"file1.txt\",\n                    \"path\": \"path/to/folder/file1.txt\",\n                    \"size\": 1337,\n                }\n            ],\n            [{\"name\": \"dir2\", \"path\": \"path/to/folder/dir2\"}],\n        )\n    },\n)",
               "successors": []
             }
           ]
@@ -655,13 +833,20 @@
           "blocks": [
             {
               "id": 1,
-              "label": "api = get_api(credentials)\ncontents_url = repo_url + f\"/contents/{folder_path}?ref={branch}\"\nresponse = api.get(contents_url)\ncontent = response.json()\nif not isinstance(content, list):\nraise TypeError(\"Not a folder\")",
-              "successors": []
-            },
-            {
-              "id": 4,
-              "label": "files = [\n    GithubReadFolderBlock.Output.FileEntry(\n        name=entry[\"name\"],\n        path=entry[\"path\"],\n        size=entry[\"size\"],\n    )\n    for entry in content\n    if entry[\"type\"] == \"file\"\n]\ndirs = [\n    GithubReadFolderBlock.Output.DirEntry(\n        name=entry[\"name\"],\n        path=entry[\"path\"],\n    )\n    for entry in content\n    if entry[\"type\"] == \"dir\"\n]\nreturn files, dirs",
-              "successors": []
+              "label": "def read_folder(\n    credentials: GithubCredentials, repo_url: str, folder_path: str, branch: str\n) -> tuple[list[Output.FileEntry], list[Output.DirEntry]]:\n    api = get_api(credentials)\n    contents_url = repo_url + f\"/contents/{folder_path}?ref={branch}\"\n    response = api.get(contents_url)\n    content = response.json()\nif not isinstance(content, list):\n    raise TypeError(\"Not a folder\")",
+              "successors": [
+                {
+                  "id": 3,
+                  "label": "files = [\n    GithubReadFolderBlock.Output.FileEntry(\n        name=entry[\"name\"],\n        path=entry[\"path\"],\n        size=entry[\"size\"],\n    )\n    for entry in content\n    if entry[\"type\"] == \"file\"\n]\ndirs = [\n    GithubReadFolderBlock.Output.DirEntry(\n        name=entry[\"name\"],\n        path=entry[\"path\"],\n    )\n    for entry in content\n    if entry[\"type\"] == \"dir\"\n]",
+                  "successors": [
+                    {
+                      "id": 5,
+                      "label": "return files, dirs",
+                      "successors": []
+                    }
+                  ]
+                }
+              ]
             }
           ]
         },
@@ -676,8 +861,14 @@
           "blocks": [
             {
               "id": 1,
-              "label": "files, dirs = self.read_folder(credentials, input_data.repo_url, input_data.folder_path.lstrip('/'), input_data.branch)\nyield from (('file', file) for file in files)\nyield from (('dir', dir) for dir in dirs)",
-              "successors": []
+              "label": "def run(self, input_data: Input, *, credentials: GithubCredentials, **kwargs) -> BlockOutput:\nfiles, dirs = self.read_folder(credentials, input_data.repo_url, input_data.folder_path.lstrip(\"/\"), input_data.branch)",
+              "successors": [
+                {
+                  "id": 3,
+                  "label": "yield from ((\"file\", file) for file in files)\nyield from ((\"dir\", dir) for dir in dirs)",
+                  "successors": []
+                }
+              ]
             }
           ]
         }
@@ -694,8 +885,20 @@
           "blocks": [
             {
               "id": 1,
-              "label": "class Input(BlockSchema): credentials: GithubCredentialsInput = GithubCredentialsField(\"repo\") repo_url: str = SchemaField( description=\"URL of the GitHub repository\", placeholder=\"https://github.com/owner/repo\", ) folder_path: str = SchemaField( description=\"Path to the folder in the repository\", placeholder=\"path/to/folder\", ) branch: str = SchemaField( description=\"Branch name to read from (defaults to master)\", placeholder=\"branch_name\", default=\"master\", )",
-              "successors": []
+              "label": "class Input(BlockSchema):\n    credentials: GithubCredentialsInput = GithubCredentialsField(\"repo\")",
+              "successors": [
+                {
+                  "id": 3,
+                  "label": "    repo_url: str = SchemaField(description=\"URL of the GitHub repository\", placeholder=\"https://github.com/owner/repo\")\n    folder_path: str = SchemaField(description=\"Path to the folder in the repository\", placeholder=\"path/to/folder\")",
+                  "successors": [
+                    {
+                      "id": 5,
+                      "label": "    branch: str = SchemaField(description=\"Branch name to read from (defaults to master)\", placeholder=\"branch_name\", default=\"master\")",
+                      "successors": []
+                    }
+                  ]
+                }
+              ]
             }
           ]
         },
@@ -717,7 +920,7 @@
               "blocks": [
                 {
                   "id": 1,
-                  "label": "class DirEntry(TypedDict):\nname: str\npath: str",
+                  "label": "class DirEntry(TypedDict):\n    name: str\n    path: str",
                   "successors": []
                 }
               ]
@@ -733,7 +936,7 @@
               "blocks": [
                 {
                   "id": 1,
-                  "label": "class FileEntry(TypedDict):\nname: str; path: str; size: int",
+                  "label": "class FileEntry(TypedDict):\n    name: str\n    path: str\n    size: int",
                   "successors": []
                 }
               ]
@@ -743,8 +946,20 @@
           "blocks": [
             {
               "id": 1,
-              "label": "class Output(BlockSchema):\npath: str\nsize: int\nfile: FileEntry = SchemaField(description=\"Files in the folder\")\ndir: DirEntry = SchemaField(description=\"Directories in the folder\")\nerror: str = SchemaField(description=\"Error message if reading the folder failed\")",
-              "successors": []
+              "label": "class Output(BlockSchema):\n    path: str",
+              "successors": [
+                {
+                  "id": 3,
+                  "label": "    size: int\nfile: FileEntry = SchemaField(description=\"Files in the folder\")",
+                  "successors": [
+                    {
+                      "id": 5,
+                      "label": "dir: DirEntry = SchemaField(description=\"Directories in the folder\")\nerror: str = SchemaField(description=\"Error message if reading the folder failed\")",
+                      "successors": []
+                    }
+                  ]
+                }
+              ]
             }
           ]
         }
@@ -753,8 +968,24 @@
       "blocks": [
         {
           "id": 1,
-          "label": "class GithubReadFolderBlock(Block):\npass",
-          "successors": []
+          "label": "class GithubReadFolderBlock(Block):",
+          "successors": [
+            {
+              "id": 2,
+              "label": "",
+              "successors": []
+            },
+            {
+              "id": 3,
+              "label": "",
+              "successors": []
+            },
+            {
+              "id": 4,
+              "label": "",
+              "successors": []
+            }
+          ]
         }
       ]
     },
@@ -775,7 +1006,7 @@
           "blocks": [
             {
               "id": 1,
-              "label": "def __init__(self):\nsuper().__init__(",
+              "label": "def __init__(self):\nsuper().__init__(\n    id=\"944cc076-95e7-4d1b-b6b6-b15d8ee5448d\",\n    description=\"This block creates a new branch from a specified source branch.\",\n    categories={BlockCategory.DEVELOPER_TOOLS},\n    input_schema=GithubMakeBranchBlock.Input,\n    output_schema=GithubMakeBranchBlock.Output,\n    test_input={\n        \"repo_url\": \"https://github.com/owner/repo\",\n        \"new_branch\": \"new_branch_name\",\n        \"source_branch\": \"source_branch_name\",\n        \"credentials\": TEST_CREDENTIALS_INPUT,\n    },\n    test_credentials=TEST_CREDENTIALS,\n    test_output=[(\"status\", \"Branch created successfully\")],\n    test_mock={\n        \"create_branch\": lambda *args, **kwargs: \"Branch created successfully\"\n    },\n)",
               "successors": []
             }
           ]
@@ -791,8 +1022,32 @@
           "blocks": [
             {
               "id": 1,
-              "label": "api = get_api(credentials)\nref_url = repo_url + f\"/git/refs/heads/{source_branch}\"\nresponse = api.get(ref_url)\nsha = response.json()[\"object\"][\"sha\"]\ncreate_ref_url = repo_url + \"/git/refs\"\ndata = {\"ref\": f\"refs/heads/{new_branch}\", \"sha\": sha}\nresponse = api.post(create_ref_url, json=data)\nreturn \"Branch created successfully\"",
-              "successors": []
+              "label": "def create_branch(\n    credentials: GithubCredentials,\n    repo_url: str,\n    new_branch: str,\n    source_branch: str,\n) -> str:\n    api = get_api(credentials)",
+              "successors": [
+                {
+                  "id": 3,
+                  "label": "    ref_url = repo_url + f\"/git/refs/heads/{source_branch}\"\n    response = api.get(ref_url)",
+                  "successors": [
+                    {
+                      "id": 5,
+                      "label": "    sha = response.json()[\"object\"][\"sha\"]\n    create_ref_url = repo_url + \"/git/refs\"",
+                      "successors": [
+                        {
+                          "id": 7,
+                          "label": "    data = {\"ref\": f\"refs/heads/{new_branch}\", \"sha\": sha}\n    response = api.post(create_ref_url, json=data)",
+                          "successors": [
+                            {
+                              "id": 9,
+                              "label": "    return \"Branch created successfully\"",
+                              "successors": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
             }
           ]
         },
@@ -807,8 +1062,14 @@
           "blocks": [
             {
               "id": 1,
-              "label": "def run(self, input_data: Input, *, credentials: GithubCredentials, **kwargs) -> BlockOutput:\nstatus = self.create_branch(credentials, input_data.repo_url, input_data.new_branch, input_data.source_branch)\nyield 'status', status",
-              "successors": []
+              "label": "def run(\n    self,\n    input_data: Input,\n    *,\n    credentials: GithubCredentials,\n    **kwargs,\n) -> BlockOutput:\nstatus = self.create_branch(\n    credentials,\n    input_data.repo_url,\n    input_data.new_branch,\n    input_data.source_branch,\n)",
+              "successors": [
+                {
+                  "id": 3,
+                  "label": "yield \"status\", status",
+                  "successors": []
+                }
+              ]
             }
           ]
         }
@@ -825,8 +1086,29 @@
           "blocks": [
             {
               "id": 1,
-              "label": "class Input(BlockSchema):\ncredentials: GithubCredentialsInput = GithubCredentialsField(\"repo\")\nrepo_url: str = SchemaField(description=\"URL of the GitHub repository\", placeholder=\"https://github.com/owner/repo\")\nnew_branch: str = SchemaField(description=\"Name of the new branch\", placeholder=\"new_branch_name\")\nsource_branch: str = SchemaField(description=\"Name of the source branch\", placeholder=\"source_branch_name\")",
-              "successors": []
+              "label": "class Input(BlockSchema):",
+              "successors": [
+                {
+                  "id": 2,
+                  "label": "    credentials: GithubCredentialsInput = GithubCredentialsField(\"repo\")",
+                  "successors": []
+                },
+                {
+                  "id": 3,
+                  "label": "    repo_url: str = SchemaField(\n        description=\"URL of the GitHub repository\",\n        placeholder=\"https://github.com/owner/repo\",\n    )",
+                  "successors": []
+                },
+                {
+                  "id": 4,
+                  "label": "    new_branch: str = SchemaField(\n        description=\"Name of the new branch\",\n        placeholder=\"new_branch_name\",\n    )",
+                  "successors": []
+                },
+                {
+                  "id": 5,
+                  "label": "    source_branch: str = SchemaField(\n        description=\"Name of the source branch\",\n        placeholder=\"source_branch_name\",\n    )",
+                  "successors": []
+                }
+              ]
             }
           ]
         },
@@ -841,21 +1123,37 @@
           "blocks": [
             {
               "id": 1,
-              "label": "class Output(BlockSchema):\nstatus: str = SchemaField(description=\"Status of the branch creation operation\")",
+              "label": "class Output(BlockSchema):",
               "successors": [
-                3
+                {
+                  "id": 2,
+                  "label": "    status: str = SchemaField(description=\"Status of the branch creation operation\")",
+                  "successors": []
+                },
+                {
+                  "id": 3,
+                  "label": "    error: str = SchemaField(description=\"Error message if the branch creation failed\")",
+                  "successors": []
+                }
               ]
-            },
-            {
-              "id": 3,
-              "label": "error: str = SchemaField(description=\"Error message if the branch creation failed\")",
-              "successors": []
             }
           ]
         }
       ],
       "simplified_code": "class GithubMakeBranchBlock(Block):\n        )\n\n        )\n\n        )\n\n    @staticmethod\n        return \"Branch created successfully\"\n\n        yield \"status\", status\n\n",
-      "blocks": []
+      "blocks": [
+        {
+          "id": 1,
+          "label": "class GithubMakeBranchBlock(Block):\n@staticmethod",
+          "successors": [
+            {
+              "id": 3,
+              "label": "return \"Branch created successfully\"",
+              "successors": []
+            }
+          ]
+        }
+      ]
     },
     {
       "name": "GithubDeleteBranchBlock",
@@ -874,7 +1172,7 @@
           "blocks": [
             {
               "id": 1,
-              "label": "def __init__(self):\nsuper().__init__(id=\"0d4130f7-e0ab-4d55-adc3-0a40225e80f4\", description=\"This block deletes a specified branch.\", categories={BlockCategory.DEVELOPER_TOOLS}, input_schema=GithubDeleteBranchBlock.Input, output_schema=GithubDeleteBranchBlock.Output, test_input={\"repo_url\": \"https://github.com/owner/repo\", \"branch\": \"branch_name\", \"credentials\": TEST_CREDENTIALS_INPUT}, test_credentials=TEST_CREDENTIALS, test_output=[(\"status\", \"Branch deleted successfully\")], test_mock={\"delete_branch\": lambda *args, **kwargs: \"Branch deleted successfully\"})",
+              "label": "def __init__(self):\nsuper().__init__(\n    id=\"0d4130f7-e0ab-4d55-adc3-0a40225e80f4\",\n    description=\"This block deletes a specified branch.\",\n    categories={BlockCategory.DEVELOPER_TOOLS},\n    input_schema=GithubDeleteBranchBlock.Input,\n    output_schema=GithubDeleteBranchBlock.Output,\n    test_input={\n        \"repo_url\": \"https://github.com/owner/repo\",\n        \"branch\": \"branch_name\",\n        \"credentials\": TEST_CREDENTIALS_INPUT,\n    },\n    test_credentials=TEST_CREDENTIALS,\n    test_output=[(\"status\", \"Branch deleted successfully\")],\n    test_mock={\n        \"delete_branch\": lambda *args, **kwargs: \"Branch deleted successfully\"\n    },\n)",
               "successors": []
             }
           ]
@@ -890,7 +1188,7 @@
           "blocks": [
             {
               "id": 1,
-              "label": "def delete_branch(credentials: GithubCredentials, repo_url: str, branch: str) -> str:\napi = get_api(credentials)\nref_url = repo_url + f\"/git/refs/heads/{branch}\"\napi.delete(ref_url)\nreturn \"Branch deleted successfully\"",
+              "label": "def delete_branch(\n    credentials: GithubCredentials, repo_url: str, branch: str\n) -> str:\napi = get_api(credentials)\nref_url = repo_url + f\"/git/refs/heads/{branch}\"\napi.delete(ref_url)\nreturn \"Branch deleted successfully\"",
               "successors": []
             }
           ]
@@ -924,8 +1222,14 @@
           "blocks": [
             {
               "id": 1,
-              "label": "class Input(BlockSchema):\ncredentials: GithubCredentialsInput = GithubCredentialsField(\"repo\")\nrepo_url: str = SchemaField(description=\"URL of the GitHub repository\", placeholder=\"https://github.com/owner/repo\")\nbranch: str = SchemaField(description=\"Name of the branch to delete\", placeholder=\"branch_name\")",
-              "successors": []
+              "label": "class Input(BlockSchema):\n    credentials: GithubCredentialsInput = GithubCredentialsField(\"repo\")",
+              "successors": [
+                {
+                  "id": 3,
+                  "label": "    repo_url: str = SchemaField(\n        description=\"URL of the GitHub repository\",\n        placeholder=\"https://github.com/owner/repo\",\n    )\n    branch: str = SchemaField(\n        description=\"Name of the branch to delete\",\n        placeholder=\"branch_name\",\n    )",
+                  "successors": []
+                }
+              ]
             }
           ]
         },
@@ -940,8 +1244,14 @@
           "blocks": [
             {
               "id": 1,
-              "label": "class Output(BlockSchema):\nstatus: str = SchemaField(description=\"Status of the branch deletion operation\")\nerror: str = SchemaField(description=\"Error message if the branch deletion failed\")",
-              "successors": []
+              "label": "class Output(BlockSchema):\n    status: str = SchemaField(description=\"Status of the branch deletion operation\")",
+              "successors": [
+                {
+                  "id": 3,
+                  "label": "    error: str = SchemaField(description=\"Error message if the branch deletion failed\")",
+                  "successors": []
+                }
+              ]
             }
           ]
         }
@@ -950,17 +1260,28 @@
       "blocks": [
         {
           "id": 1,
-          "label": "class GithubDeleteBranchBlock(Block):\n@staticmethod\nreturn \"Branch deleted successfully\"\nyield \"status\", status",
-          "successors": []
+          "label": "class GithubDeleteBranchBlock(Block):",
+          "successors": [
+            {
+              "id": 2,
+              "label": "@staticmethod\nreturn \"Branch deleted successfully\"",
+              "successors": []
+            },
+            {
+              "id": 4,
+              "label": "yield \"status\", status",
+              "successors": []
+            }
+          ]
         }
       ]
     }
   ],
-  "simplified_code": "import base64\n\nfrom typing_extensions import TypedDict\n\nfrom backend.data.block import Block, BlockCategory, BlockOutput, BlockSchema\nfrom backend.data.model import SchemaField\n\nfrom ._api import get_api\nfrom ._auth import (\n    TEST_CREDENTIALS,\n    TEST_CREDENTIALS_INPUT,\n    GithubCredentials,\n    GithubCredentialsField,\n    GithubCredentialsInput,\n)\n\n\n\n\n\n\n\n\n\n\n\n\n        yield \"status\", status",
+  "simplified_code": "import base64\n\nfrom typing_extensions import TypedDict\n\nfrom backend.data.block import Block, BlockCategory, BlockOutput, BlockSchema\nfrom backend.data.model import SchemaField\n\nfrom ._api import get_api\nfrom ._auth import (\n    TEST_CREDENTIALS,\n    TEST_CREDENTIALS_INPUT,\n    GithubCredentials,\n    GithubCredentialsField,\n    GithubCredentialsInput,\n)\n\n\n\n\n\n\n\n\n\n\n\n        yield \"status\", status",
   "blocks": [
     {
       "id": 1,
-      "label": "import base64\nfrom typing_extensions import TypedDict\nfrom backend.data.block import Block, BlockCategory, BlockOutput, BlockSchema\nfrom backend.data.model import SchemaField\nfrom ._api import get_api\nfrom ._auth import (TEST_CREDENTIALS, TEST_CREDENTIALS_INPUT, GithubCredentials, GithubCredentialsField, GithubCredentialsInput, )\nyield 'status', status",
+      "label": "import base64\n\nfrom typing_extensions import TypedDict\n\nfrom backend.data.block import Block, BlockCategory, BlockOutput, BlockSchema\nfrom backend.data.model import SchemaField\n\nfrom ._api import get_api\nfrom ._auth import (\n    TEST_CREDENTIALS,\n    TEST_CREDENTIALS_INPUT,\n    GithubCredentials,\n    GithubCredentialsField,\n    GithubCredentialsInput,\n)\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n    yield \"status\", status",
       "successors": []
     }
   ]

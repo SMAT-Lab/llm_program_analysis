@@ -15,8 +15,14 @@
       "blocks": [
         {
           "id": 1,
-          "label": "result = await AgentGraphExecution.prisma().create(...)\nreturn result.id, [ExecutionResult.from_db(execution) for execution in result.AgentNodeExecutions or []]",
-          "successors": []
+          "label": "async def create_graph_execution(\n    graph_id: str,\n    graph_version: int,\n    nodes_input: list[tuple[str, BlockInput]],\n    user_id: str,\n) -> tuple[str, list[ExecutionResult]]:\n\"\"\"\n    Create a new AgentGraphExecution record.\n    Returns:\n        The id of the AgentGraphExecution and the list of ExecutionResult for each node.\n    \"\"\"",
+          "successors": [
+            {
+              "id": 3,
+              "label": "result = await AgentGraphExecution.prisma().create(\n    data={\n        \"agentGraphId\": graph_id,\n        \"agentGraphVersion\": graph_version,\n        \"executionStatus\": ExecutionStatus.QUEUED,\n        \"AgentNodeExecutions\": {\n            \"create\": [  # type: ignore\n                {\n                    \"agentNodeId\": node_id,\n                    \"executionStatus\": ExecutionStatus.INCOMPLETE,\n                    \"Input\": {\n                        \"create\": [\n                            {\"name\": name, \"data\": json.dumps(data)}\n                            for name, data in node_input.items()\n                        ]\n                    },\n                }\n                for node_id, node_input in nodes_input\n            ]\n        },\n        \"userId\": user_id,\n    },\n    include=GRAPH_EXECUTION_INCLUDE,\n)\nreturn result.id, [\n    ExecutionResult.from_db(execution)\n    for execution in result.AgentNodeExecutions or []\n]",
+              "successors": []
+            }
+          ]
         }
       ]
     },
@@ -31,13 +37,36 @@
       "blocks": [
         {
           "id": 1,
-          "label": "existing_execution = await AgentNodeExecution.prisma().find_first(...)  # Initial prisma query\njson_input_data = json.dumps(input_data)\nif existing_execution:\nawait AgentNodeExecutionInputOutput.prisma().create(...)  # Creating input-output\nreturn existing_execution.id, {...}  # Returning existing execution information",
-          "successors": []
-        },
-        {
-          "id": 7,
-          "label": "result = await AgentNodeExecution.prisma().create(...)  # Creating a new AgentNodeExecution\nreturn result.id, {input_name: input_data}",
-          "successors": []
+          "label": "async def upsert_execution_input(\n    node_id: str,\n    graph_exec_id: str,\n    input_name: str,\n    input_data: Any,\n    node_exec_id: str | None = None,\n) -> tuple[str, BlockInput]:\n\"\"\"\n    Insert AgentNodeExecutionInputOutput record for as one of AgentNodeExecution.Input.\n    If there is no AgentNodeExecution that has no `input_name` as input, create new one.\n\n    Args:\n        node_id: The id of the AgentNode.\n        graph_exec_id: The id of the AgentGraphExecution.\n        input_name: The name of the input data.\n        input_data: The input data to be inserted.\n        node_exec_id: [Optional] The id of the AgentNodeExecution that has no `input_name` as input. If not provided, it will find the eligible incomplete AgentNodeExecution or create a new one.\n\n    Returns:\n        * The id of the created or existing AgentNodeExecution.\n        * Dict of node input data, key is the input name, value is the input data.\n    \"\"\"",
+          "successors": [
+            {
+              "id": 3,
+              "label": "existing_execution = await AgentNodeExecution.prisma().find_first(\n    where={  # type: ignore\n        **({\"id\": node_exec_id} if node_exec_id else {}),\n        \"agentNodeId\": node_id,\n        \"agentGraphExecutionId\": graph_exec_id,\n        \"executionStatus\": ExecutionStatus.INCOMPLETE,\n        \"Input\": {\"every\": {\"name\": {\"not\": input_name}}},\n    },\n    order={\"addedTime\": \"asc\"},\n    include={\"Input\": True},\n)\njson_input_data = json.dumps(input_data)\nif existing_execution:",
+              "successors": [
+                {
+                  "id": 5,
+                  "label": "    await AgentNodeExecutionInputOutput.prisma().create(\n        data={\n            \"name\": input_name,\n            \"data\": json_input_data,\n            \"referencedByInputExecId\": existing_execution.id,\n        }\n    )\n    return existing_execution.id, {\n        **{\n            input_data.name: json.loads(input_data.data)\n            for input_data in existing_execution.Input or []\n        },\n        input_name: input_data,\n    }",
+                  "successors": []
+                },
+                {
+                  "id": 6,
+                  "label": "elif not node_exec_id:",
+                  "successors": [
+                    {
+                      "id": 7,
+                      "label": "    result = await AgentNodeExecution.prisma().create(\n        data={\n            \"agentNodeId\": node_id,\n            \"agentGraphExecutionId\": graph_exec_id,\n            \"executionStatus\": ExecutionStatus.INCOMPLETE,\n            \"Input\": {\"create\": {\"name\": input_name, \"data\": json_input_data}},\n        }\n    )\n    return result.id, {input_name: input_data}",
+                      "successors": []
+                    },
+                    {
+                      "id": 8,
+                      "label": "else:\n    raise ValueError(\n        f\"NodeExecution {node_exec_id} not found or already has input {input_name}.\"\n    )",
+                      "successors": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
         }
       ]
     },
@@ -52,8 +81,14 @@
       "blocks": [
         {
           "id": 1,
-          "label": "async def upsert_execution_output(node_exec_id: str, output_name: str, output_data: Any) -> None:\n    \"\"\"\n    Insert AgentNodeExecutionInputOutput record for as one of AgentNodeExecution.Output.\n    \"\"\"\nawait AgentNodeExecutionInputOutput.prisma().create(data={\"name\": output_name, \"data\": json.dumps(output_data), \"referencedByOutputExecId\": node_exec_id})",
-          "successors": []
+          "label": "async def upsert_execution_output(\n    node_exec_id: str,\n    output_name: str,\n    output_data: Any,\n) -> None:\n    \"\"\"\n    Insert AgentNodeExecutionInputOutput record for as one of AgentNodeExecution.Output.\n    \"\"\"",
+          "successors": [
+            {
+              "id": 3,
+              "label": "    await AgentNodeExecutionInputOutput.prisma().create(\n        data={\n            \"name\": output_name,\n            \"data\": json.dumps(output_data),\n            \"referencedByOutputExecId\": node_exec_id,\n        }\n    )",
+              "successors": []
+            }
+          ]
         }
       ]
     },
@@ -68,7 +103,7 @@
       "blocks": [
         {
           "id": 1,
-          "label": "async def update_graph_execution_start_time(graph_exec_id: str):\nawait AgentGraphExecution.prisma().update(where={\"id\": graph_exec_id}, data={\"executionStatus\": ExecutionStatus.RUNNING, \"startedAt\": datetime.now(tz=timezone.utc)})",
+          "label": "async def update_graph_execution_start_time(graph_exec_id: str):\nawait AgentGraphExecution.prisma().update(\n    where={\"id\": graph_exec_id},\n    data={\n        \"executionStatus\": ExecutionStatus.RUNNING,\n        \"startedAt\": datetime.now(tz=timezone.utc),\n    },\n)",
           "successors": []
         }
       ]
@@ -84,13 +119,25 @@
       "blocks": [
         {
           "id": 1,
-          "label": "async def update_graph_execution_stats(graph_exec_id: str, stats: dict[str, Any]) -> ExecutionResult:\nstatus = ExecutionStatus.FAILED if stats.get(\"error\") else ExecutionStatus.COMPLETED\nres = await AgentGraphExecution.prisma().update(where={\"id\": graph_exec_id}, data={\"executionStatus\": status, \"stats\": json.dumps(stats)})\nif not res:\nraise ValueError(f\"Execution {graph_exec_id} not found.\")",
-          "successors": []
-        },
-        {
-          "id": 6,
-          "label": "return ExecutionResult.from_graph(res)",
-          "successors": []
+          "label": "async def update_graph_execution_stats(\n    graph_exec_id: str,\n    stats: dict[str, Any],\n) -> ExecutionResult:\n    status = ExecutionStatus.FAILED if stats.get(\"error\") else ExecutionStatus.COMPLETED\n    res = await AgentGraphExecution.prisma().update(\n        where={\"id\": graph_exec_id},\n        data={\n            \"executionStatus\": status,\n            \"stats\": json.dumps(stats),\n        },\n    )",
+          "successors": [
+            {
+              "id": 3,
+              "label": "if not res:",
+              "successors": [
+                {
+                  "id": 4,
+                  "label": "    raise ValueError(f\"Execution {graph_exec_id} not found.\")",
+                  "successors": []
+                },
+                {
+                  "id": 5,
+                  "label": "return ExecutionResult.from_graph(res)",
+                  "successors": []
+                }
+              ]
+            }
+          ]
         }
       ]
     },
@@ -105,7 +152,7 @@
       "blocks": [
         {
           "id": 1,
-          "label": "await AgentNodeExecution.prisma().update(where={\"id\": node_exec_id}, data={\"stats\": json.dumps(stats)})",
+          "label": "async def update_node_execution_stats(node_exec_id: str, stats: dict[str, Any]):\nawait AgentNodeExecution.prisma().update(\n    where={\"id\": node_exec_id},\n    data={\"stats\": json.dumps(stats)},\n)",
           "successors": []
         }
       ]
@@ -121,18 +168,30 @@
       "blocks": [
         {
           "id": 1,
-          "label": "if status == ExecutionStatus.QUEUED and execution_data is None:\nraise ValueError(\"Execution data must be provided when queuing an execution.\")",
-          "successors": []
-        },
-        {
-          "id": 3,
-          "label": "now = datetime.now(tz=timezone.utc)\ndata = { **({\"executionStatus\": status}), **({\"queuedTime\": now} if status == ExecutionStatus.QUEUED else {}), **({\"startedTime\": now} if status == ExecutionStatus.RUNNING else {}), **({\"endedTime\": now} if status == ExecutionStatus.FAILED else {}), **({\"endedTime\": now} if status == ExecutionStatus.COMPLETED else {}), **({\"executionData\": json.dumps(execution_data)} if execution_data else {}), **({\"stats\": json.dumps(stats)} if stats else {}), }\nres = await AgentNodeExecution.prisma().update(where={\"id\": node_exec_id}, data=data, include=EXECUTION_RESULT_INCLUDE)\nif not res:\nraise ValueError(f\"Execution {node_exec_id} not found.\")",
-          "successors": []
-        },
-        {
-          "id": 7,
-          "label": "return ExecutionResult.from_db(res)",
-          "successors": []
+          "label": "async def update_execution_status(\n    node_exec_id: str,\n    status: ExecutionStatus,\n    execution_data: BlockInput | None = None,\n    stats: dict[str, Any] | None = None,\n) -> ExecutionResult:",
+          "successors": [
+            {
+              "id": 2,
+              "label": "if status == ExecutionStatus.QUEUED and execution_data is None:\n    raise ValueError(\"Execution data must be provided when queuing an execution.\")",
+              "successors": []
+            },
+            {
+              "id": 4,
+              "label": "now = datetime.now(tz=timezone.utc)\ndata = {\n    **({\"executionStatus\": status}),\n    **({\"queuedTime\": now} if status == ExecutionStatus.QUEUED else {}),\n    **({\"startedTime\": now} if status == ExecutionStatus.RUNNING else {}),\n    **({\"endedTime\": now} if status == ExecutionStatus.FAILED else {}),\n    **({\"endedTime\": now} if status == ExecutionStatus.COMPLETED else {}),\n    **({\"executionData\": json.dumps(execution_data)} if execution_data else {}),\n    **({\"stats\": json.dumps(stats)} if stats else {}),\n}\nres = await AgentNodeExecution.prisma().update(\n    where={\"id\": node_exec_id},\n    data=data,  # type: ignore\n    include=EXECUTION_RESULT_INCLUDE,\n)",
+              "successors": [
+                {
+                  "id": 6,
+                  "label": "if not res:\n    raise ValueError(f\"Execution {node_exec_id} not found.\")",
+                  "successors": []
+                },
+                {
+                  "id": 8,
+                  "label": "return ExecutionResult.from_db(res)",
+                  "successors": []
+                }
+              ]
+            }
+          ]
         }
       ]
     },
@@ -147,8 +206,14 @@
       "blocks": [
         {
           "id": 1,
-          "label": "executions = await AgentNodeExecution.prisma().find_many(...)\nres = [ExecutionResult.from_db(execution) for execution in executions]\nreturn res",
-          "successors": []
+          "label": "async def get_execution_results(graph_exec_id: str) -> list[ExecutionResult]:\nexecutions = await AgentNodeExecution.prisma().find_many(\n    where={\"agentGraphExecutionId\": graph_exec_id},\n    include=EXECUTION_RESULT_INCLUDE,\n    order=[\n        {\"queuedTime\": \"asc\"},\n        {\"addedTime\": \"asc\"},  # Fallback: Incomplete execs has no queuedTime.\n    ],\n)",
+          "successors": [
+            {
+              "id": 3,
+              "label": "res = [ExecutionResult.from_db(execution) for execution in executions]\nreturn res",
+              "successors": []
+            }
+          ]
         }
       ]
     },
@@ -163,33 +228,91 @@
       "blocks": [
         {
           "id": 1,
-          "label": "output_name, output_data = output\nif name == output_name:\nreturn output_data",
-          "successors": []
-        },
-        {
-          "id": 4,
-          "label": "if name.startswith(f\"{output_name}{LIST_SPLIT}\"):\nindex = int(name.split(LIST_SPLIT)[1])\nif not isinstance(output_data, list) or len(output_data) <= index:\nreturn None",
-          "successors": []
-        },
-        {
-          "id": 8,
-          "label": "return output_data[int(name.split(LIST_SPLIT)[1])]",
-          "successors": []
-        },
-        {
-          "id": 10,
-          "label": "if name.startswith(f\"{output_name}{OBJC_SPLIT}\"):\nindex = name.split(OBJC_SPLIT)[1]\nif isinstance(output_data, object) and hasattr(output_data, index):\nreturn getattr(output_data, index)",
-          "successors": []
-        },
-        {
-          "id": 19,
-          "label": "return None",
-          "successors": []
-        },
-        {
-          "id": 20,
-          "label": "return None",
-          "successors": []
+          "label": "def parse_execution_output(output: BlockData, name: str) -> Any | None:\noutput_name, output_data = output",
+          "successors": [
+            {
+              "id": 3,
+              "label": "if name == output_name:",
+              "successors": [
+                {
+                  "id": 4,
+                  "label": "return output_data",
+                  "successors": []
+                },
+                {
+                  "id": 5,
+                  "label": "if name.startswith(f\"{output_name}{LIST_SPLIT}\"):",
+                  "successors": [
+                    {
+                      "id": 6,
+                      "label": "index = int(name.split(LIST_SPLIT)[1])\nif not isinstance(output_data, list) or len(output_data) <= index:",
+                      "successors": [
+                        {
+                          "id": 8,
+                          "label": "return None",
+                          "successors": []
+                        },
+                        {
+                          "id": 9,
+                          "label": "return output_data[int(name.split(LIST_SPLIT)[1])]",
+                          "successors": []
+                        }
+                      ]
+                    },
+                    {
+                      "id": 10,
+                      "label": "if name.startswith(f\"{output_name}{DICT_SPLIT}\"):",
+                      "successors": [
+                        {
+                          "id": 11,
+                          "label": "index = name.split(DICT_SPLIT)[1]\nif not isinstance(output_data, dict) or index not in output_data:",
+                          "successors": [
+                            {
+                              "id": 13,
+                              "label": "return None",
+                              "successors": []
+                            },
+                            {
+                              "id": 14,
+                              "label": "return output_data[index]",
+                              "successors": []
+                            }
+                          ]
+                        },
+                        {
+                          "id": 15,
+                          "label": "if name.startswith(f\"{output_name}{OBJC_SPLIT}\"):\nindex = name.split(OBJC_SPLIT)[1]",
+                          "successors": [
+                            {
+                              "id": 17,
+                              "label": "if isinstance(output_data, object) and hasattr(output_data, index):",
+                              "successors": [
+                                {
+                                  "id": 18,
+                                  "label": "return getattr(output_data, index)",
+                                  "successors": []
+                                },
+                                {
+                                  "id": 19,
+                                  "label": "return None",
+                                  "successors": []
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "id": 20,
+                          "label": "return None",
+                          "successors": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
         }
       ]
     },
@@ -204,37 +327,104 @@
       "blocks": [
         {
           "id": 1,
-          "label": "def merge_execution_input(data: BlockInput) -> BlockInput:\nitems = list(data.items())\nfor key, value in items:\nif LIST_SPLIT not in key:\nname, index = key.split(LIST_SPLIT)\nif not index.isdigit():\nraise ValueError(f\"Invalid key: {key}, #{index} index must be an integer.\")",
+          "label": "items = list(data.items())",
           "successors": [
-            8
+            {
+              "id": 2,
+              "label": "for key, value in items:",
+              "successors": [
+                {
+                  "id": 3,
+                  "label": "if LIST_SPLIT not in key:\ncontinue",
+                  "successors": [
+                    {
+                      "id": 5,
+                      "label": "if DICT_SPLIT not in key:\ncontinue",
+                      "successors": [
+                        {
+                          "id": 7,
+                          "label": "if OBJC_SPLIT not in key:\ncontinue",
+                          "successors": [
+                            {
+                              "id": 25,
+                              "label": "return data",
+                              "successors": []
+                            }
+                          ]
+                        },
+                        {
+                          "id": 9,
+                          "label": "name, index = key.split(OBJC_SPLIT)",
+                          "successors": [
+                            {
+                              "id": 10,
+                              "label": "if name not in data or not isinstance(data[name], object):\ndata[name] = mock.MockObject()",
+                              "successors": [
+                                {
+                                  "id": 12,
+                                  "label": "setattr(data[name], index, value)\nreturn data",
+                                  "successors": []
+                                }
+                              ]
+                            },
+                            {
+                              "id": 12,
+                              "label": "setattr(data[name], index, value)\nreturn data",
+                              "successors": []
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "id": 13,
+                      "label": "name, index = key.split(DICT_SPLIT)\ndata[name] = data.get(name, {})",
+                      "successors": [
+                        {
+                          "id": 15,
+                          "label": "data[name][index] = value\nreturn data",
+                          "successors": []
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "id": 16,
+                  "label": "name, index = key.split(LIST_SPLIT)",
+                  "successors": [
+                    {
+                      "id": 17,
+                      "label": "if not index.isdigit():\nraise ValueError(f\"Invalid key: {key}, #{index} index must be an integer.\")",
+                      "successors": []
+                    },
+                    {
+                      "id": 19,
+                      "label": "data[name] = data.get(name, [])",
+                      "successors": [
+                        {
+                          "id": 20,
+                          "label": "if int(index) >= len(data[name]):\ndata[name].extend([\"\"\"] * (int(index) - len(data[name]) + 1))",
+                          "successors": [
+                            {
+                              "id": 22,
+                              "label": "data[name][int(index)] = value\nreturn data",
+                              "successors": []
+                            }
+                          ]
+                        },
+                        {
+                          "id": 22,
+                          "label": "data[name][int(index)] = value\nreturn data",
+                          "successors": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
           ]
-        },
-        {
-          "id": 8,
-          "label": "data[name] = data.get(name, [])\nif int(index) >= len(data[name]):\ndata[name].extend([\"\"\"] * (int(index) - len(data[name]) + 1))\ndata[name][int(index)] = value",
-          "successors": [
-            11
-          ]
-        },
-        {
-          "id": 11,
-          "label": "for key, value in items:\nif DICT_SPLIT not in key:\nname, index = key.split(DICT_SPLIT)\ndata[name] = data.get(name, {})\ndata[name][index] = value\nfor key, value in items:",
-          "successors": [
-            16,
-            20
-          ]
-        },
-        {
-          "id": 16,
-          "label": "if OBJC_SPLIT not in key:\nname, index = key.split(OBJC_SPLIT)\nif name not in data or not isinstance(data[name], object):\ndata[name] = mock.MockObject()\nsetattr(data[name], index, value)",
-          "successors": [
-            20
-          ]
-        },
-        {
-          "id": 20,
-          "label": "return data",
-          "successors": []
         }
       ]
     },
@@ -249,13 +439,19 @@
       "blocks": [
         {
           "id": 1,
-          "label": "execution = await AgentNodeExecution.prisma().find_first(...)\nif not execution:\nreturn None",
-          "successors": []
-        },
-        {
-          "id": 4,
-          "label": "return ExecutionResult.from_db(execution)",
-          "successors": []
+          "label": "execution = await AgentNodeExecution.prisma().find_first(\n    where={\n        \"agentNodeId\": node_id,\n        \"agentGraphExecutionId\": graph_eid,\n        \"executionStatus\": {\"not\": ExecutionStatus.INCOMPLETE},\n        \"executionData\": {\"not\": None},  # type: ignore\n    },\n    order={\"queuedTime\": \"desc\"},\n    include=EXECUTION_RESULT_INCLUDE,\n)\nif not execution:",
+          "successors": [
+            {
+              "id": 3,
+              "label": "    return None",
+              "successors": []
+            },
+            {
+              "id": 4,
+              "label": "return ExecutionResult.from_db(execution)",
+              "successors": []
+            }
+          ]
         }
       ]
     },
@@ -270,8 +466,14 @@
       "blocks": [
         {
           "id": 1,
-          "label": "async def get_incomplete_executions(node_id: str, graph_eid: str) -> list[ExecutionResult]:\nexecutions = await AgentNodeExecution.prisma().find_many(where={\"agentNodeId\": node_id, \"agentGraphExecutionId\": graph_eid, \"executionStatus\": ExecutionStatus.INCOMPLETE,}, include=EXECUTION_RESULT_INCLUDE,)\nreturn [ExecutionResult.from_db(execution) for execution in executions]",
-          "successors": []
+          "label": "async def get_incomplete_executions(\n    node_id: str, graph_eid: str\n) -> list[ExecutionResult]:\nexecutions = await AgentNodeExecution.prisma().find_many(\n    where={\n        \"agentNodeId\": node_id,\n        \"agentGraphExecutionId\": graph_eid,\n        \"executionStatus\": ExecutionStatus.INCOMPLETE,\n    },\n    include=EXECUTION_RESULT_INCLUDE,\n)",
+          "successors": [
+            {
+              "id": 3,
+              "label": "return [ExecutionResult.from_db(execution) for execution in executions]",
+              "successors": []
+            }
+          ]
         }
       ]
     }
@@ -288,7 +490,7 @@
       "blocks": [
         {
           "id": 1,
-          "label": "class GraphExecutionEntry(BaseModel):\nuser_id: str\ngraph_exec_id: str\ngraph_id: str\nstart_node_execs: list[\"NodeExecutionEntry\"]",
+          "label": "class GraphExecutionEntry(BaseModel):\n    user_id: str\n    graph_exec_id: str\n    graph_id: str\n    start_node_execs: list[\"NodeExecutionEntry\"]",
           "successors": []
         }
       ]
@@ -304,8 +506,26 @@
       "blocks": [
         {
           "id": 1,
-          "label": "class NodeExecutionEntry(BaseModel):\nuser_id: str\ngraph_exec_id: str\ngraph_id: str\nnode_exec_id: str\nnode_id: str\ndata: BlockInput",
-          "successors": []
+          "label": "class NodeExecutionEntry(BaseModel):\n    user_id: str",
+          "successors": [
+            {
+              "id": 3,
+              "label": "    graph_exec_id: str\n    graph_id: str",
+              "successors": [
+                {
+                  "id": 5,
+                  "label": "    node_exec_id: str\n    node_id: str",
+                  "successors": [
+                    {
+                      "id": 7,
+                      "label": "    data: BlockInput",
+                      "successors": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
         }
       ]
     },
@@ -313,7 +533,7 @@
       "name": "ExecutionQueue",
       "type": "class",
       "start_line": 42,
-      "end_line": 59,
+      "end_line": 58,
       "functions": [
         {
           "name": "__init__",
@@ -326,7 +546,7 @@
           "blocks": [
             {
               "id": 1,
-              "label": "def __init__(self):\nself.queue = Manager().Queue()",
+              "label": "def __init__(self):\n    self.queue = Manager().Queue()",
               "successors": []
             }
           ]
@@ -342,8 +562,14 @@
           "blocks": [
             {
               "id": 1,
-              "label": "self.queue.put(execution)\nreturn execution",
-              "successors": []
+              "label": "def add(self, execution: T) -> T:\n    self.queue.put(execution)",
+              "successors": [
+                {
+                  "id": 3,
+                  "label": "    return execution",
+                  "successors": []
+                }
+              ]
             }
           ]
         },
@@ -374,19 +600,36 @@
           "blocks": [
             {
               "id": 1,
-              "label": "def empty(self) -> bool:\nreturn self.queue.empty()",
+              "label": "def empty(self) -> bool:\n    return self.queue.empty()",
               "successors": []
             }
           ]
         }
       ],
       "classes": [],
-      "simplified_code": "class ExecutionQueue(Generic[T]):\n    \"\"\"\n    Queue for managing the execution of agents.\n    This will be shared between different processes\n    \"\"\"\n\n        self.queue = Manager().Queue()\n\n        return execution\n\n        return self.queue.get()\n\n        return self.queue.empty()",
+      "simplified_code": "class ExecutionQueue(Generic[T]):\n    \"\"\"\n    Queue for managing the execution of agents.\n    This will be shared between different processes\n    \"\"\"\n\n        self.queue = Manager().Queue()\n\n        return execution\n\n        return self.queue.get()\n",
       "blocks": [
         {
           "id": 1,
-          "label": "class ExecutionQueue(Generic[T]):\nself.queue = Manager().Queue()\nreturn execution\nreturn self.queue.get()\nreturn self.queue.empty()",
-          "successors": []
+          "label": "class ExecutionQueue(Generic[T]):\n\"\"\"\nQueue for managing the execution of agents.\nThis will be shared between different processes\n\"\"\"",
+          "successors": [
+            {
+              "id": 3,
+              "label": "self.queue = Manager().Queue()",
+              "successors": [
+                {
+                  "id": 4,
+                  "label": "return execution",
+                  "successors": []
+                },
+                {
+                  "id": 5,
+                  "label": "return self.queue.get()",
+                  "successors": []
+                }
+              ]
+            }
+          ]
         }
       ]
     },
@@ -407,7 +650,7 @@
           "blocks": [
             {
               "id": 1,
-              "label": "def from_graph(graph: AgentGraphExecution):\nreturn ExecutionResult(graph_id=graph.agentGraphId, graph_version=graph.agentGraphVersion, graph_exec_id=graph.id, node_exec_id=\"\", node_id=\"\", block_id=\"\", status=graph.executionStatus, input_data={}, output_data={}, add_time=graph.createdAt, queue_time=graph.createdAt, start_time=graph.startedAt, end_time=graph.updatedAt)",
+              "label": "def from_graph(graph: AgentGraphExecution):\nreturn ExecutionResult(\n    graph_id=graph.agentGraphId,\n    graph_version=graph.agentGraphVersion,\n    graph_exec_id=graph.id,\n    node_exec_id=\"\",\n    node_id=\"\",\n    block_id=\"\",\n    status=graph.executionStatus,\n    # TODO: Populate input_data & output_data from AgentNodeExecutions\n    #       Input & Output comes AgentInputBlock & AgentOutputBlock.\n    input_data={},\n    output_data={},\n    add_time=graph.createdAt,\n    queue_time=graph.createdAt,\n    start_time=graph.startedAt,\n    end_time=graph.updatedAt,\n)",
               "successors": []
             }
           ]
@@ -423,22 +666,67 @@
           "blocks": [
             {
               "id": 1,
-              "label": "if execution.executionData:\ninput_data = json.loads(execution.executionData, target_type=dict[str, Any])",
+              "label": "def from_db(execution: AgentNodeExecution):\nif execution.executionData:",
               "successors": [
-                4
+                {
+                  "id": 3,
+                  "label": "input_data = json.loads(execution.executionData, target_type=dict[str, Any])\noutput_data: CompletedBlockOutput = defaultdict(list)",
+                  "successors": [
+                    {
+                      "id": 9,
+                      "label": "for data in execution.Output or []:",
+                      "successors": [
+                        {
+                          "id": 10,
+                          "label": "output_data[data.name].append(json.loads(data.data))\ngraph_execution: AgentGraphExecution | None = execution.AgentGraphExecution",
+                          "successors": [
+                            {
+                              "id": 12,
+                              "label": "return ExecutionResult(\n    graph_id=graph_execution.agentGraphId if graph_execution else \"\",\n    graph_version=graph_execution.agentGraphVersion if graph_execution else 0,\n    graph_exec_id=execution.agentGraphExecutionId,\n    block_id=execution.AgentNode.agentBlockId if execution.AgentNode else \"\",\n    node_exec_id=execution.id,\n    node_id=execution.agentNodeId,\n    status=execution.executionStatus,\n    input_data=input_data,\n    output_data=output_data,\n    add_time=execution.addedTime,\n    queue_time=execution.queuedTime,\n    start_time=execution.startedTime,\n    end_time=execution.endedTime,\n)",
+                              "successors": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "id": 4,
+                  "label": "input_data: BlockInput = defaultdict()",
+                  "successors": [
+                    {
+                      "id": 5,
+                      "label": "for data in execution.Input or []:",
+                      "successors": [
+                        {
+                          "id": 6,
+                          "label": "input_data[data.name] = json.loads(data.data)\noutput_data: CompletedBlockOutput = defaultdict(list)",
+                          "successors": [
+                            {
+                              "id": 9,
+                              "label": "for data in execution.Output or []:",
+                              "successors": [
+                                {
+                                  "id": 10,
+                                  "label": "output_data[data.name].append(json.loads(data.data))\ngraph_execution: AgentGraphExecution | None = execution.AgentGraphExecution",
+                                  "successors": [
+                                    {
+                                      "id": 12,
+                                      "label": "return ExecutionResult(\n    graph_id=graph_execution.agentGraphId if graph_execution else \"\",\n    graph_version=graph_execution.agentGraphVersion if graph_execution else 0,\n    graph_exec_id=execution.agentGraphExecutionId,\n    block_id=execution.AgentNode.agentBlockId if execution.AgentNode else \"\",\n    node_exec_id=execution.id,\n    node_id=execution.agentNodeId,\n    status=execution.executionStatus,\n    input_data=input_data,\n    output_data=output_data,\n    add_time=execution.addedTime,\n    queue_time=execution.queuedTime,\n    start_time=execution.startedTime,\n    end_time=execution.endedTime,\n)",
+                                      "successors": []
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
               ]
-            },
-            {
-              "id": 3,
-              "label": "input_data: BlockInput = defaultdict()\nfor data in execution.Input or []:\n    input_data[data.name] = json.loads(data.data)",
-              "successors": [
-                4
-              ]
-            },
-            {
-              "id": 4,
-              "label": "output_data: CompletedBlockOutput = defaultdict(list)\nfor data in execution.Output or []:\n    output_data[data.name].append(json.loads(data.data))\ngraph_execution: AgentGraphExecution | None = execution.AgentGraphExecution\nreturn ExecutionResult(\n    graph_id=graph_execution.agentGraphId if graph_execution else \"\",\n    graph_version=graph_execution.agentGraphVersion if graph_execution else 0,\n    graph_exec_id=execution.agentGraphExecutionId,\n    block_id=execution.AgentNode.agentBlockId if execution.AgentNode else \"\",\n    node_exec_id=execution.id,\n    node_id=execution.agentNodeId,\n    status=execution.executionStatus,\n    input_data=input_data,\n    output_data=output_data,\n    add_time=execution.addedTime,\n    queue_time=execution.queuedTime,\n    start_time=execution.startedTime,\n    end_time=execution.endedTime,\n)",
-              "successors": []
             }
           ]
         }
@@ -448,8 +736,19 @@
       "blocks": [
         {
           "id": 1,
-          "label": "class ExecutionResult(BaseModel):\ngraph_id, graph_version, graph_exec_id, node_exec_id, node_id, block_id, status, input_data, output_data, add_time, queue_time, start_time, end_time\n@staticmethod",
-          "successors": []
+          "label": "class ExecutionResult(BaseModel):\n graph_id: str\n graph_version: int\n graph_exec_id: str\n node_exec_id: str\n node_id: str\n block_id: str\n status: ExecutionStatus\n input_data: BlockInput\n output_data: CompletedBlockOutput\n add_time: datetime\n queue_time: datetime | None\n start_time: datetime | None\n end_time: datetime | None",
+          "successors": [
+            {
+              "id": 3,
+              "label": "@staticmethod\n def get_node_info() -> List[str]:\n return [\"node_id\", \"block_id\", \"status\"]",
+              "successors": []
+            },
+            {
+              "id": 5,
+              "label": "@staticmethod\n def get_timing_info() -> List[str]:\n return [\"add_time\", \"queue_time\", \"start_time\", \"end_time\"]",
+              "successors": []
+            }
+          ]
         }
       ]
     },
@@ -470,7 +769,7 @@
           "blocks": [
             {
               "id": 1,
-              "label": "def event_bus_name(self) -> str:\nreturn config.execution_event_bus_name",
+              "label": "def event_bus_name(self) -> str:\n    return config.execution_event_bus_name",
               "successors": []
             }
           ]
@@ -504,14 +803,17 @@
               "id": 1,
               "label": "def listen(self, graph_id: str = \"*\", graph_exec_id: str = \"*\") -> Generator[ExecutionResult, None, None]:",
               "successors": [
-                2
-              ]
-            },
-            {
-              "id": 2,
-              "label": "for execution_result in self.listen_events(f\"{graph_id}/{graph_exec_id}\"):\nyield execution_result",
-              "successors": [
-                2
+                {
+                  "id": 2,
+                  "label": "for execution_result in self.listen_events(f\"{graph_id}/{graph_exec_id}\"):",
+                  "successors": [
+                    {
+                      "id": 3,
+                      "label": "    yield execution_result",
+                      "successors": []
+                    }
+                  ]
+                }
               ]
             }
           ]
@@ -522,8 +824,35 @@
       "blocks": [
         {
           "id": 1,
-          "label": "class RedisExecutionEventBus(RedisEventBus[ExecutionResult]):\nModel = ExecutionResult\n@property\nreturn config.execution_event_bus_name\nself.publish_event(res, f\"{res.graph_id}/{res.graph_exec_id}\")\nyield execution_result",
-          "successors": []
+          "label": "class RedisExecutionEventBus(RedisEventBus[ExecutionResult]):",
+          "successors": [
+            {
+              "id": 2,
+              "label": "    Model = ExecutionResult",
+              "successors": []
+            },
+            {
+              "id": 3,
+              "label": "@property\ndef fetch_event_name(_):",
+              "successors": [
+                {
+                  "id": 5,
+                  "label": "return config.execution_event_bus_name",
+                  "successors": []
+                }
+              ]
+            },
+            {
+              "id": 6,
+              "label": "    def publish_event(self, res, identifier):\nself.publish_event(res, f\"{res.graph_id}/{res.graph_exec_id}\")",
+              "successors": []
+            },
+            {
+              "id": 8,
+              "label": "def consume_events(self):\nyield execution_result",
+              "successors": []
+            }
+          ]
         }
       ]
     },
@@ -560,7 +889,7 @@
           "blocks": [
             {
               "id": 1,
-              "label": "async def publish(self, res: ExecutionResult):\nawait self.publish_event(res, f\"{res.graph_id}/{res.graph_exec_id}\")",
+              "label": "async def publish(self, res: ExecutionResult):\n    await self.publish_event(res, f\"{res.graph_id}/{res.graph_exec_id}\")",
               "successors": []
             }
           ]
@@ -569,45 +898,99 @@
           "name": "listen",
           "type": "function",
           "start_line": 480,
-          "end_line": 484,
+          "end_line": 483,
           "functions": [],
           "classes": [],
-          "simplified_code": "    async def listen(\n        self, graph_id: str = \"*\", graph_exec_id: str = \"*\"\n    ) -> AsyncGenerator[ExecutionResult, None]:\n        async for execution_result in self.listen_events(f\"{graph_id}/{graph_exec_id}\"):\n            yield execution_result",
+          "simplified_code": "    async def listen(\n        self, graph_id: str = \"*\", graph_exec_id: str = \"*\"\n    ) -> AsyncGenerator[ExecutionResult, None]:\n        async for execution_result in self.listen_events(f\"{graph_id}/{graph_exec_id}\"):",
           "blocks": [
             {
               "id": 1,
-              "label": "async def listen( self, graph_id: str = '*', graph_exec_id: str = '*') -> AsyncGenerator[ExecutionResult, None]:",
-              "successors": [
-                2
-              ]
-            },
-            {
-              "id": 2,
-              "label": "async for execution_result in self.listen_events(f'{graph_id}/{graph_exec_id}'):\nyield execution_result",
-              "successors": [
-                2
-              ]
+              "label": "async def listen(self, graph_id: str = \"*\", graph_exec_id: str = \"*\") -> AsyncGenerator[ExecutionResult, None]:\n    async for execution_result in self.listen_events(f\"{graph_id}/{graph_exec_id}\"):",
+              "successors": []
             }
           ]
         }
       ],
       "classes": [],
-      "simplified_code": "class AsyncRedisExecutionEventBus(AsyncRedisEventBus[ExecutionResult]):\n    Model = ExecutionResult\n\n    @property\n        return config.execution_event_bus_name\n\n        await self.publish_event(res, f\"{res.graph_id}/{res.graph_exec_id}\")\n\n            yield execution_result",
+      "simplified_code": "class AsyncRedisExecutionEventBus(AsyncRedisEventBus[ExecutionResult]):\n    Model = ExecutionResult\n\n    @property\n        return config.execution_event_bus_name\n\n        await self.publish_event(res, f\"{res.graph_id}/{res.graph_exec_id}\")\n\n        async for execution_result in self.listen_events(f\"{graph_id}/{graph_exec_id}\"):\n            yield execution_result",
       "blocks": [
         {
           "id": 1,
-          "label": "class AsyncRedisExecutionEventBus(AsyncRedisEventBus[ExecutionResult]):\nModel = ExecutionResult\n@property\nreturn config.execution_event_bus_name\nawait self.publish_event(res, f\"{res.graph_id}/{res.graph_exec_id}\")\nyield execution_result",
-          "successors": []
+          "label": "class AsyncRedisExecutionEventBus(AsyncRedisEventBus[ExecutionResult]):\n    Model = ExecutionResult",
+          "successors": [
+            {
+              "id": 3,
+              "label": "@property\n    def event_bus_name(self):\n        return config.execution_event_bus_name\nasync def publish_event(self, res, f\"{res.graph_id}/{res.graph_exec_id}\"):\n        await self.publish_event(res, f\"{res.graph_id}/{res.graph_exec_id}\")",
+              "successors": [
+                {
+                  "id": 5,
+                  "label": "async def listen_and_yield(self, graph_id, graph_exec_id):\n        async for execution_result in self.listen_events(f\"{graph_id}/{graph_exec_id}\"):\n            yield execution_result",
+                  "successors": []
+                }
+              ]
+            }
+          ]
         }
       ]
     }
   ],
-  "simplified_code": "from collections import defaultdict\nfrom datetime import datetime, timezone\nfrom multiprocessing import Manager\nfrom typing import Any, AsyncGenerator, Generator, Generic, TypeVar\n\nfrom prisma.enums import AgentExecutionStatus\nfrom prisma.models import (\n    AgentGraphExecution,\n    AgentNodeExecution,\n    AgentNodeExecutionInputOutput,\n)\nfrom pydantic import BaseModel\n\nfrom backend.data.block import BlockData, BlockInput, CompletedBlockOutput\nfrom backend.data.includes import EXECUTION_RESULT_INCLUDE, GRAPH_EXECUTION_INCLUDE\nfrom backend.data.queue import AsyncRedisEventBus, RedisEventBus\nfrom backend.util import json, mock\nfrom backend.util.settings import Config\n\n\n    start_node_execs: list[\"NodeExecutionEntry\"]\n\n\n    data: BlockInput\n\n\nExecutionStatus = AgentExecutionStatus\n\nT = TypeVar(\"T\")\n\n\n        return self.queue.empty()\n\n\n        )\n\n\n# --------------------- Model functions --------------------- #\n\n\n    ]\n\n\n        )\n\n\n    )\n\n\n    )\n\n\n    return ExecutionResult.from_graph(res)\n\n\n    )\n\n\n    return ExecutionResult.from_db(res)\n\n\n    return res\n\n\nLIST_SPLIT = \"_$_\"\nDICT_SPLIT = \"_#_\"\nOBJC_SPLIT = \"_@_\"\n\n\n    return None\n\n\n    return data\n\n\n    return ExecutionResult.from_db(execution)\n\n\n    return [ExecutionResult.from_db(execution) for execution in executions]\n\n\n# --------------------- Event Bus --------------------- #\n\nconfig = Config()\n\n\n            yield execution_result\n\n\n            yield execution_result",
+  "simplified_code": "from collections import defaultdict\nfrom datetime import datetime, timezone\nfrom multiprocessing import Manager\nfrom typing import Any, AsyncGenerator, Generator, Generic, TypeVar\n\nfrom prisma.enums import AgentExecutionStatus\nfrom prisma.models import (\n    AgentGraphExecution,\n    AgentNodeExecution,\n    AgentNodeExecutionInputOutput,\n)\nfrom pydantic import BaseModel\n\nfrom backend.data.block import BlockData, BlockInput, CompletedBlockOutput\nfrom backend.data.includes import EXECUTION_RESULT_INCLUDE, GRAPH_EXECUTION_INCLUDE\nfrom backend.data.queue import AsyncRedisEventBus, RedisEventBus\nfrom backend.util import json, mock\nfrom backend.util.settings import Config\n\n\n    start_node_execs: list[\"NodeExecutionEntry\"]\n\n\n    data: BlockInput\n\n\nExecutionStatus = AgentExecutionStatus\n\nT = TypeVar(\"T\")\n\n\n    def empty(self) -> bool:\n        return self.queue.empty()\n\n\n        )\n\n\n# --------------------- Model functions --------------------- #\n\n\n    ]\n\n\n        )\n\n\n    )\n\n\n    )\n\n\n    return ExecutionResult.from_graph(res)\n\n\n    )\n\n\n    return ExecutionResult.from_db(res)\n\n\n    return res\n\n\nLIST_SPLIT = \"_$_\"\nDICT_SPLIT = \"_#_\"\nOBJC_SPLIT = \"_@_\"\n\n\n    return None\n\n\n    return data\n\n\n    return ExecutionResult.from_db(execution)\n\n\n    return [ExecutionResult.from_db(execution) for execution in executions]\n\n\n# --------------------- Event Bus --------------------- #\n\nconfig = Config()\n\n\n            yield execution_result\n\n\n            yield execution_result",
   "blocks": [
     {
       "id": 1,
-      "label": "from collections import defaultdict, from datetime import datetime, timezone, from multiprocessing import Manager, from typing import Any, AsyncGenerator, Generator, Generic, TypeVar, from prisma.enums import AgentExecutionStatus, from prisma.models import AgentGraphExecution, AgentNodeExecution, AgentNodeExecutionInputOutput, from pydantic import BaseModel, from backend.data.block import BlockData, BlockInput, CompletedBlockOutput, from backend.data.includes import EXECUTION_RESULT_INCLUDE, GRAPH_EXECUTION_INCLUDE, from backend.data.queue import AsyncRedisEventBus, RedisEventBus, from backend.util import json, mock, from backend.util.settings import Config\nstart_node_execs: list['NodeExecutionEntry'], data: BlockInput, ExecutionStatus = AgentExecutionStatus, T = TypeVar('T')\nreturn self.queue.empty()\nreturn ExecutionResult.from_graph(res)\nreturn ExecutionResult.from_db(res)\nreturn res\nLIST_SPLIT = '_$_', DICT_SPLIT = '_#_', OBJC_SPLIT = '_@_'\nreturn None\nreturn data\nreturn ExecutionResult.from_db(execution)\nreturn [ExecutionResult.from_db(execution) for execution in executions]\nconfig = Config()\nyield execution_result",
-      "successors": []
+      "label": "from collections import defaultdict\nfrom datetime import datetime, timezone\nfrom multiprocessing import Manager\nfrom typing import Any, AsyncGenerator, Generator, Generic, TypeVar\n\nfrom prisma.enums import AgentExecutionStatus\nfrom prisma.models import (\n    AgentGraphExecution,\n    AgentNodeExecution,\n    AgentNodeExecutionInputOutput,\n)\nfrom pydantic import BaseModel\n\nfrom backend.data.block import BlockData, BlockInput, CompletedBlockOutput\nfrom backend.data.includes import EXECUTION_RESULT_INCLUDE, GRAPH_EXECUTION_INCLUDE\nfrom backend.data.queue import AsyncRedisEventBus, RedisEventBus\nfrom backend.util import json, mock\nfrom backend.util.settings import Config\n\n\n    start_node_execs: list[\"NodeExecutionEntry\"]\n\n\n    data: BlockInput\n\n\nExecutionStatus = AgentExecutionStatus\n\nT = TypeVar(\"T\")\n\n\n    def empty(self) -> bool:\n        return self.queue.empty()\n\n\n        )\n\n\n# --------------------- Model functions --------------------- #\n\n\n    ]\n\n\n        )\n\n\n    )\n\n\n    )\n\n\n    return ExecutionResult.from_graph(res)\n\n\n    )",
+      "successors": [
+        {
+          "id": 2,
+          "label": "return ExecutionResult.from_db(res)",
+          "successors": []
+        },
+        {
+          "id": 3,
+          "label": "return res",
+          "successors": []
+        },
+        {
+          "id": 4,
+          "label": "LIST_SPLIT = \"_$_\",\nDICT_SPLIT = \"_#_\",\nOBJC_SPLIT = \"_@_\"",
+          "successors": []
+        },
+        {
+          "id": 5,
+          "label": "return None",
+          "successors": []
+        },
+        {
+          "id": 6,
+          "label": "return data",
+          "successors": []
+        },
+        {
+          "id": 7,
+          "label": "return ExecutionResult.from_db(execution)",
+          "successors": []
+        },
+        {
+          "id": 8,
+          "label": "return [ExecutionResult.from_db(execution) for execution in executions]",
+          "successors": []
+        },
+        {
+          "id": 9,
+          "label": "# --------------------- Event Bus --------------------- #\n\nconfig = Config()",
+          "successors": []
+        },
+        {
+          "id": 10,
+          "label": "yield execution_result",
+          "successors": []
+        },
+        {
+          "id": 11,
+          "label": "yield execution_result",
+          "successors": []
+        }
+      ]
     }
   ]
 }
