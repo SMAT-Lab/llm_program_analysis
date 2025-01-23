@@ -115,7 +115,12 @@ def get_deepseek_answers(ques, model_name, require_json=False, temperature=0.0):
             model=model_name,
             messages=messages,
             stream=False,
+<<<<<<< HEAD
             temperature=temperature
+=======
+            temperature=temperature,
+            max_tokens=8192
+>>>>>>> 1546551 (finish cg)
         )
 
     return response.choices[0].message.content
@@ -129,9 +134,15 @@ def get_deepseek_answers(ques, model_name, require_json=False, temperature=0.0):
 def get_llm_answers(ques, model_name,require_json=False, temperature=0.0):
     if 'gpt' in model_name:
         return get_openai_answer(ques, model_name, require_json, temperature)
+<<<<<<< HEAD
     elif model_name == "llama2" or "deepseek-r1" in model_name:
         return get_ollama_answers(ques, model_name, require_json, temperature)
     elif "deepseek-chat" in model_name:
+=======
+    elif model_name == "llama2" or 'deepseek-r1' in model_name:
+        return get_ollama_answers(ques, model_name, require_json, temperature)
+    elif "deepseek" in model_name:
+>>>>>>> 1546551 (finish cg)
         return get_deepseek_answers(ques, model_name, require_json, temperature )
     else:
         return get_gptgod_answers(ques, model_name, require_json, temperature)
