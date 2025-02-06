@@ -1,0 +1,306 @@
+{
+    "type": "module",
+    "code": "import asyncio\nimport json\nimport logging\nfrom abc import ABC, abstractmethod\nfrom datetime import datetime\nfrom typing import Any, AsyncGenerator, Generator, Generic, Optional, TypeVar\nfrom pydantic import BaseModel\nfrom redis.asyncio.client import PubSub as AsyncPubSub\nfrom redis.client import PubSub\nfrom backend.data import redis\n\nlogger = logging.getLogger(__name__)\nclass DateTimeEncoder(json.JSONEncoder):\n    def default(self, o):\n        if isinstance(o, datetime):\n            return o.isoformat()\n        return super().default(o)\nM = TypeVar(\"M\", bound=BaseModel)\nclass BaseRedisEventBus(Generic[M], ABC):\n    Model: type[M]\n    @property\n    @abstractmethod\n    def event_bus_name(self) -> str:\n        pass\n    def _serialize_message(self, item: M, channel_key: str) -> tuple[str, str]:\n        message = json.dumps(item.model_dump(), cls=DateTimeEncoder)\n        channel_name = f\"{self.event_bus_name}/{channel_key}\"\n        logger.info(f\"[{channel_name}] Publishing an event to Redis {message}\")\n        return message, channel_name\n    def _deserialize_message(self, msg: Any, channel_key: str) -> M | None:\n        message_type = \"pmessage\" if \"*\" in channel_key else \"message\"\n        if msg[\"type\"] != message_type:\n            return None\n        try:\n            data = json.loads(msg[\"data\"])\n            logger.info(f\"Consuming an event from Redis {data}\")\n            return self.Model(**data)\n        except Exception as e:\n            logger.error(f\"Failed to parse event result from Redis {msg} {e}\")\n    def _get_pubsub_channel(self, connection: redis.Redis | redis.AsyncRedis, channel_key: str) -> tuple[PubSub | AsyncPubSub, str]:\n        full_channel_name = f\"{self.event_bus_name}/{channel_key}\"\n        pubsub = connection.pubsub()\n        return pubsub, full_channel_name\nclass RedisEventBus(BaseRedisEventBus[M], ABC):\n    Model: type[M]\n    @property\n    def connection(self) -> redis.Redis:\n        return redis.get_redis()\n    def publish_event(self, event: M, channel_key: str):\n        message, full_channel_name = self._serialize_message(event, channel_key)\n        self.connection.publish(full_channel_name, message)\n    def listen_events(self, channel_key: str) -> Generator[M, None, None]:\n        pubsub, full_channel_name = self._get_pubsub_channel(self.connection, channel_key)\n        assert isinstance(pubsub, PubSub)\n        if \"*\" in channel_key:\n            pubsub.psubscribe(full_channel_name)\n        else:\n            pubsub.subscribe(full_channel_name)\n        for message in pubsub.listen():\n            if event := self._deserialize_message(message, channel_key):\n                yield event\nclass AsyncRedisEventBus(BaseRedisEventBus[M], ABC):\n    Model: type[M]\n    @property\n    async def connection(self) -> redis.AsyncRedis:\n        return await redis.get_redis_async()\n    async def publish_event(self, event: M, channel_key: str):\n        message, full_channel_name = self._serialize_message(event, channel_key)\n        connection = await self.connection\n        await connection.publish(full_channel_name, message)\n    async def listen_events(self, channel_key: str) -> AsyncGenerator[M, None]:\n        pubsub, full_channel_name = self._get_pubsub_channel(await self.connection, channel_key)\n        assert isinstance(pubsub, AsyncPubSub)\n        if \"*\" in channel_key:\n            await pubsub.psubscribe(full_channel_name)\n        else:\n            await pubsub.subscribe(full_channel_name)\n        async for message in pubsub.listen():\n            if event := self._deserialize_message(message, channel_key):\n                yield event\n    async def wait_for_event(self, channel_key: str, timeout: Optional[float] = None) -> M | None:\n        try:\n            return await asyncio.wait_for(anext(aiter(self.listen_events(channel_key))), timeout)\n        except TimeoutError:\n            return None",
+    "children": [
+        {
+            "type": "import_statement",
+            "code": "import asyncio"
+        },
+        {
+            "type": "import_statement",
+            "code": "import json"
+        },
+        {
+            "type": "import_statement",
+            "code": "import logging"
+        },
+        {
+            "type": "import_from_statement",
+            "code": "from abc import ABC, abstractmethod"
+        },
+        {
+            "type": "import_from_statement",
+            "code": "from datetime import datetime"
+        },
+        {
+            "type": "import_from_statement",
+            "code": "from typing import Any, AsyncGenerator, Generator, Generic, Optional, TypeVar"
+        },
+        {
+            "type": "import_from_statement",
+            "code": "from pydantic import BaseModel"
+        },
+        {
+            "type": "import_statement",
+            "code": "from redis.asyncio.client import PubSub as AsyncPubSub"
+        },
+        {
+            "type": "import_statement",
+            "code": "from redis.client import PubSub"
+        },
+        {
+            "type": "import_from_statement",
+            "code": "from backend.data import redis"
+        },
+        {
+            "type": "call",
+            "code": "logging.getLogger(__name__)",
+            "children": [
+                {
+                    "type": "attribute",
+                    "code": "logging.getLogger",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "code": "logging"
+                        },
+                        {
+                            "type": "identifier",
+                            "code": "getLogger"
+                        }
+                    ]
+                },
+                {
+                    "type": "argument_list",
+                    "code": "(__name__)",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "code": "__name__"
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "class_definition",
+            "code": "class DateTimeEncoder(json.JSONEncoder)",
+            "children": [
+                {
+                    "type": "function_definition",
+                    "code": "def default(self, o)",
+                    "children": [
+                        {
+                            "type": "block",
+                            "code": "if isinstance(o, datetime): return o.isoformat() return super().default(o)"
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "assignment",
+            "code": "M = TypeVar(\"M\", bound=BaseModel)",
+            "children": [
+                {
+                    "type": "call",
+                    "code": "TypeVar(\"M\", bound=BaseModel)",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "code": "TypeVar"
+                        },
+                        {
+                            "type": "argument_list",
+                            "code": "(\"M\", bound=BaseModel)",
+                            "children": [
+                                {
+                                    "type": "string",
+                                    "code": "\"M\""
+                                },
+                                {
+                                    "type": "keyword_argument",
+                                    "code": "bound=BaseModel",
+                                    "children": [
+                                        {
+                                            "type": "identifier",
+                                            "code": "bound"
+                                        },
+                                        {
+                                            "type": "identifier",
+                                            "code": "BaseModel"
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "class_definition",
+            "code": "class BaseRedisEventBus(Generic[M], ABC)",
+            "children": [
+                {
+                    "type": "assignment",
+                    "code": "Model: type[M]"
+                },
+                {
+                    "type": "decorated_definition",
+                    "code": "@property @abstractmethod def event_bus_name(self) -> str",
+                    "children": [
+                        {
+                            "type": "decorator",
+                            "code": "@property"
+                        },
+                        {
+                            "type": "decorator",
+                            "code": "@abstractmethod"
+                        },
+                        {
+                            "type": "function_definition",
+                            "code": "def event_bus_name(self) -> str",
+                            "children": [
+                                {
+                                    "type": "block",
+                                    "code": "pass"
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "type": "function_definition",
+                    "code": "def _serialize_message(self, item: M, channel_key: str) -> tuple[str, str]",
+                    "children": [
+                        {
+                            "type": "block",
+                            "code": "message = json.dumps(item.model_dump(), cls=DateTimeEncoder) channel_name = f\"{self.event_bus_name}/{channel_key}\" logger.info(f\"[{channel_name}] Publishing an event to Redis {message}\") return message, channel_name"
+                        }
+                    ]
+                },
+                {
+                    "type": "function_definition",
+                    "code": "def _deserialize_message(self, msg: Any, channel_key: str) -> M | None",
+                    "children": [
+                        {
+                            "type": "block",
+                            "code": "message_type = \"pmessage\" if \"*\" in channel_key else \"message\" if msg[\"type\"] != message_type: return None try: data = json.loads(msg[\"data\"]) logger.info(f\"Consuming an event from Redis {data}\") return self.Model(**data) except Exception as e: logger.error(f\"Failed to parse event result from Redis {msg} {e}\")"
+                        }
+                    ]
+                },
+                {
+                    "type": "function_definition",
+                    "code": "def _get_pubsub_channel(self, connection: redis.Redis | redis.AsyncRedis, channel_key: str) -> tuple[PubSub | AsyncPubSub, str]",
+                    "children": [
+                        {
+                            "type": "block",
+                            "code": "full_channel_name = f\"{self.event_bus_name}/{channel_key}\" pubsub = connection.pubsub() return pubsub, full_channel_name"
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "class_definition",
+            "code": "class RedisEventBus(BaseRedisEventBus[M], ABC)",
+            "children": [
+                {
+                    "type": "assignment",
+                    "code": "Model: type[M]"
+                },
+                {
+                    "type": "decorated_definition",
+                    "code": "@property def connection(self) -> redis.Redis",
+                    "children": [
+                        {
+                            "type": "decorator",
+                            "code": "@property"
+                        },
+                        {
+                            "type": "function_definition",
+                            "code": "def connection(self) -> redis.Redis",
+                            "children": [
+                                {
+                                    "type": "block",
+                                    "code": "return redis.get_redis()"
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "type": "function_definition",
+                    "code": "def publish_event(self, event: M, channel_key: str)",
+                    "children": [
+                        {
+                            "type": "block",
+                            "code": "message, full_channel_name = self._serialize_message(event, channel_key) self.connection.publish(full_channel_name, message)"
+                        }
+                    ]
+                },
+                {
+                    "type": "function_definition",
+                    "code": "def listen_events(self, channel_key: str) -> Generator[M, None, None]",
+                    "children": [
+                        {
+                            "type": "block",
+                            "code": "pubsub, full_channel_name = self._get_pubsub_channel(self.connection, channel_key) assert isinstance(pubsub, PubSub) if \"*\" in channel_key: pubsub.psubscribe(full_channel_name) else: pubsub.subscribe(full_channel_name) for message in pubsub.listen(): if event := self._deserialize_message(message, channel_key): yield event"
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "class_definition",
+            "code": "class AsyncRedisEventBus(BaseRedisEventBus[M], ABC)",
+            "children": [
+                {
+                    "type": "assignment",
+                    "code": "Model: type[M]"
+                },
+                {
+                    "type": "decorated_definition",
+                    "code": "@property async def connection(self) -> redis.AsyncRedis",
+                    "children": [
+                        {
+                            "type": "decorator",
+                            "code": "@property"
+                        },
+                        {
+                            "type": "function_definition",
+                            "code": "async def connection(self) -> redis.AsyncRedis",
+                            "children": [
+                                {
+                                    "type": "block",
+                                    "code": "return await redis.get_redis_async()"
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "type": "function_definition",
+                    "code": "async def publish_event(self, event: M, channel_key: str)",
+                    "children": [
+                        {
+                            "type": "block",
+                            "code": "message, full_channel_name = self._serialize_message(event, channel_key) connection = await self.connection await connection.publish(full_channel_name, message)"
+                        }
+                    ]
+                },
+                {
+                    "type": "function_definition",
+                    "code": "async def listen_events(self, channel_key: str) -> AsyncGenerator[M, None]",
+                    "children": [
+                        {
+                            "type": "block",
+                            "code": "pubsub, full_channel_name = self._get_pubsub_channel(await self.connection, channel_key) assert isinstance(pubsub, AsyncPubSub) if \"*\" in channel_key: await pubsub.psubscribe(full_channel_name) else: await pubsub.subscribe(full_channel_name) async for message in pubsub.listen(): if event := self._deserialize_message(message, channel_key): yield event"
+                        }
+                    ]
+                },
+                {
+                    "type": "function_definition",
+                    "code": "async def wait_for_event(self, channel_key: str, timeout: Optional[float] = None) -> M | None",
+                    "children": [
+                        {
+                            "type": "block",
+                            "code": "try: return await asyncio.wait_for(anext(aiter(self.listen_events(channel_key))), timeout) except TimeoutError: return None"
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

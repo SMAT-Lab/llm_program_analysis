@@ -1,0 +1,1623 @@
+{
+    "type": "module",
+    "start_token": 0,
+    "end_token": 1305,
+    "label": "\"\"\"\nThe command line interface for the agent server\n\"\"\"\n\nimport os\nimport pathlib\n\nimport click\nimport psutil\n\nfrom backend import app\nfrom backend.util.process import AppProcess\n\n\ndef get_pid_path() -> pathlib.Path:\n    home_dir = pathlib.Path.home()\n    new_dir = home_dir / \".config\" / \"agpt\"\n    file_path = new_dir / \"running.tmp\"\n    return file_path\n\n\ndef get_pid() -> int | None:\n    file_path = get_pid_path()\n    if not file_path.exists():\n        return None\n\n    os.makedirs(file_path.parent, exist_ok=True)\n    with open(file_path, \"r\", encoding=\"utf-8\") as file:\n        pid = file.read()\n    try:\n        return int(pid)\n    except ValueError:\n        return None\n\n\ndef write_pid(pid: int):\n    file_path = get_pid_path()\n    os.makedirs(file_path.parent, exist_ok=True)\n    with open(file_path, \"w\", encoding=\"utf-8\") as file:\n        file.write(str(pid))\n\n\nclass MainApp(AppProcess):\n    def run(self):\n        app.main(silent=True)\n\n\n@click.group()\ndef main():\n    \"\"\"AutoGPT Server CLI Tool\"\"\"\n    pass\n\n\n@main.command()\ndef start():\n    \"\"\"\n    Starts the server in the background and saves the PID\n    \"\"\"\n    # Define the path for the new directory and file\n    pid = get_pid()\n    if pid and psutil.pid_exists(pid):\n        print(\"Server is already running\")\n        exit(1)\n    elif pid:\n        print(\"PID does not exist deleting file\")\n        os.remove(get_pid_path())\n\n    print(\"Starting server\")\n    pid = MainApp().start(background=True, silent=True)\n    print(f\"Server running in process: {pid}\")\n\n    write_pid(pid)\n    print(\"done\")\n    os._exit(status=0)\n\n\n@main.command()\ndef stop():\n    \"\"\"\n    Stops the server\n    \"\"\"\n    pid = get_pid()\n    if not pid:\n        print(\"Server is not running\")\n        return\n\n    os.remove(get_pid_path())\n    process = psutil.Process(int(pid))\n    for child in process.children(recursive=True):\n        child.terminate()\n    process.terminate()\n\n    print(\"Server Stopped\")\n\n\n@main.command()\ndef gen_encrypt_key():\n    \"\"\"\n    Generate a new encryption key\n    \"\"\"\n    from cryptography.fernet import Fernet\n\n    print(Fernet.generate_key().decode())\n\n\n@click.group()\ndef test():\n    \"\"\"\n    Group for test commands\n    \"\"\"\n    pass\n\n\n@test.command()\n@click.argument(\"server_address\")\ndef reddit(server_address: str):\n    \"\"\"\n    Create an event graph\n    \"\"\"\n    import requests\n\n    from backend.usecases.reddit_marketing import create_test_graph\n\n    test_graph = create_test_graph()\n    url = f\"{server_address}/graphs\"\n    headers = {\"Content-Type\": \"application/json\"}\n    data = test_graph.model_dump_json()\n\n    response = requests.post(url, headers=headers, data=data)\n\n    graph_id = response.json()[\"id\"]\n    print(f\"Graph created with ID: {graph_id}\")\n\n\n@test.command()\n@click.argument(\"server_address\")\ndef populate_db(server_address: str):\n    \"\"\"\n    Create an event graph\n    \"\"\"\n    import requests\n\n    from backend.usecases.sample import create_test_graph\n\n    test_graph = create_test_graph()\n    url = f\"{server_address}/graphs\"\n    headers = {\"Content-Type\": \"application/json\"}\n    data = test_graph.model_dump_json()\n\n    response = requests.post(url, headers=headers, data=data)\n\n    graph_id = response.json()[\"id\"]\n\n    if response.status_code == 200:\n        execute_url = f\"{server_address}/graphs/{response.json()['id']}/execute\"\n        text = \"Hello, World!\"\n        input_data = {\"input\": text}\n        response = requests.post(execute_url, headers=headers, json=input_data)\n\n        schedule_url = f\"{server_address}/graphs/{graph_id}/schedules\"\n        data = {\n            \"graph_id\": graph_id,\n            \"cron\": \"*/5 * * * *\",\n            \"input_data\": {\"input\": \"Hello, World!\"},\n        }\n        response = requests.post(schedule_url, headers=headers, json=data)\n\n    print(\"Database populated with: \\n- graph\\n- execution\\n- schedule\")\n\n\n@test.command()\n@click.argument(\"server_address\")\ndef graph(server_address: str):\n    \"\"\"\n    Create an event graph\n    \"\"\"\n    import requests\n\n    from backend.usecases.sample import create_test_graph\n\n    url = f\"{server_address}/graphs\"\n    headers = {\"Content-Type\": \"application/json\"}\n    data = create_test_graph().model_dump_json()\n    response = requests.post(url, headers=headers, data=data)\n\n    if response.status_code == 200:\n        print(response.json()[\"id\"])\n        execute_url = f\"{server_address}/graphs/{response.json()['id']}/execute\"\n        text = \"Hello, World!\"\n        input_data = {\"input\": text}\n        response = requests.post(execute_url, headers=headers, json=input_data)\n\n    else:\n        print(\"Failed to send graph\")\n        print(f\"Response: {response.text}\")\n\n\n@test.command()\n@click.argument(\"graph_id\")\n@click.argument(\"content\")\ndef execute(graph_id: str, content: dict):\n    \"\"\"\n    Create an event graph\n    \"\"\"\n    import requests\n\n    headers = {\"Content-Type\": \"application/json\"}\n\n    execute_url = f\"http://0.0.0.0:8000/graphs/{graph_id}/execute\"\n    requests.post(execute_url, headers=headers, json=content)\n\n\n@test.command()\ndef event():\n    \"\"\"\n    Send an event to the running server\n    \"\"\"\n    print(\"Event sent\")\n\n\n@test.command()\n@click.argument(\"server_address\")\n@click.argument(\"graph_id\")\ndef websocket(server_address: str, graph_id: str):\n    \"\"\"\n    Tests the websocket connection.\n    \"\"\"\n    import asyncio\n\n    import websockets.asyncio.client\n\n    from backend.server.ws_api import ExecutionSubscription, Methods, WsMessage\n\n    async def send_message(server_address: str):\n        uri = f\"ws://{server_address}\"\n        async with websockets.asyncio.client.connect(uri) as websocket:\n            try:\n                msg = WsMessage(\n                    method=Methods.SUBSCRIBE,\n                    data=ExecutionSubscription(graph_id=graph_id).model_dump(),\n                ).model_dump_json()\n                await websocket.send(msg)\n                print(f\"Sending: {msg}\")\n                while True:\n                    response = await websocket.recv()\n                    print(f\"Response from server: {response}\")\n            except InterruptedError:\n                exit(0)\n\n    asyncio.run(send_message(server_address))\n    print(\"Testing WS\")\n\n\nmain.add_command(test)\n\nif __name__ == \"__main__\":\n    main()\n",
+    "children": [
+        {
+            "type": "import_statement",
+            "start_token": 5,
+            "end_token": 6,
+            "label": "import os",
+            "children": []
+        },
+        {
+            "type": "import_statement",
+            "start_token": 8,
+            "end_token": 9,
+            "label": "import pathlib",
+            "children": []
+        },
+        {
+            "type": "import_statement",
+            "start_token": 12,
+            "end_token": 13,
+            "label": "import click",
+            "children": []
+        },
+        {
+            "type": "import_statement",
+            "start_token": 15,
+            "end_token": 16,
+            "label": "import psutil",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 19,
+            "end_token": 22,
+            "label": "from backend import app",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 24,
+            "end_token": 31,
+            "label": "from backend.util.process import AppProcess",
+            "children": []
+        },
+        {
+            "type": "function_definition",
+            "start_token": 35,
+            "end_token": 72,
+            "label": "def get_pid_path() -> pathlib.Path:\n    home_dir = pathlib.Path.home()\n    new_dir = home_dir / \".config\" / \"agpt\"\n    file_path = new_dir / \"running.tmp\"\n    return file_path\n",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 36,
+                    "end_token": 36,
+                    "label": "get_pid_path",
+                    "children": []
+                },
+                {
+                    "type": "parameters",
+                    "start_token": 37,
+                    "end_token": 38,
+                    "label": "()",
+                    "children": []
+                },
+                {
+                    "type": "block",
+                    "start_token": 44,
+                    "end_token": 71,
+                    "label": ":\n    home_dir = pathlib.Path.home()\n    new_dir = home_dir / \".config\" / \"agpt\"\n    file_path = new_dir / \"running.tmp\"\n    return file_path",
+                    "children": [
+                        {
+                            "type": "assignment",
+                            "start_token": 46,
+                            "end_token": 54,
+                            "label": "home_dir = pathlib.Path.home()",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 56,
+                            "end_token": 62,
+                            "label": "new_dir = home_dir / \".config\" / \"agpt\"",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 64,
+                            "end_token": 68,
+                            "label": "file_path = new_dir / \"running.tmp\"",
+                            "children": []
+                        },
+                        {
+                            "type": "return_statement",
+                            "start_token": 70,
+                            "end_token": 71,
+                            "label": "return file_path",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "start_token": 75,
+            "end_token": 156,
+            "label": "def get_pid() -> int | None:\n    file_path = get_pid_path()\n    if not file_path.exists():\n        return None\n\n    os.makedirs(file_path.parent, exist_ok=True)\n    with open(file_path, \"r\", encoding=\"utf-8\") as file:\n        pid = file.read()\n    try:\n        return int(pid)\n    except ValueError:\n        return None\n",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 76,
+                    "end_token": 76,
+                    "label": "get_pid",
+                    "children": []
+                },
+                {
+                    "type": "parameters",
+                    "start_token": 77,
+                    "end_token": 78,
+                    "label": "()",
+                    "children": []
+                },
+                {
+                    "type": "block",
+                    "start_token": 84,
+                    "end_token": 155,
+                    "label": ":\n    file_path = get_pid_path()\n    if not file_path.exists():\n        return None\n\n    os.makedirs(file_path.parent, exist_ok=True)\n    with open(file_path, \"r\", encoding=\"utf-8\") as file:\n        pid = file.read()\n    try:\n        return int(pid)\n    except ValueError:\n        return None",
+                    "children": [
+                        {
+                            "type": "assignment",
+                            "start_token": 86,
+                            "end_token": 90,
+                            "label": "file_path = get_pid_path()",
+                            "children": []
+                        },
+                        {
+                            "type": "if_statement",
+                            "start_token": 92,
+                            "end_token": 99,
+                            "label": "if not file_path.exists():",
+                            "children": [
+                                {
+                                    "type": "expression_list",
+                                    "start_token": 93,
+                                    "end_token": 98,
+                                    "label": "not file_path.exists()",
+                                    "children": []
+                                },
+                                {
+                                    "type": "block",
+                                    "start_token": 99,
+                                    "end_token": 101,
+                                    "label": ":\n        return",
+                                    "children": [
+                                        {
+                                            "type": "return_statement",
+                                            "start_token": 101,
+                                            "end_token": 102,
+                                            "label": "return None",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "expression_statement",
+                            "start_token": 105,
+                            "end_token": 116,
+                            "label": "os.makedirs(file_path.parent, exist_ok=True)",
+                            "children": []
+                        },
+                        {
+                            "type": "with_clause",
+                            "start_token": 118,
+                            "end_token": 131,
+                            "label": "with open(file_path, \"r\", encoding=\"utf-8\") as file:",
+                            "children": [
+                                {
+                                    "type": "call",
+                                    "start_token": 119,
+                                    "end_token": 128,
+                                    "label": "open(file_path, \"r\", encoding=\"utf-8\")",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 133,
+                            "end_token": 139,
+                            "label": "pid = file.read()",
+                            "children": []
+                        },
+                        {
+                            "type": "try_statement",
+                            "start_token": 141,
+                            "end_token": 155,
+                            "label": "try:\n        return int(pid)\n    except ValueError:\n        return None",
+                            "children": [
+                                {
+                                    "type": "block",
+                                    "start_token": 142,
+                                    "end_token": 149,
+                                    "label": ":\n        return int(pid)\n",
+                                    "children": [
+                                        {
+                                            "type": "return_statement",
+                                            "start_token": 144,
+                                            "end_token": 148,
+                                            "label": "return int(pid)",
+                                            "children": []
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "except_clause",
+                                    "start_token": 150,
+                                    "end_token": 155,
+                                    "label": "except ValueError:\n        return None",
+                                    "children": [
+                                        {
+                                            "type": "return_statement",
+                                            "start_token": 154,
+                                            "end_token": 155,
+                                            "label": "return None",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "start_token": 159,
+            "end_token": 211,
+            "label": "def write_pid(pid: int):\n    file_path = get_pid_path()\n    os.makedirs(file_path.parent, exist_ok=True)\n    with open(file_path, \"w\", encoding=\"utf-8\") as file:\n        file.write(str(pid))\n",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 160,
+                    "end_token": 160,
+                    "label": "write_pid",
+                    "children": []
+                },
+                {
+                    "type": "parameters",
+                    "start_token": 161,
+                    "end_token": 165,
+                    "label": "(pid: int)",
+                    "children": []
+                },
+                {
+                    "type": "block",
+                    "start_token": 166,
+                    "end_token": 211,
+                    "label": ":\n    file_path = get_pid_path()\n    os.makedirs(file_path.parent, exist_ok=True)\n    with open(file_path, \"w\", encoding=\"utf-8\") as file:\n        file.write(str(pid))\n",
+                    "children": [
+                        {
+                            "type": "assignment",
+                            "start_token": 168,
+                            "end_token": 172,
+                            "label": "file_path = get_pid_path()",
+                            "children": []
+                        },
+                        {
+                            "type": "expression_statement",
+                            "start_token": 174,
+                            "end_token": 185,
+                            "label": "os.makedirs(file_path.parent, exist_ok=True)",
+                            "children": []
+                        },
+                        {
+                            "type": "with_clause",
+                            "start_token": 187,
+                            "end_token": 200,
+                            "label": "with open(file_path, \"w\", encoding=\"utf-8\") as file:",
+                            "children": [
+                                {
+                                    "type": "call",
+                                    "start_token": 189,
+                                    "end_token": 197,
+                                    "label": "(file_path, \"w\", encoding=\"utf-8\")",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "expression_statement",
+                            "start_token": 202,
+                            "end_token": 210,
+                            "label": "file.write(str(pid))",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "class_definition",
+            "start_token": 214,
+            "end_token": 236,
+            "label": "class MainApp(AppProcess):\n    def run(self):\n        app.main(silent=True)\n",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 215,
+                    "end_token": 215,
+                    "label": "MainApp",
+                    "children": []
+                },
+                {
+                    "type": "parameters",
+                    "start_token": 216,
+                    "end_token": 218,
+                    "label": "(AppProcess)",
+                    "children": []
+                },
+                {
+                    "type": "block",
+                    "start_token": 219,
+                    "end_token": 236,
+                    "label": ":\n    def run(self):\n        app.main(silent=True)\n",
+                    "children": [
+                        {
+                            "type": "function_definition",
+                            "start_token": 221,
+                            "end_token": 235,
+                            "label": "def run(self):\n        app.main(silent=True)",
+                            "children": [
+                                {
+                                    "type": "identifier",
+                                    "start_token": 222,
+                                    "end_token": 222,
+                                    "label": "run",
+                                    "children": []
+                                },
+                                {
+                                    "type": "parameters",
+                                    "start_token": 223,
+                                    "end_token": 225,
+                                    "label": "(self)",
+                                    "children": []
+                                },
+                                {
+                                    "type": "block",
+                                    "start_token": 226,
+                                    "end_token": 235,
+                                    "label": ":\n        app.main(silent=True)",
+                                    "children": [
+                                        {
+                                            "type": "expression_statement",
+                                            "start_token": 228,
+                                            "end_token": 235,
+                                            "label": "app.main(silent=True)",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "decorated_definition",
+            "start_token": 239,
+            "end_token": 265,
+            "label": "@click.group()\ndef main():\n    \"\"\"AutoGPT Server CLI Tool\"\"\"\n    pass\n\n\n@main.command()",
+            "children": [
+                {
+                    "type": "decorator",
+                    "start_token": 239,
+                    "end_token": 244,
+                    "label": "@click.group()",
+                    "children": []
+                },
+                {
+                    "type": "function_definition",
+                    "start_token": 246,
+                    "end_token": 257,
+                    "label": "def main():\n    \"\"\"AutoGPT Server CLI Tool\"\"\"\n    pass\n",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 247,
+                            "end_token": 247,
+                            "label": "main",
+                            "children": []
+                        },
+                        {
+                            "type": "parameters",
+                            "start_token": 248,
+                            "end_token": 249,
+                            "label": "()",
+                            "children": []
+                        },
+                        {
+                            "type": "block",
+                            "start_token": 250,
+                            "end_token": 257,
+                            "label": ":\n    \"\"\"AutoGPT Server CLI Tool\"\"\"\n    pass\n",
+                            "children": [
+                                {
+                                    "type": "string",
+                                    "start_token": 252,
+                                    "end_token": 254,
+                                    "label": "\"\"\"AutoGPT Server CLI Tool\"\"\"",
+                                    "children": []
+                                },
+                                {
+                                    "type": "pass_statement",
+                                    "start_token": 256,
+                                    "end_token": 257,
+                                    "label": "pass\n",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "decorated_definition",
+            "start_token": 260,
+            "end_token": 331,
+            "label": "@main.command()\ndef start():\n    \"\"\"\n    Starts the server in the background and saves the PID\n    \"\"\"\n    # Define the path for the new directory and file\n    pid = get_pid()\n    if pid and psutil.pid_exists(pid):\n        print(\"Server is already running\")\n        exit(1)\n    elif pid:\n        print(\"PID does not exist deleting file\")\n        os.remove(get_pid_path())",
+            "children": [
+                {
+                    "type": "decorator",
+                    "start_token": 260,
+                    "end_token": 265,
+                    "label": "@main.command()",
+                    "children": []
+                },
+                {
+                    "type": "function_definition",
+                    "start_token": 267,
+                    "end_token": 331,
+                    "label": "def start():\n    \"\"\"\n    Starts the server in the background and saves the PID\n    \"\"\"\n    # Define the path for the new directory and file\n    pid = get_pid()\n    if pid and psutil.pid_exists(pid):\n        print(\"Server is already running\")\n        exit(1)\n    elif pid:\n        print(\"PID does not exist deleting file\")\n        os.remove(get_pid_path())",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 268,
+                            "end_token": 268,
+                            "label": "start",
+                            "children": []
+                        },
+                        {
+                            "type": "parameters",
+                            "start_token": 269,
+                            "end_token": 270,
+                            "label": "()",
+                            "children": []
+                        },
+                        {
+                            "type": "block",
+                            "start_token": 271,
+                            "end_token": 331,
+                            "label": ":\n    \"\"\"\n    Starts the server in the background and saves the PID\n    \"\"\"\n    # Define the path for the new directory and file\n    pid = get_pid()\n    if pid and psutil.pid_exists(pid):\n        print(\"Server is already running\")\n        exit(1)\n    elif pid:\n        print(\"PID does not exist deleting file\")\n        os.remove(get_pid_path())",
+                            "children": [
+                                {
+                                    "type": "string",
+                                    "start_token": 273,
+                                    "end_token": 275,
+                                    "label": "\"\"\"\n    Starts the server in the background and saves the PID\n    \"\"\"",
+                                    "children": []
+                                },
+                                {
+                                    "type": "assignment",
+                                    "start_token": 288,
+                                    "end_token": 292,
+                                    "label": "pid = get_pid()",
+                                    "children": []
+                                },
+                                {
+                                    "type": "if_statement",
+                                    "start_token": 294,
+                                    "end_token": 313,
+                                    "label": "if pid and psutil.pid_exists(pid):\n        print(\"Server is already running\")\n        exit(1)",
+                                    "children": [
+                                        {
+                                            "type": "expression_list",
+                                            "start_token": 295,
+                                            "end_token": 302,
+                                            "label": "pid and psutil.pid_exists(pid)",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "block",
+                                            "start_token": 303,
+                                            "end_token": 313,
+                                            "label": ":\n        print(\"Server is already running\")\n        exit(1)",
+                                            "children": [
+                                                {
+                                                    "type": "expression_statement",
+                                                    "start_token": 305,
+                                                    "end_token": 308,
+                                                    "label": "print(\"Server is already running\")",
+                                                    "children": []
+                                                },
+                                                {
+                                                    "type": "expression_statement",
+                                                    "start_token": 310,
+                                                    "end_token": 313,
+                                                    "label": "exit(1)",
+                                                    "children": []
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "elif_clause",
+                                    "start_token": 315,
+                                    "end_token": 331,
+                                    "label": "elif pid:\n        print(\"PID does not exist deleting file\")\n        os.remove(get_pid_path())",
+                                    "children": [
+                                        {
+                                            "type": "expression_list",
+                                            "start_token": 316,
+                                            "end_token": 317,
+                                            "label": "pid:",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "block",
+                                            "start_token": 318,
+                                            "end_token": 331,
+                                            "label": "\n        print(\"PID does not exist deleting file\")\n        os.remove(get_pid_path())",
+                                            "children": [
+                                                {
+                                                    "type": "expression_statement",
+                                                    "start_token": 319,
+                                                    "end_token": 322,
+                                                    "label": "print(\"PID does not exist deleting file\")",
+                                                    "children": []
+                                                },
+                                                {
+                                                    "type": "expression_statement",
+                                                    "start_token": 324,
+                                                    "end_token": 331,
+                                                    "label": "os.remove(get_pid_path())",
+                                                    "children": []
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "decorated_definition",
+            "start_token": 384,
+            "end_token": 471,
+            "label": "@main.command()\ndef stop():\n    \"\"\"\n    Stops the server\n    \"\"\"\n    pid = get_pid()\n    if not pid:\n        print(\"Server is not running\")\n        return\n\n    os.remove(get_pid_path())\n    process = psutil.Process(int(pid))\n    for child in process.children(recursive=True):\n        child.terminate()\n    process.terminate()\n\n    print(\"Server Stopped\")\n",
+            "children": [
+                {
+                    "type": "decorator",
+                    "start_token": 384,
+                    "end_token": 389,
+                    "label": "@main.command()",
+                    "children": []
+                },
+                {
+                    "type": "function_definition",
+                    "start_token": 391,
+                    "end_token": 471,
+                    "label": "def stop():\n    \"\"\"\n    Stops the server\n    \"\"\"\n    pid = get_pid()\n    if not pid:\n        print(\"Server is not running\")\n        return\n\n    os.remove(get_pid_path())\n    process = psutil.Process(int(pid))\n    for child in process.children(recursive=True):\n        child.terminate()\n    process.terminate()\n\n    print(\"Server Stopped\")\n",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 392,
+                            "end_token": 392,
+                            "label": "stop",
+                            "children": []
+                        },
+                        {
+                            "type": "parameters",
+                            "start_token": 393,
+                            "end_token": 394,
+                            "label": "()",
+                            "children": []
+                        },
+                        {
+                            "type": "block",
+                            "start_token": 395,
+                            "end_token": 471,
+                            "label": ":\n    \"\"\"\n    Stops the server\n    \"\"\"\n    pid = get_pid()\n    if not pid:\n        print(\"Server is not running\")\n        return\n\n    os.remove(get_pid_path())\n    process = psutil.Process(int(pid))\n    for child in process.children(recursive=True):\n        child.terminate()\n    process.terminate()\n\n    print(\"Server Stopped\")\n",
+                            "children": [
+                                {
+                                    "type": "string",
+                                    "start_token": 397,
+                                    "end_token": 399,
+                                    "label": "\"\"\"\n    Stops the server\n    \"\"\"",
+                                    "children": []
+                                },
+                                {
+                                    "type": "assignment",
+                                    "start_token": 401,
+                                    "end_token": 405,
+                                    "label": "pid = get_pid()",
+                                    "children": []
+                                },
+                                {
+                                    "type": "if_statement",
+                                    "start_token": 407,
+                                    "end_token": 415,
+                                    "label": "if not pid:\n        print(\"Server is not running\")",
+                                    "children": [
+                                        {
+                                            "type": "not_operator",
+                                            "start_token": 408,
+                                            "end_token": 410,
+                                            "label": "not pid:",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "block",
+                                            "start_token": 411,
+                                            "end_token": 415,
+                                            "label": "\n        print(\"Server is not running\")",
+                                            "children": [
+                                                {
+                                                    "type": "expression_statement",
+                                                    "start_token": 412,
+                                                    "end_token": 415,
+                                                    "label": "print(\"Server is not running\")",
+                                                    "children": []
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "expression_statement",
+                                    "start_token": 417,
+                                    "end_token": 418,
+                                    "label": "return\n",
+                                    "children": []
+                                },
+                                {
+                                    "type": "assignment",
+                                    "start_token": 429,
+                                    "end_token": 439,
+                                    "label": "process = psutil.Process(int(pid))",
+                                    "children": []
+                                },
+                                {
+                                    "type": "for_statement",
+                                    "start_token": 441,
+                                    "end_token": 455,
+                                    "label": "for child in process.children(recursive=True):\n        child.",
+                                    "children": [
+                                        {
+                                            "type": "for_in_clause",
+                                            "start_token": 442,
+                                            "end_token": 445,
+                                            "label": "child in process.",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "block",
+                                            "start_token": 452,
+                                            "end_token": 455,
+                                            "label": ":\n        child.",
+                                            "children": [
+                                                {
+                                                    "type": "expression_statement",
+                                                    "start_token": 454,
+                                                    "end_token": 455,
+                                                    "label": "child.",
+                                                    "children": []
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "expression_statement",
+                                    "start_token": 460,
+                                    "end_token": 465,
+                                    "label": "process.terminate()\n",
+                                    "children": []
+                                },
+                                {
+                                    "type": "expression_statement",
+                                    "start_token": 467,
+                                    "end_token": 470,
+                                    "label": "print(\"Server Stopped\")",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "decorated_definition",
+            "start_token": 474,
+            "end_token": 510,
+            "label": "@main.command()\ndef gen_encrypt_key():\n    \"\"\"\n    Generate a new encryption key\n    \"\"\"\n    from cryptography.fernet import Fernet\n\n    print(Fernet.generate_key().decode())",
+            "children": [
+                {
+                    "type": "decorator",
+                    "start_token": 474,
+                    "end_token": 479,
+                    "label": "@main.command()",
+                    "children": []
+                },
+                {
+                    "type": "function_definition",
+                    "start_token": 481,
+                    "end_token": 510,
+                    "label": "def gen_encrypt_key():\n    \"\"\"\n    Generate a new encryption key\n    \"\"\"\n    from cryptography.fernet import Fernet\n\n    print(Fernet.generate_key().decode())",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 482,
+                            "end_token": 482,
+                            "label": "gen_encrypt_key",
+                            "children": []
+                        },
+                        {
+                            "type": "parameters",
+                            "start_token": 483,
+                            "end_token": 484,
+                            "label": "()",
+                            "children": []
+                        },
+                        {
+                            "type": "block",
+                            "start_token": 485,
+                            "end_token": 510,
+                            "label": ":\n    \"\"\"\n    Generate a new encryption key\n    \"\"\"\n    from cryptography.fernet import Fernet\n\n    print(Fernet.generate_key().decode())",
+                            "children": [
+                                {
+                                    "type": "string",
+                                    "start_token": 487,
+                                    "end_token": 489,
+                                    "label": "\"\"\"\n    Generate a new encryption key\n    \"\"\"",
+                                    "children": []
+                                },
+                                {
+                                    "type": "import_from_statement",
+                                    "start_token": 491,
+                                    "end_token": 496,
+                                    "label": "from cryptography.fernet import Fernet",
+                                    "children": []
+                                },
+                                {
+                                    "type": "expression_statement",
+                                    "start_token": 499,
+                                    "end_token": 509,
+                                    "label": "print(Fernet.generate_key().decode()",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "decorated_definition",
+            "start_token": 514,
+            "end_token": 531,
+            "label": "@click.group()\ndef test():\n    \"\"\"\n    Group for test commands\n    \"\"\"\n    pass",
+            "children": [
+                {
+                    "type": "decorator",
+                    "start_token": 514,
+                    "end_token": 519,
+                    "label": "@click.group()",
+                    "children": []
+                },
+                {
+                    "type": "function_definition",
+                    "start_token": 521,
+                    "end_token": 531,
+                    "label": "def test():\n    \"\"\"\n    Group for test commands\n    \"\"\"\n    pass",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 522,
+                            "end_token": 522,
+                            "label": "test",
+                            "children": []
+                        },
+                        {
+                            "type": "parameters",
+                            "start_token": 523,
+                            "end_token": 524,
+                            "label": "()",
+                            "children": []
+                        },
+                        {
+                            "type": "block",
+                            "start_token": 525,
+                            "end_token": 531,
+                            "label": ":\n    \"\"\"\n    Group for test commands\n    \"\"\"\n    pass",
+                            "children": [
+                                {
+                                    "type": "string",
+                                    "start_token": 527,
+                                    "end_token": 529,
+                                    "label": "\"\"\"\n    Group for test commands\n    \"\"\"",
+                                    "children": []
+                                },
+                                {
+                                    "type": "pass_statement",
+                                    "start_token": 531,
+                                    "end_token": 531,
+                                    "label": "pass",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "decorated_definition",
+            "start_token": 535,
+            "end_token": 639,
+            "label": "@test.command()\n@click.argument(\"server_address\")\ndef reddit(server_address: str):\n    \"\"\"\n    Create an event graph\n    \"\"\"\n    import requests\n\n    from backend.usecases.reddit_marketing import create_test_graph\n\n    test_graph = create_test_graph()\n    url = f\"{server_address}/graphs\"\n    headers = {\"Content-Type\": \"application/json\"}\n    data = test_graph.model_dump_json()\n\n    response = requests.post(url, headers=headers, data=data)\n\n    graph_id = response.json()[\"id\"]\n    print(f\"Graph created with ID: {graph_id}\")\n",
+            "children": [
+                {
+                    "type": "decorator",
+                    "start_token": 535,
+                    "end_token": 541,
+                    "label": "@test.command()\n",
+                    "children": [
+                        {
+                            "type": "decorator",
+                            "start_token": 542,
+                            "end_token": 548,
+                            "label": "@click.argument(\"server_address\")",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "function_definition",
+                    "start_token": 550,
+                    "end_token": 639,
+                    "label": "def reddit(server_address: str):\n    \"\"\"\n    Create an event graph\n    \"\"\"\n    import requests\n\n    from backend.usecases.reddit_marketing import create_test_graph\n\n    test_graph = create_test_graph()\n    url = f\"{server_address}/graphs\"\n    headers = {\"Content-Type\": \"application/json\"}\n    data = test_graph.model_dump_json()\n\n    response = requests.post(url, headers=headers, data=data)\n\n    graph_id = response.json()[\"id\"]\n    print(f\"Graph created with ID: {graph_id}\")\n",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 551,
+                            "end_token": 551,
+                            "label": "reddit",
+                            "children": []
+                        },
+                        {
+                            "type": "parameters",
+                            "start_token": 552,
+                            "end_token": 556,
+                            "label": "(server_address: str)",
+                            "children": []
+                        },
+                        {
+                            "type": "block",
+                            "start_token": 557,
+                            "end_token": 639,
+                            "label": ":\n    \"\"\"\n    Create an event graph\n    \"\"\"\n    import requests\n\n    from backend.usecases.reddit_marketing import create_test_graph\n\n    test_graph = create_test_graph()\n    url = f\"{server_address}/graphs\"\n    headers = {\"Content-Type\": \"application/json\"}\n    data = test_graph.model_dump_json()\n\n    response = requests.post(url, headers=headers, data=data)\n\n    graph_id = response.json()[\"id\"]\n    print(f\"Graph created with ID: {graph_id}\")\n",
+                            "children": [
+                                {
+                                    "type": "string",
+                                    "start_token": 559,
+                                    "end_token": 561,
+                                    "label": "\"\"\"\n    Create an event graph\n    \"\"\"",
+                                    "children": []
+                                },
+                                {
+                                    "type": "import_statement",
+                                    "start_token": 563,
+                                    "end_token": 564,
+                                    "label": "import requests",
+                                    "children": []
+                                },
+                                {
+                                    "type": "import_from_statement",
+                                    "start_token": 567,
+                                    "end_token": 574,
+                                    "label": "from backend.usecases.reddit_marketing import create_test_graph",
+                                    "children": []
+                                },
+                                {
+                                    "type": "assignment",
+                                    "start_token": 577,
+                                    "end_token": 581,
+                                    "label": "test_graph = create_test_graph()",
+                                    "children": []
+                                },
+                                {
+                                    "type": "assignment",
+                                    "start_token": 583,
+                                    "end_token": 587,
+                                    "label": "url = f\"{server_address}/graphs\"\n",
+                                    "children": []
+                                },
+                                {
+                                    "type": "assignment",
+                                    "start_token": 589,
+                                    "end_token": 594,
+                                    "label": "= {\"Content-Type\": \"application/json\"}",
+                                    "children": []
+                                },
+                                {
+                                    "type": "assignment",
+                                    "start_token": 596,
+                                    "end_token": 602,
+                                    "label": "data = test_graph.model_dump_json()",
+                                    "children": []
+                                },
+                                {
+                                    "type": "expression_statement",
+                                    "start_token": 605,
+                                    "end_token": 620,
+                                    "label": "response = requests.post(url, headers=headers, data=data)",
+                                    "children": []
+                                },
+                                {
+                                    "type": "assignment",
+                                    "start_token": 623,
+                                    "end_token": 629,
+                                    "label": "graph_id = response.json()",
+                                    "children": []
+                                },
+                                {
+                                    "type": "expression_statement",
+                                    "start_token": 634,
+                                    "end_token": 638,
+                                    "label": "print(f\"Graph created with ID: {graph_id}\")",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "decorated_definition",
+            "start_token": 642,
+            "end_token": 993,
+            "label": "@test.command()\n@click.argument(\"server_address\")\ndef populate_db(server_address: str):\n    \"\"\"\n    Create an event graph\n    \"\"\"\n    import requests\n\n    from backend.usecases.sample import create_test_graph\n\n    test_graph = create_test_graph()\n    url = f\"{server_address}/graphs\"\n    headers = {\"Content-Type\": \"application/json\"}\n    data = test_graph.model_dump_json()\n\n    response = requests.post(url, headers=headers, data=data)\n\n    graph_id = response.json()[\"id\"]\n\n    if response.status_code == 200:\n        execute_url = f\"{server_address}/graphs/{response.json()['id']}/execute\"\n        text = \"Hello, World!\"\n        input_data = {\"input\": text}\n        response = requests.post(execute_url, headers=headers, json=input_data)\n\n        schedule_url = f\"{server_address}/graphs/{graph_id}/schedules\"\n        data = {\n            \"graph_id\": graph_id,\n            \"cron\": \"*/5 * * * *\",\n            \"input_data\": {\"input\": \"Hello, World!\"},\n        }\n        response = requests.post(schedule_url, headers=headers, json=data)\n\n    print(\"Database populated with: \\n- graph\\n- execution\\n- schedule\")\n\n\n@test.command()\n@click.argument(\"server_address\")\ndef graph(server_address: str):\n    \"\"\"\n    Create an event graph\n    \"\"\"\n    import requests\n\n    from backend.usecases.sample import create_test_graph\n\n    url = f\"{server_address}/graphs\"\n    headers = {\"Content-Type\": \"application/json\"}\n    data = create_test_graph().model_dump_json()\n    response = requests.post(url, headers=headers, data=data)\n\n    if response.status_code == 200:\n        print(response.json()[\"id\"])\n        execute_url = f\"{server_address}/graphs/{response.json()['id']}/execute\"\n        text = \"Hello, World!\"\n        input_data = {\"input\": text}\n        response = requests.post(execute_url, headers=headers, json=input_data)\n\n    else:\n        print(\"Failed to send graph\")\n        print(f\"Response: {response.text}\")\n",
+            "children": [
+                {
+                    "type": "decorator",
+                    "start_token": 642,
+                    "end_token": 647,
+                    "label": "@test.command()",
+                    "children": [
+                        {
+                            "type": "decorator",
+                            "start_token": 648,
+                            "end_token": 654,
+                            "label": "\n@click.argument(\"server_address\"",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "function_definition",
+                    "start_token": 657,
+                    "end_token": 993,
+                    "label": "def populate_db(server_address: str):\n    \"\"\"\n    Create an event graph\n    \"\"\"\n    import requests\n\n    from backend.usecases.sample import create_test_graph\n\n    test_graph = create_test_graph()\n    url = f\"{server_address}/graphs\"\n    headers = {\"Content-Type\": \"application/json\"}\n    data = test_graph.model_dump_json()\n\n    response = requests.post(url, headers=headers, data=data)\n\n    graph_id = response.json()[\"id\"]\n\n    if response.status_code == 200:\n        execute_url = f\"{server_address}/graphs/{response.json()['id']}/execute\"\n        text = \"Hello, World!\"\n        input_data = {\"input\": text}\n        response = requests.post(execute_url, headers=headers, json=input_data)\n\n        schedule_url = f\"{server_address}/graphs/{graph_id}/schedules\"\n        data = {\n            \"graph_id\": graph_id,\n            \"cron\": \"*/5 * * * *\",\n            \"input_data\": {\"input\": \"Hello, World!\"},\n        }\n        response = requests.post(schedule_url, headers=headers, json=data)\n\n    print(\"Database populated with: \\n- graph\\n- execution\\n- schedule\")\n\n\n@test.command()\n@click.argument(\"server_address\")\ndef graph(server_address: str):\n    \"\"\"\n    Create an event graph\n    \"\"\"\n    import requests\n\n    from backend.usecases.sample import create_test_graph\n\n    url = f\"{server_address}/graphs\"\n    headers = {\"Content-Type\": \"application/json\"}\n    data = create_test_graph().model_dump_json()\n    response = requests.post(url, headers=headers, data=data)\n\n    if response.status_code == 200:\n        print(response.json()[\"id\"])\n        execute_url = f\"{server_address}/graphs/{response.json()['id']}/execute\"\n        text = \"Hello, World!\"\n        input_data = {\"input\": text}\n        response = requests.post(execute_url, headers=headers, json=input_data)\n\n    else:\n        print(\"Failed to send graph\")\n        print(f\"Response: {response.text}\")\n",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 658,
+                            "end_token": 658,
+                            "label": "populate_db",
+                            "children": []
+                        },
+                        {
+                            "type": "parameters",
+                            "start_token": 659,
+                            "end_token": 663,
+                            "label": "(server_address: str)",
+                            "children": []
+                        },
+                        {
+                            "type": "block",
+                            "start_token": 664,
+                            "end_token": 993,
+                            "label": ":\n    \"\"\"\n    Create an event graph\n    \"\"\"\n    import requests\n\n    from backend.usecases.sample import create_test_graph\n\n    test_graph = create_test_graph()\n    url = f\"{server_address}/graphs\"\n    headers = {\"Content-Type\": \"application/json\"}\n    data = test_graph.model_dump_json()\n\n    response = requests.post(url, headers=headers, data=data)\n\n    graph_id = response.json()[\"id\"]\n\n    if response.status_code == 200:\n        execute_url = f\"{server_address}/graphs/{response.json()['id']}/execute\"\n        text = \"Hello, World!\"\n        input_data = {\"input\": text}\n        response = requests.post(execute_url, headers=headers, json=input_data)\n\n        schedule_url = f\"{server_address}/graphs/{graph_id}/schedules\"\n        data = {\n            \"graph_id\": graph_id,\n            \"cron\": \"*/5 * * * *\",\n            \"input_data\": {\"input\": \"Hello, World!\"},\n        }\n        response = requests.post(schedule_url, headers=headers, json=data)\n\n    print(\"Database populated with: \\n- graph\\n- execution\\n- schedule\")\n\n\n@test.command()\n@click.argument(\"server_address\")\ndef graph(server_address: str):\n    \"\"\"\n    Create an event graph\n    \"\"\"\n    import requests\n\n    from backend.usecases.sample import create_test_graph\n\n    url = f\"{server_address}/graphs\"\n    headers = {\"Content-Type\": \"application/json\"}\n    data = create_test_graph().model_dump_json()\n    response = requests.post(url, headers=headers, data=data)\n\n    if response.status_code == 200:\n        print(response.json()[\"id\"])\n        execute_url = f\"{server_address}/graphs/{response.json()['id']}/execute\"\n        text = \"Hello, World!\"\n        input_data = {\"input\": text}\n        response = requests.post(execute_url, headers=headers, json=input_data)\n\n    else:\n        print(\"Failed to send graph\")\n        print(f\"Response: {response.text}\")\n",
+                            "children": [
+                                {
+                                    "type": "string",
+                                    "start_token": 666,
+                                    "end_token": 668,
+                                    "label": "\"\"\"\n    Create an event graph\n    \"\"\"",
+                                    "children": []
+                                },
+                                {
+                                    "type": "import_statement",
+                                    "start_token": 670,
+                                    "end_token": 671,
+                                    "label": "import requests",
+                                    "children": []
+                                },
+                                {
+                                    "type": "import_from_statement",
+                                    "start_token": 674,
+                                    "end_token": 681,
+                                    "label": "from backend.usecases.sample import create_test_graph",
+                                    "children": []
+                                },
+                                {
+                                    "type": "assignment",
+                                    "start_token": 684,
+                                    "end_token": 688,
+                                    "label": "test_graph = create_test_graph()",
+                                    "children": []
+                                },
+                                {
+                                    "type": "assignment",
+                                    "start_token": 690,
+                                    "end_token": 694,
+                                    "label": "url = f\"{server_address}/graphs\"\n",
+                                    "children": []
+                                },
+                                {
+                                    "type": "assignment",
+                                    "start_token": 696,
+                                    "end_token": 701,
+                                    "label": "= {\"Content-Type\": \"application/json\"}",
+                                    "children": []
+                                },
+                                {
+                                    "type": "assignment",
+                                    "start_token": 703,
+                                    "end_token": 709,
+                                    "label": "data = test_graph.model_dump_json()",
+                                    "children": []
+                                },
+                                {
+                                    "type": "expression_statement",
+                                    "start_token": 712,
+                                    "end_token": 727,
+                                    "label": "response = requests.post(url, headers=headers, data=data)",
+                                    "children": []
+                                },
+                                {
+                                    "type": "assignment",
+                                    "start_token": 730,
+                                    "end_token": 734,
+                                    "label": "graph_id = response.json",
+                                    "children": []
+                                },
+                                {
+                                    "type": "if_statement",
+                                    "start_token": 742,
+                                    "end_token": 749,
+                                    "label": "if response.status_code == 200:",
+                                    "children": [
+                                        {
+                                            "type": "comparison_operator",
+                                            "start_token": 744,
+                                            "end_token": 747,
+                                            "label": ".status_code ==",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "block",
+                                            "start_token": 749,
+                                            "end_token": 783,
+                                            "label": ":\n        execute_url = f\"{server_address}/graphs/{response.json()['id']}/execute\"\n        text = \"Hello, World!\"\n        input_data = {\"input\": text}\n        response = requests.post(execute_url, headers=headers, json=input_data)",
+                                            "children": [
+                                                {
+                                                    "type": "assignment",
+                                                    "start_token": 751,
+                                                    "end_token": 755,
+                                                    "label": "execute_url = f\"{server_address}/graphs/{response.json()['id']}/execute\"\n",
+                                                    "children": []
+                                                },
+                                                {
+                                                    "type": "assignment",
+                                                    "start_token": 757,
+                                                    "end_token": 765,
+                                                    "label": "= \"Hello, World!\"\n        input_data = {\"input\": text",
+                                                    "children": []
+                                                },
+                                                {
+                                                    "type": "expression_statement",
+                                                    "start_token": 768,
+                                                    "end_token": 782,
+                                                    "label": "response = requests.post(execute_url, headers=headers, json=input_data",
+                                                    "children": []
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "assignment",
+                                    "start_token": 786,
+                                    "end_token": 822,
+                                    "label": "schedule_url = f\"{server_address}/graphs/{graph_id}/schedules\"\n        data = {\n            \"graph_id\": graph_id,\n            \"cron\": \"*/5 * * * *\",\n            \"input_data\": {\"input\": \"Hello, World!\"},\n        }\n        response = requests.post(schedule_url",
+                                    "children": []
+                                },
+                                {
+                                    "type": "expression_statement",
+                                    "start_token": 826,
+                                    "end_token": 826,
+                                    "label": "headers",
+                                    "children": [
+                                        {
+                                            "type": "dictionary",
+                                            "start_token": 794,
+                                            "end_token": 814,
+                                            "label": "\n            \"graph_id\": graph_id,\n            \"cron\": \"*/5 * * * *\",\n            \"input_data\": {\"input\": \"Hello, World!\"},\n        }",
+                                            "children": [
+                                                {
+                                                    "type": "pair",
+                                                    "start_token": 795,
+                                                    "end_token": 798,
+                                                    "label": "\"graph_id\": graph_id,",
+                                                    "children": [
+                                                        {
+                                                            "type": "string",
+                                                            "start_token": 795,
+                                                            "end_token": 795,
+                                                            "label": "\"graph_id\"",
+                                                            "children": []
+                                                        },
+                                                        {
+                                                            "type": "string",
+                                                            "start_token": 797,
+                                                            "end_token": 797,
+                                                            "label": "graph_id",
+                                                            "children": []
+                                                        }
+                                                    ]
+                                                },
+                                                {
+                                                    "type": "pair",
+                                                    "start_token": 800,
+                                                    "end_token": 803,
+                                                    "label": "\"cron\": \"*/5 * * * *\",",
+                                                    "children": [
+                                                        {
+                                                            "type": "string",
+                                                            "start_token": 800,
+                                                            "end_token": 800,
+                                                            "label": "\"cron\"",
+                                                            "children": []
+                                                        },
+                                                        {
+                                                            "type": "string",
+                                                            "start_token": 802,
+                                                            "end_token": 802,
+                                                            "label": "\"*/5 * * * *\"",
+                                                            "children": []
+                                                        }
+                                                    ]
+                                                },
+                                                {
+                                                    "type": "pair",
+                                                    "start_token": 805,
+                                                    "end_token": 811,
+                                                    "label": "\"input_data\": {\"input\": \"Hello, World!\"}",
+                                                    "children": [
+                                                        {
+                                                            "type": "string",
+                                                            "start_token": 805,
+                                                            "end_token": 805,
+                                                            "label": "\"input_data\"",
+                                                            "children": []
+                                                        },
+                                                        {
+                                                            "type": "string",
+                                                            "start_token": 807,
+                                                            "end_token": 807,
+                                                            "label": "{",
+                                                            "children": []
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "expression_statement",
+                                    "start_token": 828,
+                                    "end_token": 831,
+                                    "label": "json=data)",
+                                    "children": []
+                                },
+                                {
+                                    "type": "expression_statement",
+                                    "start_token": 834,
+                                    "end_token": 836,
+                                    "label": "print(\"Database populated with: \\n- graph\\n- execution\\n- schedule\"",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "decorated_definition",
+            "start_token": 996,
+            "end_token": 1067,
+            "label": "@test.command()\n@click.argument(\"graph_id\")\n@click.argument(\"content\")\ndef execute(graph_id: str, content: dict):\n    \"\"\"\n    Create an event graph\n    \"\"\"\n    import requests\n\n    headers = {\"Content-Type\": \"application/json\"}\n\n    execute_url = f\"http://0.0.0.0:8000/graphs/{graph_id}/execute\"\n    requests.post(execute_url, headers=headers, json=content)",
+            "children": [
+                {
+                    "type": "decorator",
+                    "start_token": 996,
+                    "end_token": 1001,
+                    "label": "@test.command()",
+                    "children": [
+                        {
+                            "type": "decorator",
+                            "start_token": 1002,
+                            "end_token": 1009,
+                            "label": "\n@click.argument(\"graph_id\")",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "function_definition",
+                    "start_token": 1019,
+                    "end_token": 1067,
+                    "label": "def execute(graph_id: str, content: dict):\n    \"\"\"\n    Create an event graph\n    \"\"\"\n    import requests\n\n    headers = {\"Content-Type\": \"application/json\"}\n\n    execute_url = f\"http://0.0.0.0:8000/graphs/{graph_id}/execute\"\n    requests.post(execute_url, headers=headers, json=content)",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 1020,
+                            "end_token": 1020,
+                            "label": "execute",
+                            "children": []
+                        },
+                        {
+                            "type": "parameters",
+                            "start_token": 1021,
+                            "end_token": 1029,
+                            "label": "(graph_id: str, content: dict)",
+                            "children": []
+                        },
+                        {
+                            "type": "block",
+                            "start_token": 1030,
+                            "end_token": 1067,
+                            "label": ":\n    \"\"\"\n    Create an event graph\n    \"\"\"\n    import requests\n\n    headers = {\"Content-Type\": \"application/json\"}\n\n    execute_url = f\"http://0.0.0.0:8000/graphs/{graph_id}/execute\"\n    requests.post(execute_url, headers=headers, json=content)",
+                            "children": [
+                                {
+                                    "type": "string",
+                                    "start_token": 1032,
+                                    "end_token": 1034,
+                                    "label": "\"\"\"\n    Create an event graph\n    \"\"\"",
+                                    "children": []
+                                },
+                                {
+                                    "type": "import_statement",
+                                    "start_token": 1036,
+                                    "end_token": 1037,
+                                    "label": "import requests",
+                                    "children": []
+                                },
+                                {
+                                    "type": "assignment",
+                                    "start_token": 1040,
+                                    "end_token": 1046,
+                                    "label": "headers = {\"Content-Type\": \"application/json\"}",
+                                    "children": []
+                                },
+                                {
+                                    "type": "assignment",
+                                    "start_token": 1050,
+                                    "end_token": 1053,
+                                    "label": "= f\"http://0.0.0.0:8000/graphs/{graph_id}/execute\"\n",
+                                    "children": []
+                                },
+                                {
+                                    "type": "expression_statement",
+                                    "start_token": 1054,
+                                    "end_token": 1066,
+                                    "label": "requests.post(execute_url, headers=headers, json=content",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "decorated_definition",
+            "start_token": 1071,
+            "end_token": 1091,
+            "label": "@test.command()\ndef event():\n    \"\"\"\n    Send an event to the running server\n    \"\"\"\n    print(\"Event sent\")",
+            "children": [
+                {
+                    "type": "decorator",
+                    "start_token": 1071,
+                    "end_token": 1076,
+                    "label": "@test.command()",
+                    "children": []
+                },
+                {
+                    "type": "function_definition",
+                    "start_token": 1078,
+                    "end_token": 1091,
+                    "label": "def event():\n    \"\"\"\n    Send an event to the running server\n    \"\"\"\n    print(\"Event sent\")",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 1079,
+                            "end_token": 1079,
+                            "label": "event",
+                            "children": []
+                        },
+                        {
+                            "type": "parameters",
+                            "start_token": 1080,
+                            "end_token": 1081,
+                            "label": "()",
+                            "children": []
+                        },
+                        {
+                            "type": "block",
+                            "start_token": 1082,
+                            "end_token": 1091,
+                            "label": ":\n    \"\"\"\n    Send an event to the running server\n    \"\"\"\n    print(\"Event sent\")",
+                            "children": [
+                                {
+                                    "type": "string",
+                                    "start_token": 1084,
+                                    "end_token": 1086,
+                                    "label": "\"\"\"\n    Send an event to the running server\n    \"\"\"",
+                                    "children": []
+                                },
+                                {
+                                    "type": "expression_statement",
+                                    "start_token": 1088,
+                                    "end_token": 1090,
+                                    "label": "print(\"Event sent\"",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "decorated_definition",
+            "start_token": 1095,
+            "end_token": 1284,
+            "label": "@test.command()\n@click.argument(\"server_address\")\n@click.argument(\"graph_id\")\ndef websocket(server_address: str, graph_id: str):\n    \"\"\"\n    Tests the websocket connection.\n    \"\"\"\n    import asyncio\n\n    import websockets.asyncio.client\n\n    from backend.server.ws_api import ExecutionSubscription, Methods, WsMessage\n\n    async def send_message(server_address: str):\n        uri = f\"ws://{server_address}\"\n        async with websockets.asyncio.client.connect(uri) as websocket:\n            try:\n                msg = WsMessage(\n                    method=Methods.SUBSCRIBE,\n                    data=ExecutionSubscription(graph_id=graph_id).model_dump(),\n                ).model_dump_json()\n                await websocket.send(msg)\n                print(f\"Sending: {msg}\")\n                while True:\n                    response = await websocket.recv()\n                    print(f\"Response from server: {response}\")\n            except InterruptedError:\n                exit(0)\n\n    asyncio.run(send_message(server_address))\n    print(\"Testing WS\")\n",
+            "children": [
+                {
+                    "type": "decorator",
+                    "start_token": 1095,
+                    "end_token": 1099,
+                    "label": "@test.command(",
+                    "children": [
+                        {
+                            "type": "decorator",
+                            "start_token": 1102,
+                            "end_token": 1108,
+                            "label": "@click.argument(\"server_address\")",
+                            "children": []
+                        },
+                        {
+                            "type": "decorator",
+                            "start_token": 1110,
+                            "end_token": 1116,
+                            "label": "@click.argument(\"graph_id\")",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "function_definition",
+                    "start_token": 1118,
+                    "end_token": 1284,
+                    "label": "def websocket(server_address: str, graph_id: str):\n    \"\"\"\n    Tests the websocket connection.\n    \"\"\"\n    import asyncio\n\n    import websockets.asyncio.client\n\n    from backend.server.ws_api import ExecutionSubscription, Methods, WsMessage\n\n    async def send_message(server_address: str):\n        uri = f\"ws://{server_address}\"\n        async with websockets.asyncio.client.connect(uri) as websocket:\n            try:\n                msg = WsMessage(\n                    method=Methods.SUBSCRIBE,\n                    data=ExecutionSubscription(graph_id=graph_id).model_dump(),\n                ).model_dump_json()\n                await websocket.send(msg)\n                print(f\"Sending: {msg}\")\n                while True:\n                    response = await websocket.recv()\n                    print(f\"Response from server: {response}\")\n            except InterruptedError:\n                exit(0)\n\n    asyncio.run(send_message(server_address))\n    print(\"Testing WS\")\n",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 1119,
+                            "end_token": 1119,
+                            "label": "websocket",
+                            "children": []
+                        },
+                        {
+                            "type": "parameters",
+                            "start_token": 1120,
+                            "end_token": 1128,
+                            "label": "(server_address: str, graph_id: str)",
+                            "children": []
+                        },
+                        {
+                            "type": "block",
+                            "start_token": 1129,
+                            "end_token": 1284,
+                            "label": ":\n    \"\"\"\n    Tests the websocket connection.\n    \"\"\"\n    import asyncio\n\n    import websockets.asyncio.client\n\n    from backend.server.ws_api import ExecutionSubscription, Methods, WsMessage\n\n    async def send_message(server_address: str):\n        uri = f\"ws://{server_address}\"\n        async with websockets.asyncio.client.connect(uri) as websocket:\n            try:\n                msg = WsMessage(\n                    method=Methods.SUBSCRIBE,\n                    data=ExecutionSubscription(graph_id=graph_id).model_dump(),\n                ).model_dump_json()\n                await websocket.send(msg)\n                print(f\"Sending: {msg}\")\n                while True:\n                    response = await websocket.recv()\n                    print(f\"Response from server: {response}\")\n            except InterruptedError:\n                exit(0)\n\n    asyncio.run(send_message(server_address))\n    print(\"Testing WS\")\n",
+                            "children": [
+                                {
+                                    "type": "string",
+                                    "start_token": 1131,
+                                    "end_token": 1133,
+                                    "label": "\"\"\"\n    Tests the websocket connection.\n    \"\"\"",
+                                    "children": []
+                                },
+                                {
+                                    "type": "import_statement",
+                                    "start_token": 1135,
+                                    "end_token": 1136,
+                                    "label": "import asyncio",
+                                    "children": []
+                                },
+                                {
+                                    "type": "import_statement",
+                                    "start_token": 1139,
+                                    "end_token": 1145,
+                                    "label": "import websockets.asyncio.client\n",
+                                    "children": []
+                                },
+                                {
+                                    "type": "import_from_statement",
+                                    "start_token": 1147,
+                                    "end_token": 1159,
+                                    "label": "from backend.server.ws_api import ExecutionSubscription, Methods, WsMessage\n",
+                                    "children": []
+                                },
+                                {
+                                    "type": "function_definition",
+                                    "start_token": 1161,
+                                    "end_token": 1268,
+                                    "label": "async def send_message(server_address: str):\n        uri = f\"ws://{server_address}\"\n        async with websockets.asyncio.client.connect(uri) as websocket:\n            try:\n                msg = WsMessage(\n                    method=Methods.SUBSCRIBE,\n                    data=ExecutionSubscription(graph_id=graph_id).model_dump(),\n                ).model_dump_json()\n                await websocket.send(msg)\n                print(f\"Sending: {msg}\")\n                while True:\n                    response = await websocket.recv()\n                    print(f\"Response from server: {response}\")\n            except InterruptedError:\n                exit(0)\n",
+                                    "children": [
+                                        {
+                                            "type": "identifier",
+                                            "start_token": 1162,
+                                            "end_token": 1162,
+                                            "label": "def",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "parameters",
+                                            "start_token": 1163,
+                                            "end_token": 1169,
+                                            "label": "send_message(server_address: str):",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "block",
+                                            "start_token": 1170,
+                                            "end_token": 1268,
+                                            "label": "\n        uri = f\"ws://{server_address}\"\n        async with websockets.asyncio.client.connect(uri) as websocket:\n            try:\n                msg = WsMessage(\n                    method=Methods.SUBSCRIBE,\n                    data=ExecutionSubscription(graph_id=graph_id).model_dump(),\n                ).model_dump_json()\n                await websocket.send(msg)\n                print(f\"Sending: {msg}\")\n                while True:\n                    response = await websocket.recv()\n                    print(f\"Response from server: {response}\")\n            except InterruptedError:\n                exit(0)\n",
+                                            "children": [
+                                                {
+                                                    "type": "assignment",
+                                                    "start_token": 1171,
+                                                    "end_token": 1175,
+                                                    "label": "uri = f\"ws://{server_address}\"\n",
+                                                    "children": []
+                                                },
+                                                {
+                                                    "type": "with_clause",
+                                                    "start_token": 1176,
+                                                    "end_token": 1190,
+                                                    "label": "async with websockets.asyncio.client.connect(uri) as websocket:",
+                                                    "children": [
+                                                        {
+                                                            "type": "call",
+                                                            "start_token": 1178,
+                                                            "end_token": 1188,
+                                                            "label": "websockets.asyncio.client.connect(uri) as",
+                                                            "children": []
+                                                        }
+                                                    ]
+                                                },
+                                                {
+                                                    "type": "try_statement",
+                                                    "start_token": 1192,
+                                                    "end_token": 1266,
+                                                    "label": "try:\n                msg = WsMessage(\n                    method=Methods.SUBSCRIBE,\n                    data=ExecutionSubscription(graph_id=graph_id).model_dump(),\n                ).model_dump_json()\n                await websocket.send(msg)\n                print(f\"Sending: {msg}\")\n                while True:\n                    response = await websocket.recv()\n                    print(f\"Response from server: {response}\")\n            except InterruptedError:\n                exit(0",
+                                                    "children": [
+                                                        {
+                                                            "type": "assignment",
+                                                            "start_token": 1195,
+                                                            "end_token": 1226,
+                                                            "label": "msg = WsMessage(\n                    method=Methods.SUBSCRIBE,\n                    data=ExecutionSubscription(graph_id=graph_id).model_dump(),\n                ).model_dump_json()\n",
+                                                            "children": []
+                                                        },
+                                                        {
+                                                            "type": "expression_statement",
+                                                            "start_token": 1227,
+                                                            "end_token": 1233,
+                                                            "label": "await websocket.send(msg)",
+                                                            "children": []
+                                                        },
+                                                        {
+                                                            "type": "while_statement",
+                                                            "start_token": 1241,
+                                                            "end_token": 1258,
+                                                            "label": "while True:\n                    response = await websocket.recv()\n                    print(f\"Response from server: {response}\")",
+                                                            "children": [
+                                                                {
+                                                                    "type": "block",
+                                                                    "start_token": 1243,
+                                                                    "end_token": 1258,
+                                                                    "label": ":\n                    response = await websocket.recv()\n                    print(f\"Response from server: {response}\")",
+                                                                    "children": [
+                                                                        {
+                                                                            "type": "assignment",
+                                                                            "start_token": 1245,
+                                                                            "end_token": 1252,
+                                                                            "label": "response = await websocket.recv()",
+                                                                            "children": []
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        },
+                                                        {
+                                                            "type": "except_clause",
+                                                            "start_token": 1260,
+                                                            "end_token": 1268,
+                                                            "label": "except InterruptedError:\n                exit(0)\n",
+                                                            "children": [
+                                                                {
+                                                                    "type": "expression_statement",
+                                                                    "start_token": 1264,
+                                                                    "end_token": 1267,
+                                                                    "label": "exit(0)",
+                                                                    "children": []
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "expression_statement",
+                                    "start_token": 1270,
+                                    "end_token": 1278,
+                                    "label": "asyncio.run(send_message(server_address))",
+                                    "children": []
+                                },
+                                {
+                                    "type": "expression_statement",
+                                    "start_token": 1280,
+                                    "end_token": 1283,
+                                    "label": "print(\"Testing WS\")",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "expression_statement",
+            "start_token": 1287,
+            "end_token": 1292,
+            "label": "main.add_command(test)",
+            "children": []
+        },
+        {
+            "type": "if_statement",
+            "start_token": 1295,
+            "end_token": 1305,
+            "label": "if __name__ == \"__main__\":\n    main()\n",
+            "children": [
+                {
+                    "type": "comparison_operator",
+                    "start_token": 1297,
+                    "end_token": 1299,
+                    "label": "== \"__main__\"",
+                    "children": []
+                },
+                {
+                    "type": "block",
+                    "start_token": 1300,
+                    "end_token": 1305,
+                    "label": ":\n    main()\n",
+                    "children": [
+                        {
+                            "type": "expression_statement",
+                            "start_token": 1302,
+                            "end_token": 1304,
+                            "label": "main()",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

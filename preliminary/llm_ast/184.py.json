@@ -1,0 +1,152 @@
+{
+    "type": "module",
+    "code": "",
+    "children": [
+        {
+            "type": "import_statement",
+            "code": "from typing import Dict, Set"
+        },
+        {
+            "type": "import_statement",
+            "code": "from fastapi import WebSocket"
+        },
+        {
+            "type": "import_statement",
+            "code": "from backend.data import execution"
+        },
+        {
+            "type": "import_statement",
+            "code": "from backend.server.model import Methods, WsMessage"
+        },
+        {
+            "type": "class_definition",
+            "code": "class ConnectionManager:",
+            "children": [
+                {
+                    "type": "function_definition",
+                    "code": "def __init__(self):",
+                    "children": [
+                        {
+                            "type": "assignment",
+                            "code": "self.active_connections: Set[WebSocket] = set()"
+                        },
+                        {
+                            "type": "assignment",
+                            "code": "self.subscriptions: Dict[str, Set[WebSocket]] = {}"
+                        }
+                    ]
+                },
+                {
+                    "type": "async_function_definition",
+                    "code": "async def connect(self, websocket: WebSocket):",
+                    "children": [
+                        {
+                            "type": "await",
+                            "code": "await websocket.accept()"
+                        },
+                        {
+                            "type": "expression_statement",
+                            "code": "self.active_connections.add(websocket)"
+                        }
+                    ]
+                },
+                {
+                    "type": "function_definition",
+                    "code": "def disconnect(self, websocket: WebSocket):",
+                    "children": [
+                        {
+                            "type": "expression_statement",
+                            "code": "self.active_connections.remove(websocket)"
+                        },
+                        {
+                            "type": "for_statement",
+                            "code": "for subscribers in self.subscriptions.values():",
+                            "children": [
+                                {
+                                    "type": "expression_statement",
+                                    "code": "subscribers.discard(websocket)"
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "type": "async_function_definition",
+                    "code": "async def subscribe(self, graph_id: str, websocket: WebSocket):",
+                    "children": [
+                        {
+                            "type": "if_statement",
+                            "code": "if graph_id not in self.subscriptions:",
+                            "children": [
+                                {
+                                    "type": "expression_statement",
+                                    "code": "self.subscriptions[graph_id] = set()"
+                                }
+                            ]
+                        },
+                        {
+                            "type": "expression_statement",
+                            "code": "self.subscriptions[graph_id].add(websocket)"
+                        }
+                    ]
+                },
+                {
+                    "type": "async_function_definition",
+                    "code": "async def unsubscribe(self, graph_id: str, websocket: WebSocket):",
+                    "children": [
+                        {
+                            "type": "if_statement",
+                            "code": "if graph_id in self.subscriptions:",
+                            "children": [
+                                {
+                                    "type": "expression_statement",
+                                    "code": "self.subscriptions[graph_id].discard(websocket)"
+                                },
+                                {
+                                    "type": "if_statement",
+                                    "code": "if not self.subscriptions[graph_id]:",
+                                    "children": [
+                                        {
+                                            "type": "expression_statement",
+                                            "code": "del self.subscriptions[graph_id]"
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "type": "async_function_definition",
+                    "code": "async def send_execution_result(self, result: execution.ExecutionResult):",
+                    "children": [
+                        {
+                            "type": "assignment",
+                            "code": "graph_id = result.graph_id"
+                        },
+                        {
+                            "type": "if_statement",
+                            "code": "if graph_id in self.subscriptions:",
+                            "children": [
+                                {
+                                    "type": "assignment",
+                                    "code": "message = WsMessage(method=Methods.EXECUTION_EVENT, channel=graph_id, data=result.model_dump()).model_dump_json()"
+                                },
+                                {
+                                    "type": "for_statement",
+                                    "code": "for connection in self.subscriptions[graph_id]:",
+                                    "children": [
+                                        {
+                                            "type": "await",
+                                            "code": "await connection.send_text(message)"
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

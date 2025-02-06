@@ -1,0 +1,282 @@
+{
+    "type": "module",
+    "code": "",
+    "children": [
+        {
+            "type": "import_statement",
+            "code": "from contextlib import contextmanager",
+            "children": []
+        },
+        {
+            "type": "import_statement",
+            "code": "from threading import Lock",
+            "children": []
+        },
+        {
+            "type": "import_statement",
+            "code": "from typing import TYPE_CHECKING, Any",
+            "children": []
+        },
+        {
+            "type": "import_statement",
+            "code": "from expiringdict import ExpiringDict",
+            "children": []
+        },
+        {
+            "type": "if_statement",
+            "code": "if TYPE_CHECKING:",
+            "children": [
+                {
+                    "type": "block",
+                    "code": "",
+                    "children": [
+                        {
+                            "type": "import_statement",
+                            "code": "from redis import Redis",
+                            "children": []
+                        },
+                        {
+                            "type": "import_statement",
+                            "code": "from redis.lock import Lock as RedisLock",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "class_definition",
+            "code": "class RedisKeyedMutex:",
+            "children": [
+                {
+                    "type": "string",
+                    "code": "    \"\"\"\n    This class provides a mutex that can be locked and unlocked by a specific key,\n    using Redis as a distributed locking provider.\n    It uses an ExpiringDict to automatically clear the mutex after a specified timeout,\n    in case the key is not unlocked for a specified duration, to prevent memory leaks.\n    \"\"\"",
+                    "children": []
+                },
+                {
+                    "type": "function_definition",
+                    "code": "def __init__(self, redis: \"Redis\", timeout: int | None = 60):",
+                    "children": [
+                        {
+                            "type": "block",
+                            "code": "",
+                            "children": [
+                                {
+                                    "type": "assignment",
+                                    "code": "self.redis = redis",
+                                    "children": []
+                                },
+                                {
+                                    "type": "assignment",
+                                    "code": "self.timeout = timeout",
+                                    "children": []
+                                },
+                                {
+                                    "type": "assignment",
+                                    "code": "self.locks: dict[Any, \"RedisLock\"] = ExpiringDict(max_len=6000, max_age_seconds=self.timeout)",
+                                    "children": []
+                                },
+                                {
+                                    "type": "assignment",
+                                    "code": "self.locks_lock = Lock()",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "type": "decorated_definition",
+                    "code": "@contextmanager\ndef locked(self, key: Any):",
+                    "children": [
+                        {
+                            "type": "decorator",
+                            "code": "@contextmanager",
+                            "children": []
+                        },
+                        {
+                            "type": "block",
+                            "code": "def locked(self, key: Any):",
+                            "children": [
+                                {
+                                    "type": "assignment",
+                                    "code": "lock = self.acquire(key)",
+                                    "children": []
+                                },
+                                {
+                                    "type": "try_statement",
+                                    "code": "try:",
+                                    "children": [
+                                        {
+                                            "type": "block",
+                                            "code": "",
+                                            "children": [
+                                                {
+                                                    "type": "yield",
+                                                    "code": "yield",
+                                                    "children": []
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "finally_clause",
+                                            "code": "finally:",
+                                            "children": [
+                                                {
+                                                    "type": "block",
+                                                    "code": "",
+                                                    "children": [
+                                                        {
+                                                            "type": "if_statement",
+                                                            "code": "if lock.locked():",
+                                                            "children": [
+                                                                {
+                                                                    "type": "block",
+                                                                    "code": "",
+                                                                    "children": [
+                                                                        {
+                                                                            "type": "expression_statement",
+                                                                            "code": "lock.release()",
+                                                                            "children": []
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "type": "function_definition",
+                    "code": "def acquire(self, key: Any) -> \"RedisLock\":",
+                    "children": [
+                        {
+                            "type": "string",
+                            "code": "\"\"\"Acquires and returns a lock with the given key\"\"\"",
+                            "children": []
+                        },
+                        {
+                            "type": "with_clause",
+                            "code": "with self.locks_lock:",
+                            "children": [
+                                {
+                                    "type": "block",
+                                    "code": "",
+                                    "children": [
+                                        {
+                                            "type": "if_statement",
+                                            "code": "if key not in self.locks:",
+                                            "children": [
+                                                {
+                                                    "type": "block",
+                                                    "code": "",
+                                                    "children": [
+                                                        {
+                                                            "type": "assignment",
+                                                            "code": "self.locks[key] = self.redis.lock(str(key), self.timeout, thread_local=False)",
+                                                            "children": []
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "assignment",
+                                            "code": "lock = self.locks[key]",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "expression_statement",
+                            "code": "lock.acquire()",
+                            "children": []
+                        },
+                        {
+                            "type": "return_statement",
+                            "code": "return lock",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "function_definition",
+                    "code": "def release(self, key: Any):",
+                    "children": [
+                        {
+                            "type": "if_statement",
+                            "code": "if (lock := self.locks.get(key)) and lock.locked() and lock.owned():",
+                            "children": [
+                                {
+                                    "type": "block",
+                                    "code": "",
+                                    "children": [
+                                        {
+                                            "type": "expression_statement",
+                                            "code": "lock.release()",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "type": "function_definition",
+                    "code": "def release_all_locks(self):",
+                    "children": [
+                        {
+                            "type": "string",
+                            "code": "\"\"\"Call this on process termination to ensure all locks are released\"\"\"",
+                            "children": []
+                        },
+                        {
+                            "type": "expression_statement",
+                            "code": "self.locks_lock.acquire(blocking=False)",
+                            "children": []
+                        },
+                        {
+                            "type": "for_statement",
+                            "code": "for lock in self.locks.values():",
+                            "children": [
+                                {
+                                    "type": "block",
+                                    "code": "",
+                                    "children": [
+                                        {
+                                            "type": "if_statement",
+                                            "code": "if lock.locked() and lock.owned():",
+                                            "children": [
+                                                {
+                                                    "type": "block",
+                                                    "code": "",
+                                                    "children": [
+                                                        {
+                                                            "type": "expression_statement",
+                                                            "code": "lock.release()",
+                                                            "children": []
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

@@ -1,0 +1,196 @@
+{
+    "type": "module",
+    "code": "",
+    "children": [
+        {
+            "type": "import_from_statement",
+            "code": "from pydantic import BaseModel",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "code": "from backend.data.block import (Block, BlockCategory, BlockOutput, BlockSchema, BlockWebhookConfig)",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "code": "from backend.data.model import SchemaField",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "code": "from backend.util import settings",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "code": "from backend.util.settings import AppEnvironment, BehaveAs",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "code": "from ._api import (TEST_CREDENTIALS, TEST_CREDENTIALS_INPUT, Slant3DCredentialsField, Slant3DCredentialsInput)",
+            "children": []
+        },
+        {
+            "type": "class_definition",
+            "code": "class Slant3DTriggerBase:",
+            "children": [
+                {
+                    "type": "string",
+                    "code": "\"\"\"Base class for Slant3D webhook triggers\"\"\"",
+                    "children": []
+                },
+                {
+                    "type": "class_definition",
+                    "code": "class Input(BlockSchema):",
+                    "children": [
+                        {
+                            "type": "assignment",
+                            "code": "credentials: Slant3DCredentialsInput = Slant3DCredentialsField()",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "code": "payload: dict = SchemaField(hidden=True, default={})",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "class_definition",
+                    "code": "class Output(BlockSchema):",
+                    "children": [
+                        {
+                            "type": "assignment",
+                            "code": "payload: dict = SchemaField(description=\"The complete webhook payload received from Slant3D\")",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "code": "order_id: str = SchemaField(description=\"The ID of the affected order\")",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "code": "error: str = SchemaField(description=\"Error message if payload processing failed\")",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "function_definition",
+                    "code": "def run(self, input_data: Input, **kwargs) -> BlockOutput:",
+                    "children": [
+                        {
+                            "type": "yield",
+                            "code": "yield \"payload\", input_data.payload",
+                            "children": []
+                        },
+                        {
+                            "type": "yield",
+                            "code": "yield \"order_id\", input_data.payload[\"orderId\"]",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "class_definition",
+            "code": "class Slant3DOrderWebhookBlock(Slant3DTriggerBase, Block):",
+            "children": [
+                {
+                    "type": "string",
+                    "code": "\"\"\"Block for handling Slant3D order webhooks\"\"\"",
+                    "children": []
+                },
+                {
+                    "type": "class_definition",
+                    "code": "class Input(Slant3DTriggerBase.Input):",
+                    "children": [
+                        {
+                            "type": "class_definition",
+                            "code": "class EventsFilter(BaseModel):",
+                            "children": [
+                                {
+                                    "type": "string",
+                                    "code": "\"\"\"\nCurrently Slant3D only supports 'SHIPPED' status updates\nCould be expanded in the future with more status types\n\"\"\"",
+                                    "children": []
+                                },
+                                {
+                                    "type": "assignment",
+                                    "code": "shipped: bool = True",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "assignment",
+                            "code": "events: EventsFilter = SchemaField(title=\"Events\", description=\"Order status events to subscribe to\", default=EventsFilter(shipped=True))",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "class_definition",
+                    "code": "class Output(Slant3DTriggerBase.Output):",
+                    "children": [
+                        {
+                            "type": "assignment",
+                            "code": "status: str = SchemaField(description=\"The new status of the order\")",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "code": "tracking_number: str = SchemaField(description=\"The tracking number for the shipment\")",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "code": "carrier_code: str = SchemaField(description=\"The carrier code (e.g., 'usps')\")",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "function_definition",
+                    "code": "def __init__(self):",
+                    "children": [
+                        {
+                            "type": "call",
+                            "code": "super().__init__(id=\"8a74c2ad-0104-4640-962f-26c6b69e58cd\", description=(\"This block triggers on Slant3D order status updates and outputs the event details, including tracking information when orders are shipped.\"), disabled=(settings.Settings().config.behave_as == BehaveAs.CLOUD and settings.Settings().config.app_env != AppEnvironment.LOCAL), categories={BlockCategory.DEVELOPER_TOOLS}, input_schema=self.Input, output_schema=self.Output, webhook_config=BlockWebhookConfig(provider=\"slant3d\", webhook_type=\"orders\", resource_format=\"\", event_filter_input=\"events\", event_format=\"order.{event}\"), test_input={\"credentials\": TEST_CREDENTIALS_INPUT, \"events\": {\"shipped\": True}, \"payload\": {\"orderId\": \"1234567890\", \"status\": \"SHIPPED\", \"trackingNumber\": \"ABCDEF123456\", \"carrierCode\": \"usps\"}}, test_credentials=TEST_CREDENTIALS, test_output=[(\"payload\", {\"orderId\": \"1234567890\", \"status\": \"SHIPPED\", \"trackingNumber\": \"ABCDEF123456\", \"carrierCode\": \"usps\"}), (\"order_id\", \"1234567890\"), (\"status\", \"SHIPPED\"), (\"tracking_number\", \"ABCDEF123456\"), (\"carrier_code\", \"usps\")])",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "function_definition",
+                    "code": "def run(self, input_data: Input, **kwargs) -> BlockOutput:  # type: ignore",
+                    "children": [
+                        {
+                            "type": "call",
+                            "code": "yield from super().run(input_data, **kwargs)",
+                            "children": []
+                        },
+                        {
+                            "type": "yield",
+                            "code": "yield \"status\", input_data.payload[\"status\"]",
+                            "children": []
+                        },
+                        {
+                            "type": "yield",
+                            "code": "yield \"tracking_number\", input_data.payload[\"trackingNumber\"]",
+                            "children": []
+                        },
+                        {
+                            "type": "yield",
+                            "code": "yield \"carrier_code\", input_data.payload[\"carrierCode\"]",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

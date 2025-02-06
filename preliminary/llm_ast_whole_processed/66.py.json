@@ -1,0 +1,1135 @@
+{
+    "type": "module",
+    "start_token": 0,
+    "end_token": 539,
+    "label": "import logging\nimport os\nimport signal\nimport sys\nfrom abc import ABC, abstractmethod\nfrom multiprocessing import Process, set_start_method\nfrom typing import Optional\n\nfrom backend.util.logging import configure_logging\nfrom backend.util.metrics import sentry_init\n\nlogger = logging.getLogger(__name__)\n_SERVICE_NAME = \"MainProcess\"\n\n\ndef get_service_name():\n    return _SERVICE_NAME\n\n\ndef set_service_name(name: str):\n    global _SERVICE_NAME\n    _SERVICE_NAME = name\n\n\nclass AppProcess(ABC):\n    \"\"\"\n    A class to represent an object that can be executed in a background process.\n    \"\"\"\n\n    process: Optional[Process] = None\n\n    set_start_method(\"spawn\", force=True)\n    configure_logging()\n    sentry_init()\n\n    # Methods that are executed INSIDE the process #\n\n    @abstractmethod\n    def run(self):\n        \"\"\"\n        The method that will be executed in the process.\n        \"\"\"\n        pass\n\n    @classmethod\n    @property\n    def service_name(cls) -> str:\n        return cls.__name__\n\n    def cleanup(self):\n        \"\"\"\n        Implement this method on a subclass to do post-execution cleanup,\n        e.g. disconnecting from a database or terminating child processes.\n        \"\"\"\n        pass\n\n    def health_check(self):\n        \"\"\"\n        A method to check the health of the process.\n        \"\"\"\n        pass\n\n    def execute_run_command(self, silent):\n        signal.signal(signal.SIGTERM, self._self_terminate)\n\n        try:\n            if silent:\n                sys.stdout = open(os.devnull, \"w\")\n                sys.stderr = open(os.devnull, \"w\")\n\n            set_service_name(self.service_name)\n            logger.info(f\"[{self.service_name}] Starting...\")\n            self.run()\n        except (KeyboardInterrupt, SystemExit) as e:\n            logger.warning(f\"[{self.service_name}] Terminated: {e}; quitting...\")\n\n    def _self_terminate(self, signum: int, frame):\n        self.cleanup()\n        sys.exit(0)\n\n    # Methods that are executed OUTSIDE the process #\n\n    def __enter__(self):\n        self.start(background=True)\n        return self\n\n    def __exit__(self, *args, **kwargs):\n        self.stop()\n\n    def start(self, background: bool = False, silent: bool = False, **proc_args) -> int:\n        \"\"\"\n        Start the background process.\n        Args:\n            background: Whether to run the process in the background.\n            silent: Whether to disable stdout and stderr.\n            proc_args: Additional arguments to pass to the process.\n        Returns:\n            the process id or 0 if the process is not running in the background.\n        \"\"\"\n        if not background:\n            self.execute_run_command(silent)\n            return 0\n\n        self.process = Process(\n            name=self.__class__.__name__,\n            target=self.execute_run_command,\n            args=(silent,),\n            **proc_args,\n        )\n        self.process.start()\n        self.health_check()\n        return self.process.pid or 0\n\n    def stop(self):\n        \"\"\"\n        Stop the background process.\n        \"\"\"\n        if not self.process:\n            return\n\n        self.process.terminate()\n        self.process.join()\n        self.process = None\n",
+    "children": [
+        {
+            "type": "import_statement",
+            "start_token": 0,
+            "end_token": 1,
+            "label": "import logging",
+            "children": [
+                {
+                    "type": "dotted_name",
+                    "start_token": 1,
+                    "end_token": 1,
+                    "label": "logging",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "import_statement",
+            "start_token": 3,
+            "end_token": 4,
+            "label": "import os",
+            "children": [
+                {
+                    "type": "dotted_name",
+                    "start_token": 4,
+                    "end_token": 4,
+                    "label": "os",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "import_statement",
+            "start_token": 6,
+            "end_token": 7,
+            "label": "import signal",
+            "children": [
+                {
+                    "type": "dotted_name",
+                    "start_token": 7,
+                    "end_token": 7,
+                    "label": "signal",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "import_statement",
+            "start_token": 9,
+            "end_token": 10,
+            "label": "import sys",
+            "children": [
+                {
+                    "type": "dotted_name",
+                    "start_token": 10,
+                    "end_token": 10,
+                    "label": "sys",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 12,
+            "end_token": 17,
+            "label": "from abc import ABC, abstractmethod",
+            "children": [
+                {
+                    "type": "dotted_name",
+                    "start_token": 13,
+                    "end_token": 13,
+                    "label": "abc",
+                    "children": []
+                },
+                {
+                    "type": "identifier",
+                    "start_token": 15,
+                    "end_token": 15,
+                    "label": "ABC",
+                    "children": []
+                },
+                {
+                    "type": "identifier",
+                    "start_token": 17,
+                    "end_token": 17,
+                    "label": "abstractmethod",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 19,
+            "end_token": 24,
+            "label": "from multiprocessing import Process, set_start_method",
+            "children": [
+                {
+                    "type": "dotted_name",
+                    "start_token": 20,
+                    "end_token": 20,
+                    "label": "multiprocessing",
+                    "children": []
+                },
+                {
+                    "type": "identifier",
+                    "start_token": 22,
+                    "end_token": 22,
+                    "label": "Process",
+                    "children": []
+                },
+                {
+                    "type": "identifier",
+                    "start_token": 24,
+                    "end_token": 24,
+                    "label": "set_start_method",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 26,
+            "end_token": 29,
+            "label": "from typing import Optional",
+            "children": [
+                {
+                    "type": "dotted_name",
+                    "start_token": 27,
+                    "end_token": 27,
+                    "label": "typing",
+                    "children": []
+                },
+                {
+                    "type": "identifier",
+                    "start_token": 29,
+                    "end_token": 29,
+                    "label": "Optional",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 32,
+            "end_token": 39,
+            "label": "from backend.util.logging import configure_logging",
+            "children": [
+                {
+                    "type": "relative_import",
+                    "start_token": 33,
+                    "end_token": 37,
+                    "label": "backend.util.logging",
+                    "children": []
+                },
+                {
+                    "type": "identifier",
+                    "start_token": 39,
+                    "end_token": 39,
+                    "label": "configure_logging",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 41,
+            "end_token": 48,
+            "label": "from backend.util.metrics import sentry_init",
+            "children": [
+                {
+                    "type": "relative_import",
+                    "start_token": 42,
+                    "end_token": 46,
+                    "label": "backend.util.metrics",
+                    "children": []
+                },
+                {
+                    "type": "identifier",
+                    "start_token": 48,
+                    "end_token": 48,
+                    "label": "sentry_init",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "assignment",
+            "start_token": 51,
+            "end_token": 58,
+            "label": "logger = logging.getLogger(__name__)",
+            "children": [
+                {
+                    "type": "attribute",
+                    "start_token": 53,
+                    "end_token": 55,
+                    "label": "logging.getLogger",
+                    "children": []
+                },
+                {
+                    "type": "identifier",
+                    "start_token": 57,
+                    "end_token": 57,
+                    "label": "__name__",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "assignment",
+            "start_token": 60,
+            "end_token": 62,
+            "label": "_SERVICE_NAME = \"MainProcess\"",
+            "children": [
+                {
+                    "type": "string",
+                    "start_token": 62,
+                    "end_token": 62,
+                    "label": "\"MainProcess\"",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "block",
+            "start_token": 65,
+            "end_token": 74,
+            "label": "\ndef get_service_name():\n    return _SERVICE_NAME\n",
+            "children": [
+                {
+                    "type": "function_definition",
+                    "start_token": 66,
+                    "end_token": 73,
+                    "label": "def get_service_name():\n    return _SERVICE_NAME",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 66,
+                            "end_token": 67,
+                            "label": "def get_service_name",
+                            "children": []
+                        },
+                        {
+                            "type": "parameters",
+                            "start_token": 68,
+                            "end_token": 69,
+                            "label": "()",
+                            "children": []
+                        },
+                        {
+                            "type": "block",
+                            "start_token": 71,
+                            "end_token": 73,
+                            "label": "\n    return _SERVICE_NAME",
+                            "children": [
+                                {
+                                    "type": "return_statement",
+                                    "start_token": 72,
+                                    "end_token": 73,
+                                    "label": "return _SERVICE_NAME",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "block",
+            "start_token": 77,
+            "end_token": 92,
+            "label": "def set_service_name(name: str):\n    global _SERVICE_NAME\n    _SERVICE_NAME = name\n",
+            "children": [
+                {
+                    "type": "function_definition",
+                    "start_token": 78,
+                    "end_token": 91,
+                    "label": "set_service_name(name: str):\n    global _SERVICE_NAME\n    _SERVICE_NAME = name",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 78,
+                            "end_token": 79,
+                            "label": "set_service_name(",
+                            "children": []
+                        },
+                        {
+                            "type": "parameters",
+                            "start_token": 80,
+                            "end_token": 83,
+                            "label": "name: str)",
+                            "children": []
+                        },
+                        {
+                            "type": "block",
+                            "start_token": 85,
+                            "end_token": 91,
+                            "label": "\n    global _SERVICE_NAME\n    _SERVICE_NAME = name",
+                            "children": [
+                                {
+                                    "type": "global_statement",
+                                    "start_token": 86,
+                                    "end_token": 87,
+                                    "label": "global _SERVICE_NAME",
+                                    "children": []
+                                },
+                                {
+                                    "type": "assignment",
+                                    "start_token": 89,
+                                    "end_token": 91,
+                                    "label": "_SERVICE_NAME = name",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "class_definition",
+            "start_token": 95,
+            "end_token": 539,
+            "label": "class AppProcess(ABC):\n    \"\"\"\n    A class to represent an object that can be executed in a background process.\n    \"\"\"\n\n    process: Optional[Process] = None\n\n    set_start_method(\"spawn\", force=True)\n    configure_logging()\n    sentry_init()\n\n    # Methods that are executed INSIDE the process #\n\n    @abstractmethod\n    def run(self):\n        \"\"\"\n        The method that will be executed in the process.\n        \"\"\"\n        pass\n\n    @classmethod\n    @property\n    def service_name(cls) -> str:\n        return cls.__name__\n\n    def cleanup(self):\n        \"\"\"\n        Implement this method on a subclass to do post-execution cleanup,\n        e.g. disconnecting from a database or terminating child processes.\n        \"\"\"\n        pass\n\n    def health_check(self):\n        \"\"\"\n        A method to check the health of the process.\n        \"\"\"\n        pass\n\n    def execute_run_command(self, silent):\n        signal.signal(signal.SIGTERM, self._self_terminate)\n\n        try:\n            if silent:\n                sys.stdout = open(os.devnull, \"w\")\n                sys.stderr = open(os.devnull, \"w\")\n\n            set_service_name(self.service_name)\n            logger.info(f\"[{self.service_name}] Starting...\")\n            self.run()\n        except (KeyboardInterrupt, SystemExit) as e:\n            logger.warning(f\"[{self.service_name}] Terminated: {e}; quitting...\")\n\n    def _self_terminate(self, signum: int, frame):\n        self.cleanup()\n        sys.exit(0)\n\n    # Methods that are executed OUTSIDE the process #\n\n    def __enter__(self):\n        self.start(background=True)\n        return self\n\n    def __exit__(self, *args, **kwargs):\n        self.stop()\n\n    def start(self, background: bool = False, silent: bool = False, **proc_args) -> int:\n        \"\"\"\n        Start the background process.\n        Args:\n            background: Whether to run the process in the background.\n            silent: Whether to disable stdout and stderr.\n            proc_args: Additional arguments to pass to the process.\n        Returns:\n            the process id or 0 if the process is not running in the background.\n        \"\"\"\n        if not background:\n            self.execute_run_command(silent)\n            return 0\n\n        self.process = Process(\n            name=self.__class__.__name__,\n            target=self.execute_run_command,\n            args=(silent,),\n            **proc_args,\n        )\n        self.process.start()\n        self.health_check()\n        return self.process.pid or 0\n\n    def stop(self):\n        \"\"\"\n        Stop the background process.\n        \"\"\"\n        if not self.process:\n            return\n\n        self.process.terminate()\n        self.process.join()\n        self.process = None\n",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 95,
+                    "end_token": 96,
+                    "label": "class AppProcess",
+                    "children": []
+                },
+                {
+                    "type": "block",
+                    "start_token": 100,
+                    "end_token": 539,
+                    "label": ":\n    \"\"\"\n    A class to represent an object that can be executed in a background process.\n    \"\"\"\n\n    process: Optional[Process] = None\n\n    set_start_method(\"spawn\", force=True)\n    configure_logging()\n    sentry_init()\n\n    # Methods that are executed INSIDE the process #\n\n    @abstractmethod\n    def run(self):\n        \"\"\"\n        The method that will be executed in the process.\n        \"\"\"\n        pass\n\n    @classmethod\n    @property\n    def service_name(cls) -> str:\n        return cls.__name__\n\n    def cleanup(self):\n        \"\"\"\n        Implement this method on a subclass to do post-execution cleanup,\n        e.g. disconnecting from a database or terminating child processes.\n        \"\"\"\n        pass\n\n    def health_check(self):\n        \"\"\"\n        A method to check the health of the process.\n        \"\"\"\n        pass\n\n    def execute_run_command(self, silent):\n        signal.signal(signal.SIGTERM, self._self_terminate)\n\n        try:\n            if silent:\n                sys.stdout = open(os.devnull, \"w\")\n                sys.stderr = open(os.devnull, \"w\")\n\n            set_service_name(self.service_name)\n            logger.info(f\"[{self.service_name}] Starting...\")\n            self.run()\n        except (KeyboardInterrupt, SystemExit) as e:\n            logger.warning(f\"[{self.service_name}] Terminated: {e}; quitting...\")\n\n    def _self_terminate(self, signum: int, frame):\n        self.cleanup()\n        sys.exit(0)\n\n    # Methods that are executed OUTSIDE the process #\n\n    def __enter__(self):\n        self.start(background=True)\n        return self\n\n    def __exit__(self, *args, **kwargs):\n        self.stop()\n\n    def start(self, background: bool = False, silent: bool = False, **proc_args) -> int:\n        \"\"\"\n        Start the background process.\n        Args:\n            background: Whether to run the process in the background.\n            silent: Whether to disable stdout and stderr.\n            proc_args: Additional arguments to pass to the process.\n        Returns:\n            the process id or 0 if the process is not running in the background.\n        \"\"\"\n        if not background:\n            self.execute_run_command(silent)\n            return 0\n\n        self.process = Process(\n            name=self.__class__.__name__,\n            target=self.execute_run_command,\n            args=(silent,),\n            **proc_args,\n        )\n        self.process.start()\n        self.health_check()\n        return self.process.pid or 0\n\n    def stop(self):\n        \"\"\"\n        Stop the background process.\n        \"\"\"\n        if not self.process:\n            return\n\n        self.process.terminate()\n        self.process.join()\n        self.process = None\n",
+                    "children": [
+                        {
+                            "type": "assignment",
+                            "start_token": 107,
+                            "end_token": 114,
+                            "label": "process: Optional[Process] = None",
+                            "children": [
+                                {
+                                    "type": "generic_type",
+                                    "start_token": 109,
+                                    "end_token": 112,
+                                    "label": "Optional[Process]",
+                                    "children": []
+                                },
+                                {
+                                    "type": "none",
+                                    "start_token": 114,
+                                    "end_token": 114,
+                                    "label": "None",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "call",
+                            "start_token": 117,
+                            "end_token": 124,
+                            "label": "set_start_method(\"spawn\", force=True)",
+                            "children": [
+                                {
+                                    "type": "argument_list",
+                                    "start_token": 119,
+                                    "end_token": 123,
+                                    "label": "\"spawn\", force=True",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "call",
+                            "start_token": 126,
+                            "end_token": 128,
+                            "label": "configure_logging()",
+                            "children": []
+                        },
+                        {
+                            "type": "call",
+                            "start_token": 130,
+                            "end_token": 132,
+                            "label": "sentry_init()",
+                            "children": []
+                        },
+                        {
+                            "type": "decorated_definition",
+                            "start_token": 146,
+                            "end_token": 161,
+                            "label": "@abstractmethod\n    def run(self):\n        \"\"\"\n        The method that will be executed in the process.\n        \"\"\"\n        pass\n",
+                            "children": [
+                                {
+                                    "type": "decorator",
+                                    "start_token": 146,
+                                    "end_token": 147,
+                                    "label": "@abstractmethod",
+                                    "children": []
+                                },
+                                {
+                                    "type": "function_definition",
+                                    "start_token": 149,
+                                    "end_token": 161,
+                                    "label": "def run(self):\n        \"\"\"\n        The method that will be executed in the process.\n        \"\"\"\n        pass\n",
+                                    "children": [
+                                        {
+                                            "type": "identifier",
+                                            "start_token": 149,
+                                            "end_token": 150,
+                                            "label": "def run",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "parameters",
+                                            "start_token": 151,
+                                            "end_token": 153,
+                                            "label": "(self)",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "block",
+                                            "start_token": 155,
+                                            "end_token": 161,
+                                            "label": "\n        \"\"\"\n        The method that will be executed in the process.\n        \"\"\"\n        pass\n",
+                                            "children": [
+                                                {
+                                                    "type": "pass_statement",
+                                                    "start_token": 160,
+                                                    "end_token": 161,
+                                                    "label": "pass\n",
+                                                    "children": []
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "decorated_definition",
+                            "start_token": 163,
+                            "end_token": 183,
+                            "label": "@classmethod\n    @property\n    def service_name(cls) -> str:\n        return cls.__name__\n",
+                            "children": [
+                                {
+                                    "type": "decorator",
+                                    "start_token": 163,
+                                    "end_token": 165,
+                                    "label": "@classmethod\n",
+                                    "children": []
+                                },
+                                {
+                                    "type": "decorator",
+                                    "start_token": 166,
+                                    "end_token": 167,
+                                    "label": "@property",
+                                    "children": []
+                                },
+                                {
+                                    "type": "function_definition",
+                                    "start_token": 169,
+                                    "end_token": 183,
+                                    "label": "def service_name(cls) -> str:\n        return cls.__name__\n",
+                                    "children": [
+                                        {
+                                            "type": "identifier",
+                                            "start_token": 169,
+                                            "end_token": 170,
+                                            "label": "def service_name",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "parameters",
+                                            "start_token": 171,
+                                            "end_token": 173,
+                                            "label": "(cls)",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "block",
+                                            "start_token": 177,
+                                            "end_token": 183,
+                                            "label": ":\n        return cls.__name__\n",
+                                            "children": [
+                                                {
+                                                    "type": "return_statement",
+                                                    "start_token": 179,
+                                                    "end_token": 182,
+                                                    "label": "return cls.__name__",
+                                                    "children": []
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "block",
+                            "start_token": 185,
+                            "end_token": 197,
+                            "label": "def cleanup(self):\n        \"\"\"\n        Implement this method on a subclass to do post-execution cleanup,\n        e.g. disconnecting from a database or terminating child processes.\n        \"\"\"\n        pass\n",
+                            "children": [
+                                {
+                                    "type": "function_definition",
+                                    "start_token": 185,
+                                    "end_token": 196,
+                                    "label": "def cleanup(self):\n        \"\"\"\n        Implement this method on a subclass to do post-execution cleanup,\n        e.g. disconnecting from a database or terminating child processes.\n        \"\"\"\n        pass",
+                                    "children": [
+                                        {
+                                            "type": "identifier",
+                                            "start_token": 185,
+                                            "end_token": 186,
+                                            "label": "def cleanup",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "parameters",
+                                            "start_token": 187,
+                                            "end_token": 189,
+                                            "label": "(self)",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "block",
+                                            "start_token": 191,
+                                            "end_token": 196,
+                                            "label": "\n        \"\"\"\n        Implement this method on a subclass to do post-execution cleanup,\n        e.g. disconnecting from a database or terminating child processes.\n        \"\"\"\n        pass",
+                                            "children": [
+                                                {
+                                                    "type": "pass_statement",
+                                                    "start_token": 195,
+                                                    "end_token": 196,
+                                                    "label": "\n        pass",
+                                                    "children": []
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "block",
+                            "start_token": 199,
+                            "end_token": 211,
+                            "label": "def health_check(self):\n        \"\"\"\n        A method to check the health of the process.\n        \"\"\"\n        pass\n",
+                            "children": [
+                                {
+                                    "type": "function_definition",
+                                    "start_token": 199,
+                                    "end_token": 210,
+                                    "label": "def health_check(self):\n        \"\"\"\n        A method to check the health of the process.\n        \"\"\"\n        pass",
+                                    "children": [
+                                        {
+                                            "type": "identifier",
+                                            "start_token": 199,
+                                            "end_token": 200,
+                                            "label": "def health_check",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "parameters",
+                                            "start_token": 201,
+                                            "end_token": 203,
+                                            "label": "(self)",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "block",
+                                            "start_token": 205,
+                                            "end_token": 210,
+                                            "label": "\n        \"\"\"\n        A method to check the health of the process.\n        \"\"\"\n        pass",
+                                            "children": [
+                                                {
+                                                    "type": "pass_statement",
+                                                    "start_token": 209,
+                                                    "end_token": 210,
+                                                    "label": "\n        pass",
+                                                    "children": []
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "block",
+                            "start_token": 213,
+                            "end_token": 308,
+                            "label": "def execute_run_command(self, silent):\n        signal.signal(signal.SIGTERM, self._self_terminate)\n\n        try:\n            if silent:\n                sys.stdout = open(os.devnull, \"w\")\n                sys.stderr = open(os.devnull, \"w\")\n\n            set_service_name(self.service_name)\n            logger.info(f\"[{self.service_name}] Starting...\")\n            self.run()\n        except (KeyboardInterrupt, SystemExit) as e:\n            logger.warning(f\"[{self.service_name}] Terminated: {e}; quitting...\")\n",
+                            "children": [
+                                {
+                                    "type": "function_definition",
+                                    "start_token": 214,
+                                    "end_token": 307,
+                                    "label": "execute_run_command(self, silent):\n        signal.signal(signal.SIGTERM, self._self_terminate)\n\n        try:\n            if silent:\n                sys.stdout = open(os.devnull, \"w\")\n                sys.stderr = open(os.devnull, \"w\")\n\n            set_service_name(self.service_name)\n            logger.info(f\"[{self.service_name}] Starting...\")\n            self.run()\n        except (KeyboardInterrupt, SystemExit) as e:\n            logger.warning(f\"[{self.service_name}] Terminated: {e}; quitting...\")",
+                                    "children": [
+                                        {
+                                            "type": "identifier",
+                                            "start_token": 214,
+                                            "end_token": 215,
+                                            "label": "execute_run_command(",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "parameters",
+                                            "start_token": 216,
+                                            "end_token": 219,
+                                            "label": "self, silent)",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "block",
+                                            "start_token": 221,
+                                            "end_token": 307,
+                                            "label": "\n        signal.signal(signal.SIGTERM, self._self_terminate)\n\n        try:\n            if silent:\n                sys.stdout = open(os.devnull, \"w\")\n                sys.stderr = open(os.devnull, \"w\")\n\n            set_service_name(self.service_name)\n            logger.info(f\"[{self.service_name}] Starting...\")\n            self.run()\n        except (KeyboardInterrupt, SystemExit) as e:\n            logger.warning(f\"[{self.service_name}] Terminated: {e}; quitting...\")",
+                                            "children": [
+                                                {
+                                                    "type": "call",
+                                                    "start_token": 222,
+                                                    "end_token": 233,
+                                                    "label": "signal.signal(signal.SIGTERM, self._self_terminate)",
+                                                    "children": [
+                                                        {
+                                                            "type": "dotted_name",
+                                                            "start_token": 223,
+                                                            "end_token": 227,
+                                                            "label": ".signal(signal.",
+                                                            "children": []
+                                                        },
+                                                        {
+                                                            "type": "as_pattern",
+                                                            "start_token": 229,
+                                                            "end_token": 232,
+                                                            "label": ", self._self_terminate",
+                                                            "children": []
+                                                        }
+                                                    ]
+                                                },
+                                                {
+                                                    "type": "block",
+                                                    "start_token": 236,
+                                                    "end_token": 289,
+                                                    "label": "try:\n            if silent:\n                sys.stdout = open(os.devnull, \"w\")\n                sys.stderr = open(os.devnull, \"w\")\n\n            set_service_name(self.service_name)\n            logger.info(f\"[{self.service_name}] Starting...\")\n            self.run()",
+                                                    "children": [
+                                                        {
+                                                            "type": "conditional_expression",
+                                                            "start_token": 239,
+                                                            "end_token": 267,
+                                                            "label": "if silent:\n                sys.stdout = open(os.devnull, \"w\")\n                sys.stderr = open(os.devnull, \"w\")",
+                                                            "children": [
+                                                                {
+                                                                    "type": "boolean_operator",
+                                                                    "start_token": 239,
+                                                                    "end_token": 241,
+                                                                    "label": "if silent:",
+                                                                    "children": []
+                                                                },
+                                                                {
+                                                                    "type": "assignment",
+                                                                    "start_token": 243,
+                                                                    "end_token": 254,
+                                                                    "label": "sys.stdout = open(os.devnull, \"w\")",
+                                                                    "children": [
+                                                                        {
+                                                                            "type": "attribute",
+                                                                            "start_token": 243,
+                                                                            "end_token": 245,
+                                                                            "label": "sys.stdout",
+                                                                            "children": []
+                                                                        },
+                                                                        {
+                                                                            "type": "call",
+                                                                            "start_token": 247,
+                                                                            "end_token": 254,
+                                                                            "label": "open(os.devnull, \"w\")",
+                                                                            "children": [
+                                                                                {
+                                                                                    "type": "argument_list",
+                                                                                    "start_token": 249,
+                                                                                    "end_token": 252,
+                                                                                    "label": "os.devnull,",
+                                                                                    "children": []
+                                                                                }
+                                                                            ]
+                                                                        }
+                                                                    ]
+                                                                },
+                                                                {
+                                                                    "type": "assignment",
+                                                                    "start_token": 256,
+                                                                    "end_token": 267,
+                                                                    "label": "sys.stderr = open(os.devnull, \"w\")",
+                                                                    "children": [
+                                                                        {
+                                                                            "type": "attribute",
+                                                                            "start_token": 256,
+                                                                            "end_token": 258,
+                                                                            "label": "sys.stderr",
+                                                                            "children": []
+                                                                        },
+                                                                        {
+                                                                            "type": "call",
+                                                                            "start_token": 260,
+                                                                            "end_token": 267,
+                                                                            "label": "open(os.devnull, \"w\")",
+                                                                            "children": [
+                                                                                {
+                                                                                    "type": "argument_list",
+                                                                                    "start_token": 261,
+                                                                                    "end_token": 264,
+                                                                                    "label": "(os.devnull",
+                                                                                    "children": []
+                                                                                }
+                                                                            ]
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        },
+                                                        {
+                                                            "type": "call",
+                                                            "start_token": 270,
+                                                            "end_token": 275,
+                                                            "label": "set_service_name(self.service_name)",
+                                                            "children": []
+                                                        },
+                                                        {
+                                                            "type": "expression_statement",
+                                                            "start_token": 277,
+                                                            "end_token": 283,
+                                                            "label": "logger.info(f\"[{self.service_name}] Starting...\")",
+                                                            "children": []
+                                                        },
+                                                        {
+                                                            "type": "call",
+                                                            "start_token": 285,
+                                                            "end_token": 289,
+                                                            "label": "self.run()",
+                                                            "children": []
+                                                        }
+                                                    ]
+                                                },
+                                                {
+                                                    "type": "except_clause",
+                                                    "start_token": 291,
+                                                    "end_token": 306,
+                                                    "label": "except (KeyboardInterrupt, SystemExit) as e:\n            logger.warning(f\"[{self.service_name}] Terminated: {e}; quitting...\"",
+                                                    "children": [
+                                                        {
+                                                            "type": "pair",
+                                                            "start_token": 293,
+                                                            "end_token": 296,
+                                                            "label": "KeyboardInterrupt, SystemExit)",
+                                                            "children": []
+                                                        },
+                                                        {
+                                                            "type": "block",
+                                                            "start_token": 300,
+                                                            "end_token": 306,
+                                                            "label": "\n            logger.warning(f\"[{self.service_name}] Terminated: {e}; quitting...\"",
+                                                            "children": [
+                                                                {
+                                                                    "type": "comparison_operator",
+                                                                    "start_token": 301,
+                                                                    "end_token": 307,
+                                                                    "label": "logger.warning(f\"[{self.service_name}] Terminated: {e}; quitting...\")",
+                                                                    "children": []
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "block",
+                            "start_token": 310,
+                            "end_token": 335,
+                            "label": "def _self_terminate(self, signum: int, frame):\n        self.cleanup()\n        sys.exit(0)\n",
+                            "children": [
+                                {
+                                    "type": "function_definition",
+                                    "start_token": 311,
+                                    "end_token": 334,
+                                    "label": "_self_terminate(self, signum: int, frame):\n        self.cleanup()\n        sys.exit(0)",
+                                    "children": [
+                                        {
+                                            "type": "identifier",
+                                            "start_token": 311,
+                                            "end_token": 312,
+                                            "label": "_self_terminate(",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "parameters",
+                                            "start_token": 313,
+                                            "end_token": 320,
+                                            "label": "self, signum: int, frame)",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "block",
+                                            "start_token": 322,
+                                            "end_token": 334,
+                                            "label": "\n        self.cleanup()\n        sys.exit(0)",
+                                            "children": [
+                                                {
+                                                    "type": "call",
+                                                    "start_token": 324,
+                                                    "end_token": 327,
+                                                    "label": ".cleanup()",
+                                                    "children": []
+                                                },
+                                                {
+                                                    "type": "call",
+                                                    "start_token": 329,
+                                                    "end_token": 334,
+                                                    "label": "sys.exit(0)",
+                                                    "children": []
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "block",
+                            "start_token": 348,
+                            "end_token": 366,
+                            "label": "def __enter__(self):\n        self.start(background=True)\n        return self\n",
+                            "children": [
+                                {
+                                    "type": "function_definition",
+                                    "start_token": 349,
+                                    "end_token": 364,
+                                    "label": "__enter__(self):\n        self.start(background=True)\n        return",
+                                    "children": [
+                                        {
+                                            "type": "identifier",
+                                            "start_token": 349,
+                                            "end_token": 350,
+                                            "label": "__enter__(",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "parameters",
+                                            "start_token": 351,
+                                            "end_token": 352,
+                                            "label": "self)",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "block",
+                                            "start_token": 354,
+                                            "end_token": 364,
+                                            "label": "\n        self.start(background=True)\n        return",
+                                            "children": [
+                                                {
+                                                    "type": "call",
+                                                    "start_token": 355,
+                                                    "end_token": 362,
+                                                    "label": "self.start(background=True)",
+                                                    "children": []
+                                                },
+                                                {
+                                                    "type": "return_statement",
+                                                    "start_token": 364,
+                                                    "end_token": 365,
+                                                    "label": "return self",
+                                                    "children": []
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "block",
+                            "start_token": 368,
+                            "end_token": 387,
+                            "label": "def __exit__(self, *args, **kwargs):\n        self.stop()\n",
+                            "children": [
+                                {
+                                    "type": "function_definition",
+                                    "start_token": 369,
+                                    "end_token": 386,
+                                    "label": "__exit__(self, *args, **kwargs):\n        self.stop()",
+                                    "children": [
+                                        {
+                                            "type": "identifier",
+                                            "start_token": 369,
+                                            "end_token": 370,
+                                            "label": "__exit__(",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "parameters",
+                                            "start_token": 371,
+                                            "end_token": 379,
+                                            "label": "self, *args, **kwargs)",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "block",
+                                            "start_token": 381,
+                                            "end_token": 386,
+                                            "label": "\n        self.stop()",
+                                            "children": [
+                                                {
+                                                    "type": "call",
+                                                    "start_token": 382,
+                                                    "end_token": 385,
+                                                    "label": "self.stop(",
+                                                    "children": []
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "block",
+                            "start_token": 389,
+                            "end_token": 495,
+                            "label": "def start(self, background: bool = False, silent: bool = False, **proc_args) -> int:\n        \"\"\"\n        Start the background process.\n        Args:\n            background: Whether to run the process in the background.\n            silent: Whether to disable stdout and stderr.\n            proc_args: Additional arguments to pass to the process.\n        Returns:\n            the process id or 0 if the process is not running in the background.\n        \"\"\"\n        if not background:\n            self.execute_run_command(silent)\n            return 0\n\n        self.process = Process(\n            name=self.__class__.__name__,\n            target=self.execute_run_command,\n            args=(silent,),\n            **proc_args,\n        )\n        self.process.start()\n        self.health_check()\n        return self.process.pid or 0\n",
+                            "children": [
+                                {
+                                    "type": "function_definition",
+                                    "start_token": 390,
+                                    "end_token": 494,
+                                    "label": "start(self, background: bool = False, silent: bool = False, **proc_args) -> int:\n        \"\"\"\n        Start the background process.\n        Args:\n            background: Whether to run the process in the background.\n            silent: Whether to disable stdout and stderr.\n            proc_args: Additional arguments to pass to the process.\n        Returns:\n            the process id or 0 if the process is not running in the background.\n        \"\"\"\n        if not background:\n            self.execute_run_command(silent)\n            return 0\n\n        self.process = Process(\n            name=self.__class__.__name__,\n            target=self.execute_run_command,\n            args=(silent,),\n            **proc_args,\n        )\n        self.process.start()\n        self.health_check()\n        return self.process.pid or 0",
+                                    "children": [
+                                        {
+                                            "type": "identifier",
+                                            "start_token": 390,
+                                            "end_token": 391,
+                                            "label": "start(",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "parameters",
+                                            "start_token": 392,
+                                            "end_token": 409,
+                                            "label": "self, background: bool = False, silent: bool = False, **proc_args)",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "block",
+                                            "start_token": 414,
+                                            "end_token": 494,
+                                            "label": "\n        \"\"\"\n        Start the background process.\n        Args:\n            background: Whether to run the process in the background.\n            silent: Whether to disable stdout and stderr.\n            proc_args: Additional arguments to pass to the process.\n        Returns:\n            the process id or 0 if the process is not running in the background.\n        \"\"\"\n        if not background:\n            self.execute_run_command(silent)\n            return 0\n\n        self.process = Process(\n            name=self.__class__.__name__,\n            target=self.execute_run_command,\n            args=(silent,),\n            **proc_args,\n        )\n        self.process.start()\n        self.health_check()\n        return self.process.pid or 0",
+                                            "children": [
+                                                {
+                                                    "type": "conditional_expression",
+                                                    "start_token": 419,
+                                                    "end_token": 433,
+                                                    "label": "if not background:\n            self.execute_run_command(silent)\n            return 0\n",
+                                                    "children": [
+                                                        {
+                                                            "type": "boolean_operator",
+                                                            "start_token": 419,
+                                                            "end_token": 421,
+                                                            "label": "if not background",
+                                                            "children": []
+                                                        },
+                                                        {
+                                                            "type": "call",
+                                                            "start_token": 424,
+                                                            "end_token": 429,
+                                                            "label": "self.execute_run_command(silent)",
+                                                            "children": []
+                                                        },
+                                                        {
+                                                            "type": "integer",
+                                                            "start_token": 431,
+                                                            "end_token": 432,
+                                                            "label": "return 0",
+                                                            "children": []
+                                                        }
+                                                    ]
+                                                },
+                                                {
+                                                    "type": "assignment",
+                                                    "start_token": 435,
+                                                    "end_token": 470,
+                                                    "label": "self.process = Process(\n            name=self.__class__.__name__,\n            target=self.execute_run_command,\n            args=(silent,),\n            **proc_args,\n",
+                                                    "children": [
+                                                        {
+                                                            "type": "generic_type",
+                                                            "start_token": 437,
+                                                            "end_token": 448,
+                                                            "label": "process = Process(\n            name=self.__class__.__name__",
+                                                            "children": []
+                                                        },
+                                                        {
+                                                            "type": "parameter",
+                                                            "start_token": 459,
+                                                            "end_token": 463,
+                                                            "label": "=(silent,)",
+                                                            "children": []
+                                                        }
+                                                    ]
+                                                },
+                                                {
+                                                    "type": "call",
+                                                    "start_token": 473,
+                                                    "end_token": 479,
+                                                    "label": "self.process.start()",
+                                                    "children": []
+                                                },
+                                                {
+                                                    "type": "call",
+                                                    "start_token": 481,
+                                                    "end_token": 485,
+                                                    "label": "self.health_check()",
+                                                    "children": []
+                                                },
+                                                {
+                                                    "type": "return_statement",
+                                                    "start_token": 487,
+                                                    "end_token": 494,
+                                                    "label": "return self.process.pid or 0",
+                                                    "children": []
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "block",
+                            "start_token": 497,
+                            "end_token": 539,
+                            "label": "def stop(self):\n        \"\"\"\n        Stop the background process.\n        \"\"\"\n        if not self.process:\n            return\n\n        self.process.terminate()\n        self.process.join()\n        self.process = None\n",
+                            "children": [
+                                {
+                                    "type": "function_definition",
+                                    "start_token": 498,
+                                    "end_token": 538,
+                                    "label": "stop(self):\n        \"\"\"\n        Stop the background process.\n        \"\"\"\n        if not self.process:\n            return\n\n        self.process.terminate()\n        self.process.join()\n        self.process = None",
+                                    "children": [
+                                        {
+                                            "type": "identifier",
+                                            "start_token": 498,
+                                            "end_token": 499,
+                                            "label": "stop(",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "parameters",
+                                            "start_token": 500,
+                                            "end_token": 501,
+                                            "label": "self)",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "block",
+                                            "start_token": 503,
+                                            "end_token": 538,
+                                            "label": "\n        \"\"\"\n        Stop the background process.\n        \"\"\"\n        if not self.process:\n            return\n\n        self.process.terminate()\n        self.process.join()\n        self.process = None",
+                                            "children": [
+                                                {
+                                                    "type": "conditional_expression",
+                                                    "start_token": 508,
+                                                    "end_token": 515,
+                                                    "label": "if not self.process:\n            return",
+                                                    "children": [
+                                                        {
+                                                            "type": "boolean_operator",
+                                                            "start_token": 508,
+                                                            "end_token": 510,
+                                                            "label": "if not self",
+                                                            "children": []
+                                                        },
+                                                        {
+                                                            "type": "none",
+                                                            "start_token": 515,
+                                                            "end_token": 515,
+                                                            "label": "return",
+                                                            "children": []
+                                                        }
+                                                    ]
+                                                },
+                                                {
+                                                    "type": "call",
+                                                    "start_token": 518,
+                                                    "end_token": 524,
+                                                    "label": "self.process.terminate()",
+                                                    "children": []
+                                                },
+                                                {
+                                                    "type": "call",
+                                                    "start_token": 526,
+                                                    "end_token": 532,
+                                                    "label": "self.process.join()",
+                                                    "children": []
+                                                },
+                                                {
+                                                    "type": "none",
+                                                    "start_token": 538,
+                                                    "end_token": 538,
+                                                    "label": "None",
+                                                    "children": []
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

@@ -1,0 +1,691 @@
+{
+    "type": "module",
+    "start_token": 0,
+    "end_token": 1510,
+    "label": "from datetime import datetime\n\nimport prisma.errors\nimport prisma.models\nimport pytest\nfrom prisma import Prisma\n\nimport backend.server.v2.store.db as db\nfrom backend.server.v2.store.model import Profile\n\n\n@pytest.fixture(autouse=True)\nasync def setup_prisma():\n    # Don't register client if already registered\n    try:\n        Prisma()\n    except prisma.errors.ClientAlreadyRegisteredError:\n        pass\n    yield\n\n\n@pytest.mark.asyncio\nasync def test_get_store_agents(mocker):\n    # Mock data\n    mock_agents = [\n        prisma.models.StoreAgent(\n            listing_id=\"test-id\",\n            storeListingVersionId=\"version123\",\n            slug=\"test-agent\",\n            agent_name=\"Test Agent\",\n            agent_video=None,\n            agent_image=[\"image.jpg\"],\n            featured=False,\n            creator_username=\"creator\",\n            creator_avatar=\"avatar.jpg\",\n            sub_heading=\"Test heading\",\n            description=\"Test description\",\n            categories=[],\n            runs=10,\n            rating=4.5,\n            versions=[\"1.0\"],\n            updated_at=datetime.now(),\n        )\n    ]\n\n    # Mock prisma calls\n    mock_store_agent = mocker.patch(\"prisma.models.StoreAgent.prisma\")\n    mock_store_agent.return_value.find_many = mocker.AsyncMock(return_value=mock_agents)\n    mock_store_agent.return_value.count = mocker.AsyncMock(return_value=1)\n\n    # Call function\n    result = await db.get_store_agents()\n\n    # Verify results\n    assert len(result.agents) == 1\n    assert result.agents[0].slug == \"test-agent\"\n    assert result.pagination.total_items == 1\n\n    # Verify mocks called correctly\n    mock_store_agent.return_value.find_many.assert_called_once()\n    mock_store_agent.return_value.count.assert_called_once()\n\n\n@pytest.mark.asyncio\nasync def test_get_store_agent_details(mocker):\n    # Mock data\n    mock_agent = prisma.models.StoreAgent(\n        listing_id=\"test-id\",\n        storeListingVersionId=\"version123\",\n        slug=\"test-agent\",\n        agent_name=\"Test Agent\",\n        agent_video=\"video.mp4\",\n        agent_image=[\"image.jpg\"],\n        featured=False,\n        creator_username=\"creator\",\n        creator_avatar=\"avatar.jpg\",\n        sub_heading=\"Test heading\",\n        description=\"Test description\",\n        categories=[\"test\"],\n        runs=10,\n        rating=4.5,\n        versions=[\"1.0\"],\n        updated_at=datetime.now(),\n    )\n\n    # Mock prisma call\n    mock_store_agent = mocker.patch(\"prisma.models.StoreAgent.prisma\")\n    mock_store_agent.return_value.find_first = mocker.AsyncMock(return_value=mock_agent)\n\n    # Call function\n    result = await db.get_store_agent_details(\"creator\", \"test-agent\")\n\n    # Verify results\n    assert result.slug == \"test-agent\"\n    assert result.agent_name == \"Test Agent\"\n\n    # Verify mock called correctly\n    mock_store_agent.return_value.find_first.assert_called_once_with(\n        where={\"creator_username\": \"creator\", \"slug\": \"test-agent\"}\n    )\n\n\n@pytest.mark.asyncio\nasync def test_get_store_creator_details(mocker):\n    # Mock data\n    mock_creator_data = prisma.models.Creator(\n        name=\"Test Creator\",\n        username=\"creator\",\n        description=\"Test description\",\n        links=[\"link1\"],\n        avatar_url=\"avatar.jpg\",\n        num_agents=1,\n        agent_rating=4.5,\n        agent_runs=10,\n        top_categories=[\"test\"],\n        is_featured=False,\n    )\n\n    # Mock prisma call\n    mock_creator = mocker.patch(\"prisma.models.Creator.prisma\")\n    mock_creator.return_value.find_unique = mocker.AsyncMock()\n    # Configure the mock to return values that will pass validation\n    mock_creator.return_value.find_unique.return_value = mock_creator_data\n\n    # Call function\n    result = await db.get_store_creator_details(\"creator\")\n\n    # Verify results\n    assert result.username == \"creator\"\n    assert result.name == \"Test Creator\"\n    assert result.description == \"Test description\"\n    assert result.avatar_url == \"avatar.jpg\"\n\n    # Verify mock called correctly\n    mock_creator.return_value.find_unique.assert_called_once_with(\n        where={\"username\": \"creator\"}\n    )\n\n\n@pytest.mark.asyncio\nasync def test_create_store_submission(mocker):\n    # Mock data\n    mock_agent = prisma.models.AgentGraph(\n        id=\"agent-id\",\n        version=1,\n        userId=\"user-id\",\n        createdAt=datetime.now(),\n        isActive=True,\n        isTemplate=False,\n    )\n\n    mock_listing = prisma.models.StoreListing(\n        id=\"listing-id\",\n        createdAt=datetime.now(),\n        updatedAt=datetime.now(),\n        isDeleted=False,\n        isApproved=False,\n        agentId=\"agent-id\",\n        agentVersion=1,\n        owningUserId=\"user-id\",\n    )\n\n    # Mock prisma calls\n    mock_agent_graph = mocker.patch(\"prisma.models.AgentGraph.prisma\")\n    mock_agent_graph.return_value.find_first = mocker.AsyncMock(return_value=mock_agent)\n\n    mock_store_listing = mocker.patch(\"prisma.models.StoreListing.prisma\")\n    mock_store_listing.return_value.find_first = mocker.AsyncMock(return_value=None)\n    mock_store_listing.return_value.create = mocker.AsyncMock(return_value=mock_listing)\n\n    # Call function\n    result = await db.create_store_submission(\n        user_id=\"user-id\",\n        agent_id=\"agent-id\",\n        agent_version=1,\n        slug=\"test-agent\",\n        name=\"Test Agent\",\n        description=\"Test description\",\n    )\n\n    # Verify results\n    assert result.name == \"Test Agent\"\n    assert result.description == \"Test description\"\n\n    # Verify mocks called correctly\n    mock_agent_graph.return_value.find_first.assert_called_once()\n    mock_store_listing.return_value.find_first.assert_called_once()\n    mock_store_listing.return_value.create.assert_called_once()\n\n\n@pytest.mark.asyncio\nasync def test_update_profile(mocker):\n    # Mock data\n    mock_profile = prisma.models.Profile(\n        id=\"profile-id\",\n        name=\"Test Creator\",\n        username=\"creator\",\n        description=\"Test description\",\n        links=[\"link1\"],\n        avatarUrl=\"avatar.jpg\",\n        isFeatured=False,\n        createdAt=datetime.now(),\n        updatedAt=datetime.now(),\n    )\n\n    # Mock prisma calls\n    mock_profile_db = mocker.patch(\"prisma.models.Profile.prisma\")\n    mock_profile_db.return_value.find_first = mocker.AsyncMock(\n        return_value=mock_profile\n    )\n    mock_profile_db.return_value.update = mocker.AsyncMock(return_value=mock_profile)\n\n    # Test data\n    profile = Profile(\n        name=\"Test Creator\",\n        username=\"creator\",\n        description=\"Test description\",\n        links=[\"link1\"],\n        avatar_url=\"avatar.jpg\",\n        is_featured=False,\n    )\n\n    # Call function\n    result = await db.update_or_create_profile(\"user-id\", profile)\n\n    # Verify results\n    assert result.username == \"creator\"\n    assert result.name == \"Test Creator\"\n\n    # Verify mocks called correctly\n    mock_profile_db.return_value.find_first.assert_called_once()\n    mock_profile_db.return_value.update.assert_called_once()\n\n\n@pytest.mark.asyncio\nasync def test_get_user_profile(mocker):\n    # Mock data\n    mock_profile = prisma.models.Profile(\n        id=\"profile-id\",\n        name=\"No Profile Data\",\n        username=\"testuser\",\n        description=\"Test description\",\n        links=[\"link1\", \"link2\"],\n        avatarUrl=\"avatar.jpg\",\n        isFeatured=False,\n        createdAt=datetime.now(),\n        updatedAt=datetime.now(),\n    )\n\n    # Mock prisma calls\n    mock_profile_db = mocker.patch(\"prisma.models.Profile.prisma\")\n    mock_profile_db.return_value.find_unique = mocker.AsyncMock(\n        return_value=mock_profile\n    )\n\n    # Call function\n    result = await db.get_user_profile(\"user-id\")\n\n    # Verify results\n    assert result.name == \"No Profile Data\"\n    assert result.username == \"No Profile Data\"\n    assert result.description == \"No Profile Data\"\n    assert result.links == []\n    assert result.avatar_url == \"\"",
+    "children": [
+        {
+            "type": "import_from_statement",
+            "start_token": 0,
+            "end_token": 3,
+            "label": "from datetime import datetime",
+            "children": [
+                {
+                    "type": "dotted_name",
+                    "start_token": 1,
+                    "end_token": 1,
+                    "label": "datetime",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "import_statement",
+            "start_token": 6,
+            "end_token": 9,
+            "label": "import prisma.errors",
+            "children": [
+                {
+                    "type": "dotted_name",
+                    "start_token": 7,
+                    "end_token": 9,
+                    "label": "prisma.errors",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "import_statement",
+            "start_token": 11,
+            "end_token": 14,
+            "label": "import prisma.models",
+            "children": [
+                {
+                    "type": "dotted_name",
+                    "start_token": 12,
+                    "end_token": 14,
+                    "label": "prisma.models",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "import_statement",
+            "start_token": 16,
+            "end_token": 17,
+            "label": "import pytest",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 19,
+            "end_token": 22,
+            "label": "from prisma import Prisma",
+            "children": [
+                {
+                    "type": "dotted_name",
+                    "start_token": 20,
+                    "end_token": 20,
+                    "label": "prisma",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "aliased_import",
+            "start_token": 25,
+            "end_token": 36,
+            "label": "import backend.server.v2.store.db as db",
+            "children": [
+                {
+                    "type": "dotted_name",
+                    "start_token": 26,
+                    "end_token": 34,
+                    "label": "backend.server.v2.store.db",
+                    "children": []
+                },
+                {
+                    "type": "as_pattern",
+                    "start_token": 35,
+                    "end_token": 36,
+                    "label": "as db",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 38,
+            "end_token": 49,
+            "label": "from backend.server.v2.store.model import Profile",
+            "children": [
+                {
+                    "type": "dotted_name",
+                    "start_token": 39,
+                    "end_token": 47,
+                    "label": "backend.server.v2.store.model",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "decorated_definition",
+            "start_token": 53,
+            "end_token": 96,
+            "label": "@pytest.fixture(autouse=True)\nasync def setup_prisma():\n    # Don't register client if already registered\n    try:\n        Prisma()\n    except prisma.errors.ClientAlreadyRegisteredError:\n        pass\n",
+            "children": [
+                {
+                    "type": "decorator",
+                    "start_token": 53,
+                    "end_token": 61,
+                    "label": "@pytest.fixture(autouse=True)",
+                    "children": [
+                        {
+                            "type": "attribute",
+                            "start_token": 54,
+                            "end_token": 56,
+                            "label": "pytest.fixture",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "function_definition",
+                    "start_token": 63,
+                    "end_token": 96,
+                    "label": "async def setup_prisma():\n    # Don't register client if already registered\n    try:\n        Prisma()\n    except prisma.errors.ClientAlreadyRegisteredError:\n        pass\n",
+                    "children": [
+                        {
+                            "type": "parameters",
+                            "start_token": 65,
+                            "end_token": 67,
+                            "label": "setup_prisma()",
+                            "children": []
+                        },
+                        {
+                            "type": "block",
+                            "start_token": 68,
+                            "end_token": 96,
+                            "label": ":\n    # Don't register client if already registered\n    try:\n        Prisma()\n    except prisma.errors.ClientAlreadyRegisteredError:\n        pass\n",
+                            "children": [
+                                {
+                                    "type": "pass_statement",
+                                    "start_token": 95,
+                                    "end_token": 95,
+                                    "label": "pass",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "decorated_definition",
+            "start_token": 101,
+            "end_token": 349,
+            "label": "@pytest.mark.asyncio\nasync def test_get_store_agents(mocker):\n    # Mock data\n    mock_agents = [\n        prisma.models.StoreAgent(\n            listing_id=\"test-id\",\n            storeListingVersionId=\"version123\",\n            slug=\"test-agent\",\n            agent_name=\"Test Agent\",\n            agent_video=None,\n            agent_image=[\"image.jpg\"],\n            featured=False,\n            creator_username=\"creator\",\n            creator_avatar=\"avatar.jpg\",\n            sub_heading=\"Test heading\",\n            description=\"Test description\",\n            categories=[],\n            runs=10,\n            rating=4.5,\n            versions=[\"1.0\"],\n            updated_at=datetime.now(),\n        )\n    ]\n\n    # Mock prisma calls\n    mock_store_agent = mocker.patch(\"prisma.models.StoreAgent.prisma\")\n    mock_store_agent.return_value.find_many = mocker.AsyncMock(return_value=mock_agents)\n    mock_store_agent.return_value.count = mocker.AsyncMock(return_value=1)\n\n    # Call function\n    result = await db.get_store_agents()\n\n    # Verify results\n    assert len(result.agents) == 1\n    assert result.agents[0].slug == \"test-agent\"\n    assert result.pagination.total_items == 1\n\n    # Verify mocks called correctly\n    mock_store_agent.return_value.find_many.assert_called_once()\n    mock_store_agent.return_value.count.assert_called_once()",
+            "children": [
+                {
+                    "type": "decorator",
+                    "start_token": 101,
+                    "end_token": 107,
+                    "label": "@pytest.mark.asyncio\n",
+                    "children": [
+                        {
+                            "type": "attribute",
+                            "start_token": 102,
+                            "end_token": 106,
+                            "label": "pytest.mark.asyncio",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "function_definition",
+                    "start_token": 108,
+                    "end_token": 349,
+                    "label": "async def test_get_store_agents(mocker):\n    # Mock data\n    mock_agents = [\n        prisma.models.StoreAgent(\n            listing_id=\"test-id\",\n            storeListingVersionId=\"version123\",\n            slug=\"test-agent\",\n            agent_name=\"Test Agent\",\n            agent_video=None,\n            agent_image=[\"image.jpg\"],\n            featured=False,\n            creator_username=\"creator\",\n            creator_avatar=\"avatar.jpg\",\n            sub_heading=\"Test heading\",\n            description=\"Test description\",\n            categories=[],\n            runs=10,\n            rating=4.5,\n            versions=[\"1.0\"],\n            updated_at=datetime.now(),\n        )\n    ]\n\n    # Mock prisma calls\n    mock_store_agent = mocker.patch(\"prisma.models.StoreAgent.prisma\")\n    mock_store_agent.return_value.find_many = mocker.AsyncMock(return_value=mock_agents)\n    mock_store_agent.return_value.count = mocker.AsyncMock(return_value=1)\n\n    # Call function\n    result = await db.get_store_agents()\n\n    # Verify results\n    assert len(result.agents) == 1\n    assert result.agents[0].slug == \"test-agent\"\n    assert result.pagination.total_items == 1\n\n    # Verify mocks called correctly\n    mock_store_agent.return_value.find_many.assert_called_once()\n    mock_store_agent.return_value.count.assert_called_once()",
+                    "children": [
+                        {
+                            "type": "parameters",
+                            "start_token": 110,
+                            "end_token": 113,
+                            "label": "test_get_store_agents(mocker)",
+                            "children": []
+                        },
+                        {
+                            "type": "block",
+                            "start_token": 114,
+                            "end_token": 349,
+                            "label": ":\n    # Mock data\n    mock_agents = [\n        prisma.models.StoreAgent(\n            listing_id=\"test-id\",\n            storeListingVersionId=\"version123\",\n            slug=\"test-agent\",\n            agent_name=\"Test Agent\",\n            agent_video=None,\n            agent_image=[\"image.jpg\"],\n            featured=False,\n            creator_username=\"creator\",\n            creator_avatar=\"avatar.jpg\",\n            sub_heading=\"Test heading\",\n            description=\"Test description\",\n            categories=[],\n            runs=10,\n            rating=4.5,\n            versions=[\"1.0\"],\n            updated_at=datetime.now(),\n        )\n    ]\n\n    # Mock prisma calls\n    mock_store_agent = mocker.patch(\"prisma.models.StoreAgent.prisma\")\n    mock_store_agent.return_value.find_many = mocker.AsyncMock(return_value=mock_agents)\n    mock_store_agent.return_value.count = mocker.AsyncMock(return_value=1)\n\n    # Call function\n    result = await db.get_store_agents()\n\n    # Verify results\n    assert len(result.agents) == 1\n    assert result.agents[0].slug == \"test-agent\"\n    assert result.pagination.total_items == 1\n\n    # Verify mocks called correctly\n    mock_store_agent.return_value.find_many.assert_called_once()\n    mock_store_agent.return_value.count.assert_called_once()",
+                            "children": [
+                                {
+                                    "type": "assignment",
+                                    "start_token": 120,
+                                    "end_token": 224,
+                                    "label": "mock_agents = [\n        prisma.models.StoreAgent(\n            listing_id=\"test-id\",\n            storeListingVersionId=\"version123\",\n            slug=\"test-agent\",\n            agent_name=\"Test Agent\",\n            agent_video=None,\n            agent_image=[\"image.jpg\"],\n            featured=False,\n            creator_username=\"creator\",\n            creator_avatar=\"avatar.jpg\",\n            sub_heading=\"Test heading\",\n            description=\"Test description\",\n            categories=[],\n            runs=10,\n            rating=4.5,\n            versions=[\"1.0\"],\n            updated_at=datetime.now(),\n        )\n    ]",
+                                    "children": [
+                                        {
+                                            "type": "attribute",
+                                            "start_token": 124,
+                                            "end_token": 128,
+                                            "label": "prisma.models.StoreAgent",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "list",
+                                            "start_token": 122,
+                                            "end_token": 224,
+                                            "label": "[\n        prisma.models.StoreAgent(\n            listing_id=\"test-id\",\n            storeListingVersionId=\"version123\",\n            slug=\"test-agent\",\n            agent_name=\"Test Agent\",\n            agent_video=None,\n            agent_image=[\"image.jpg\"],\n            featured=False,\n            creator_username=\"creator\",\n            creator_avatar=\"avatar.jpg\",\n            sub_heading=\"Test heading\",\n            description=\"Test description\",\n            categories=[],\n            runs=10,\n            rating=4.5,\n            versions=[\"1.0\"],\n            updated_at=datetime.now(),\n        )\n    ]",
+                                            "children": [
+                                                {
+                                                    "type": "block",
+                                                    "start_token": 129,
+                                                    "end_token": 222,
+                                                    "label": "(\n            listing_id=\"test-id\",\n            storeListingVersionId=\"version123\",\n            slug=\"test-agent\",\n            agent_name=\"Test Agent\",\n            agent_video=None,\n            agent_image=[\"image.jpg\"],\n            featured=False,\n            creator_username=\"creator\",\n            creator_avatar=\"avatar.jpg\",\n            sub_heading=\"Test heading\",\n            description=\"Test description\",\n            categories=[],\n            runs=10,\n            rating=4.5,\n            versions=[\"1.0\"],\n            updated_at=datetime.now(),\n        )",
+                                                    "children": []
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "assignment",
+                                    "start_token": 232,
+                                    "end_token": 254,
+                                    "label": "mock_store_agent = mocker.patch(\"prisma.models.StoreAgent.prisma\")\n    mock_store_agent.return_value.find_many = mocker.AsyncMock(return_value=mock_agents)",
+                                    "children": [
+                                        {
+                                            "type": "attribute",
+                                            "start_token": 233,
+                                            "end_token": 237,
+                                            "label": "= mocker.patch(",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "call",
+                                            "start_token": 238,
+                                            "end_token": 254,
+                                            "label": "\"prisma.models.StoreAgent.prisma\")\n    mock_store_agent.return_value.find_many = mocker.AsyncMock(return_value=mock_agents)",
+                                            "children": []
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "assignment",
+                                    "start_token": 256,
+                                    "end_token": 269,
+                                    "label": "mock_store_agent.return_value.count = mocker.AsyncMock(return_value=1)",
+                                    "children": [
+                                        {
+                                            "type": "attribute",
+                                            "start_token": 257,
+                                            "end_token": 260,
+                                            "label": ".return_value.count",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "call",
+                                            "start_token": 261,
+                                            "end_token": 269,
+                                            "label": "= mocker.AsyncMock(return_value=1)",
+                                            "children": []
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "await",
+                                    "start_token": 278,
+                                    "end_token": 283,
+                                    "label": "await db.get_store_agents()",
+                                    "children": [
+                                        {
+                                            "type": "call",
+                                            "start_token": 279,
+                                            "end_token": 283,
+                                            "label": "db.get_store_agents()",
+                                            "children": []
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "assert_statement",
+                                    "start_token": 290,
+                                    "end_token": 322,
+                                    "label": "assert len(result.agents) == 1\n    assert result.agents[0].slug == \"test-agent\"\n    assert result.pagination.total_items == 1",
+                                    "children": [
+                                        {
+                                            "type": "comparison_operator",
+                                            "start_token": 291,
+                                            "end_token": 312,
+                                            "label": "len(result.agents) == 1\n    assert result.agents[0].slug == \"test-agent\"",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "comparison_operator",
+                                            "start_token": 316,
+                                            "end_token": 322,
+                                            "label": ".pagination.total_items == 1",
+                                            "children": []
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "call",
+                                    "start_token": 337,
+                                    "end_token": 339,
+                                    "label": "assert_called_once()",
+                                    "children": [
+                                        {
+                                            "type": "attribute",
+                                            "start_token": 336,
+                                            "end_token": 337,
+                                            "label": ".assert_called_once",
+                                            "children": []
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "call",
+                                    "start_token": 347,
+                                    "end_token": 349,
+                                    "label": "assert_called_once()",
+                                    "children": [
+                                        {
+                                            "type": "attribute",
+                                            "start_token": 346,
+                                            "end_token": 347,
+                                            "label": ".assert_called_once",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "decorated_definition",
+            "start_token": 353,
+            "end_token": 785,
+            "label": "@pytest.mark.asyncio\nasync def test_get_store_agent_details(mocker):\n    # Mock data\n    mock_agent = prisma.models.StoreAgent(\n        listing_id=\"test-id\",\n        storeListingVersionId=\"version123\",\n        slug=\"test-agent\",\n        agent_name=\"Test Agent\",\n        agent_video=\"video.mp4\",\n        agent_image=[\"image.jpg\"],\n        featured=False,\n        creator_username=\"creator\",\n        creator_avatar=\"avatar.jpg\",\n        sub_heading=\"Test heading\",\n        description=\"Test description\",\n        categories=[\"test\"],\n        runs=10,\n        rating=4.5,\n        versions=[\"1.0\"],\n        updated_at=datetime.now(),\n    )\n\n    # Mock prisma call\n    mock_store_agent = mocker.patch(\"prisma.models.StoreAgent.prisma\")\n    mock_store_agent.return_value.find_first = mocker.AsyncMock(return_value=mock_agent)\n\n    # Call function\n    result = await db.get_store_agent_details(\"creator\", \"test-agent\")\n\n    # Verify results\n    assert result.slug == \"test-agent\"\n    assert result.agent_name == \"Test Agent\"\n\n    # Verify mock called correctly\n    mock_store_agent.return_value.find_first.assert_called_once_with(\n        where={\"creator_username\": \"creator\", \"slug\": \"test-agent\"}\n    )\n\n\n@pytest.mark.asyncio\nasync def test_get_store_creator_details(mocker):\n    # Mock data\n    mock_creator_data = prisma.models.Creator(\n        name=\"Test Creator\",\n        username=\"creator\",\n        description=\"Test description\",\n        links=[\"link1\"],\n        avatar_url=\"avatar.jpg\",\n        num_agents=1,\n        agent_rating=4.5,\n        agent_runs=10,\n        top_categories=[\"test\"],\n        is_featured=False,\n    )\n\n    # Mock prisma call\n    mock_creator = mocker.patch(\"prisma.models.Creator.prisma\")\n    mock_creator.return_value.find_unique = mocker.AsyncMock()\n    # Configure the mock to return values that will pass validation\n    mock_creator.return_value.find_unique.return_value = mock_creator_data\n\n    # Call function\n    result = await db.get_store_creator_details(\"creator\")\n\n    # Verify results\n    assert result.username == \"creator\"\n    assert result.name == \"Test Creator\"\n    assert result.description == \"Test description\"\n    assert result.avatar_url == \"avatar.jpg\"\n\n    # Verify mock called correctly\n    mock_creator.return_value.find_unique.assert_called_once_with(\n        where={\"username\": \"creator\"}\n",
+            "children": [
+                {
+                    "type": "decorator",
+                    "start_token": 353,
+                    "end_token": 359,
+                    "label": "@pytest.mark.asyncio\n",
+                    "children": [
+                        {
+                            "type": "attribute",
+                            "start_token": 354,
+                            "end_token": 358,
+                            "label": "pytest.mark.asyncio",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "function_definition",
+                    "start_token": 360,
+                    "end_token": 785,
+                    "label": "async def test_get_store_agent_details(mocker):\n    # Mock data\n    mock_agent = prisma.models.StoreAgent(\n        listing_id=\"test-id\",\n        storeListingVersionId=\"version123\",\n        slug=\"test-agent\",\n        agent_name=\"Test Agent\",\n        agent_video=\"video.mp4\",\n        agent_image=[\"image.jpg\"],\n        featured=False,\n        creator_username=\"creator\",\n        creator_avatar=\"avatar.jpg\",\n        sub_heading=\"Test heading\",\n        description=\"Test description\",\n        categories=[\"test\"],\n        runs=10,\n        rating=4.5,\n        versions=[\"1.0\"],\n        updated_at=datetime.now(),\n    )\n\n    # Mock prisma call\n    mock_store_agent = mocker.patch(\"prisma.models.StoreAgent.prisma\")\n    mock_store_agent.return_value.find_first = mocker.AsyncMock(return_value=mock_agent)\n\n    # Call function\n    result = await db.get_store_agent_details(\"creator\", \"test-agent\")\n\n    # Verify results\n    assert result.slug == \"test-agent\"\n    assert result.agent_name == \"Test Agent\"\n\n    # Verify mock called correctly\n    mock_store_agent.return_value.find_first.assert_called_once_with(\n        where={\"creator_username\": \"creator\", \"slug\": \"test-agent\"}\n    )\n\n\n@pytest.mark.asyncio\nasync def test_get_store_creator_details(mocker):\n    # Mock data\n    mock_creator_data = prisma.models.Creator(\n        name=\"Test Creator\",\n        username=\"creator\",\n        description=\"Test description\",\n        links=[\"link1\"],\n        avatar_url=\"avatar.jpg\",\n        num_agents=1,\n        agent_rating=4.5,\n        agent_runs=10,\n        top_categories=[\"test\"],\n        is_featured=False,\n    )\n\n    # Mock prisma call\n    mock_creator = mocker.patch(\"prisma.models.Creator.prisma\")\n    mock_creator.return_value.find_unique = mocker.AsyncMock()\n    # Configure the mock to return values that will pass validation\n    mock_creator.return_value.find_unique.return_value = mock_creator_data\n\n    # Call function\n    result = await db.get_store_creator_details(\"creator\")\n\n    # Verify results\n    assert result.username == \"creator\"\n    assert result.name == \"Test Creator\"\n    assert result.description == \"Test description\"\n    assert result.avatar_url == \"avatar.jpg\"\n\n    # Verify mock called correctly\n    mock_creator.return_value.find_unique.assert_called_once_with(\n        where={\"username\": \"creator\"}\n",
+                    "children": [
+                        {
+                            "type": "parameters",
+                            "start_token": 362,
+                            "end_token": 365,
+                            "label": "test_get_store_agent_details(mocker)",
+                            "children": []
+                        },
+                        {
+                            "type": "block",
+                            "start_token": 366,
+                            "end_token": 785,
+                            "label": ":\n    # Mock data\n    mock_agent = prisma.models.StoreAgent(\n        listing_id=\"test-id\",\n        storeListingVersionId=\"version123\",\n        slug=\"test-agent\",\n        agent_name=\"Test Agent\",\n        agent_video=\"video.mp4\",\n        agent_image=[\"image.jpg\"],\n        featured=False,\n        creator_username=\"creator\",\n        creator_avatar=\"avatar.jpg\",\n        sub_heading=\"Test heading\",\n        description=\"Test description\",\n        categories=[\"test\"],\n        runs=10,\n        rating=4.5,\n        versions=[\"1.0\"],\n        updated_at=datetime.now(),\n    )\n\n    # Mock prisma call\n    mock_store_agent = mocker.patch(\"prisma.models.StoreAgent.prisma\")\n    mock_store_agent.return_value.find_first = mocker.AsyncMock(return_value=mock_agent)\n\n    # Call function\n    result = await db.get_store_agent_details(\"creator\", \"test-agent\")\n\n    # Verify results\n    assert result.slug == \"test-agent\"\n    assert result.agent_name == \"Test Agent\"\n\n    # Verify mock called correctly\n    mock_store_agent.return_value.find_first.assert_called_once_with(\n        where={\"creator_username\": \"creator\", \"slug\": \"test-agent\"}\n    )\n\n\n@pytest.mark.asyncio\nasync def test_get_store_creator_details(mocker):\n    # Mock data\n    mock_creator_data = prisma.models.Creator(\n        name=\"Test Creator\",\n        username=\"creator\",\n        description=\"Test description\",\n        links=[\"link1\"],\n        avatar_url=\"avatar.jpg\",\n        num_agents=1,\n        agent_rating=4.5,\n        agent_runs=10,\n        top_categories=[\"test\"],\n        is_featured=False,\n    )\n\n    # Mock prisma call\n    mock_creator = mocker.patch(\"prisma.models.Creator.prisma\")\n    mock_creator.return_value.find_unique = mocker.AsyncMock()\n    # Configure the mock to return values that will pass validation\n    mock_creator.return_value.find_unique.return_value = mock_creator_data\n\n    # Call function\n    result = await db.get_store_creator_details(\"creator\")\n\n    # Verify results\n    assert result.username == \"creator\"\n    assert result.name == \"Test Creator\"\n    assert result.description == \"Test description\"\n    assert result.avatar_url == \"avatar.jpg\"\n\n    # Verify mock called correctly\n    mock_creator.return_value.find_unique.assert_called_once_with(\n        where={\"username\": \"creator\"}\n",
+                            "children": [
+                                {
+                                    "type": "assignment",
+                                    "start_token": 372,
+                                    "end_token": 473,
+                                    "label": "mock_agent = prisma.models.StoreAgent(\n        listing_id=\"test-id\",\n        storeListingVersionId=\"version123\",\n        slug=\"test-agent\",\n        agent_name=\"Test Agent\",\n        agent_video=\"video.mp4\",\n        agent_image=[\"image.jpg\"],\n        featured=False,\n        creator_username=\"creator\",\n        creator_avatar=\"avatar.jpg\",\n        sub_heading=\"Test heading\",\n        description=\"Test description\",\n        categories=[\"test\"],\n        runs=10,\n        rating=4.5,\n        versions=[\"1.0\"],\n        updated_at=datetime.now(),\n    )",
+                                    "children": [
+                                        {
+                                            "type": "attribute",
+                                            "start_token": 374,
+                                            "end_token": 378,
+                                            "label": "prisma.models.StoreAgent",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "block",
+                                            "start_token": 379,
+                                            "end_token": 473,
+                                            "label": "(\n        listing_id=\"test-id\",\n        storeListingVersionId=\"version123\",\n        slug=\"test-agent\",\n        agent_name=\"Test Agent\",\n        agent_video=\"video.mp4\",\n        agent_image=[\"image.jpg\"],\n        featured=False,\n        creator_username=\"creator\",\n        creator_avatar=\"avatar.jpg\",\n        sub_heading=\"Test heading\",\n        description=\"Test description\",\n        categories=[\"test\"],\n        runs=10,\n        rating=4.5,\n        versions=[\"1.0\"],\n        updated_at=datetime.now(),\n    )",
+                                            "children": []
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "await",
+                                    "start_token": 512,
+                                    "end_token": 520,
+                                    "label": "await db.get_store_agent_details(\"creator\", \"test-agent\")",
+                                    "children": [
+                                        {
+                                            "type": "call",
+                                            "start_token": 513,
+                                            "end_token": 520,
+                                            "label": "db.get_store_agent_details(\"creator\", \"test-agent\")",
+                                            "children": []
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "assert_statement",
+                                    "start_token": 527,
+                                    "end_token": 541,
+                                    "label": "assert result.slug == \"test-agent\"\n    assert result.agent_name == \"Test Agent\"",
+                                    "children": [
+                                        {
+                                            "type": "comparison_operator",
+                                            "start_token": 530,
+                                            "end_token": 541,
+                                            "label": "slug == \"test-agent\"\n    assert result.agent_name == \"Test Agent\"",
+                                            "children": []
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "call",
+                                    "start_token": 555,
+                                    "end_token": 571,
+                                    "label": ".assert_called_once_with(\n        where={\"creator_username\": \"creator\", \"slug\": \"test-agent\"}\n    )",
+                                    "children": [
+                                        {
+                                            "type": "attribute",
+                                            "start_token": 554,
+                                            "end_token": 555,
+                                            "label": "find_first.",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "decorated_definition",
+            "start_token": 789,
+            "end_token": 1085,
+            "label": "\n@pytest.mark.asyncio\nasync def test_create_store_submission(mocker):\n    # Mock data\n    mock_agent = prisma.models.AgentGraph(\n        id=\"agent-id\",\n        version=1,\n        userId=\"user-id\",\n        createdAt=datetime.now(),\n        isActive=True,\n        isTemplate=False,\n    )\n\n    mock_listing = prisma.models.StoreListing(\n        id=\"listing-id\",\n        createdAt=datetime.now(),\n        updatedAt=datetime.now(),\n        isDeleted=False,\n        isApproved=False,\n        agentId=\"agent-id\",\n        agentVersion=1,\n        owningUserId=\"user-id\",\n    )\n\n    # Mock prisma calls\n    mock_agent_graph = mocker.patch(\"prisma.models.AgentGraph.prisma\")\n    mock_agent_graph.return_value.find_first = mocker.AsyncMock(return_value=mock_agent)\n\n    mock_store_listing = mocker.patch(\"prisma.models.StoreListing.prisma\")\n    mock_store_listing.return_value.find_first = mocker.AsyncMock(return_value=None)\n    mock_store_listing.return_value.create = mocker.AsyncMock(return_value=mock_listing)\n\n    # Call function\n    result = await db.create_store_submission(\n        user_id=\"user-id\",\n        agent_id=\"agent-id\",\n        agent_version=1,\n        slug=\"test-agent\",\n        name=\"Test Agent\",\n        description=\"Test description\",\n    )\n\n    # Verify results\n    assert result.name == \"Test Agent\"\n    assert result.description == \"Test description\"\n\n    # Verify mocks called correctly\n    mock_agent_graph.return_value.find_first.assert_called_once()\n    mock_store_listing.return_value.find_first.assert_called_once()\n    mock_store_listing.return_value.create.assert_called_once()",
+            "children": [
+                {
+                    "type": "decorator",
+                    "start_token": 789,
+                    "end_token": 795,
+                    "label": "\n@pytest.mark.asyncio",
+                    "children": [
+                        {
+                            "type": "attribute",
+                            "start_token": 790,
+                            "end_token": 794,
+                            "label": "@pytest.mark.",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "function_definition",
+                    "start_token": 796,
+                    "end_token": 1085,
+                    "label": "\nasync def test_create_store_submission(mocker):\n    # Mock data\n    mock_agent = prisma.models.AgentGraph(\n        id=\"agent-id\",\n        version=1,\n        userId=\"user-id\",\n        createdAt=datetime.now(),\n        isActive=True,\n        isTemplate=False,\n    )\n\n    mock_listing = prisma.models.StoreListing(\n        id=\"listing-id\",\n        createdAt=datetime.now(),\n        updatedAt=datetime.now(),\n        isDeleted=False,\n        isApproved=False,\n        agentId=\"agent-id\",\n        agentVersion=1,\n        owningUserId=\"user-id\",\n    )\n\n    # Mock prisma calls\n    mock_agent_graph = mocker.patch(\"prisma.models.AgentGraph.prisma\")\n    mock_agent_graph.return_value.find_first = mocker.AsyncMock(return_value=mock_agent)\n\n    mock_store_listing = mocker.patch(\"prisma.models.StoreListing.prisma\")\n    mock_store_listing.return_value.find_first = mocker.AsyncMock(return_value=None)\n    mock_store_listing.return_value.create = mocker.AsyncMock(return_value=mock_listing)\n\n    # Call function\n    result = await db.create_store_submission(\n        user_id=\"user-id\",\n        agent_id=\"agent-id\",\n        agent_version=1,\n        slug=\"test-agent\",\n        name=\"Test Agent\",\n        description=\"Test description\",\n    )\n\n    # Verify results\n    assert result.name == \"Test Agent\"\n    assert result.description == \"Test description\"\n\n    # Verify mocks called correctly\n    mock_agent_graph.return_value.find_first.assert_called_once()\n    mock_store_listing.return_value.find_first.assert_called_once()\n    mock_store_listing.return_value.create.assert_called_once()",
+                    "children": [
+                        {
+                            "type": "parameters",
+                            "start_token": 798,
+                            "end_token": 801,
+                            "label": "def test_create_store_submission(mocker",
+                            "children": []
+                        },
+                        {
+                            "type": "block",
+                            "start_token": 802,
+                            "end_token": 1085,
+                            "label": "):\n    # Mock data\n    mock_agent = prisma.models.AgentGraph(\n        id=\"agent-id\",\n        version=1,\n        userId=\"user-id\",\n        createdAt=datetime.now(),\n        isActive=True,\n        isTemplate=False,\n    )\n\n    mock_listing = prisma.models.StoreListing(\n        id=\"listing-id\",\n        createdAt=datetime.now(),\n        updatedAt=datetime.now(),\n        isDeleted=False,\n        isApproved=False,\n        agentId=\"agent-id\",\n        agentVersion=1,\n        owningUserId=\"user-id\",\n    )\n\n    # Mock prisma calls\n    mock_agent_graph = mocker.patch(\"prisma.models.AgentGraph.prisma\")\n    mock_agent_graph.return_value.find_first = mocker.AsyncMock(return_value=mock_agent)\n\n    mock_store_listing = mocker.patch(\"prisma.models.StoreListing.prisma\")\n    mock_store_listing.return_value.find_first = mocker.AsyncMock(return_value=None)\n    mock_store_listing.return_value.create = mocker.AsyncMock(return_value=mock_listing)\n\n    # Call function\n    result = await db.create_store_submission(\n        user_id=\"user-id\",\n        agent_id=\"agent-id\",\n        agent_version=1,\n        slug=\"test-agent\",\n        name=\"Test Agent\",\n        description=\"Test description\",\n    )\n\n    # Verify results\n    assert result.name == \"Test Agent\"\n    assert result.description == \"Test description\"\n\n    # Verify mocks called correctly\n    mock_agent_graph.return_value.find_first.assert_called_once()\n    mock_store_listing.return_value.find_first.assert_called_once()\n    mock_store_listing.return_value.create.assert_called_once()",
+                            "children": [
+                                {
+                                    "type": "assignment",
+                                    "start_token": 809,
+                                    "end_token": 852,
+                                    "label": "mock_agent = prisma.models.AgentGraph(\n        id=\"agent-id\",\n        version=1,\n        userId=\"user-id\",\n        createdAt=datetime.now(),\n        isActive=True,\n        isTemplate=False,\n    )",
+                                    "children": [
+                                        {
+                                            "type": "attribute",
+                                            "start_token": 811,
+                                            "end_token": 815,
+                                            "label": "prisma.models.AgentGraph",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "block",
+                                            "start_token": 816,
+                                            "end_token": 852,
+                                            "label": "(\n        id=\"agent-id\",\n        version=1,\n        userId=\"user-id\",\n        createdAt=datetime.now(),\n        isActive=True,\n        isTemplate=False,\n    )",
+                                            "children": []
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "await",
+                                    "start_token": 991,
+                                    "end_token": 1027,
+                                    "label": "await db.create_store_submission(\n        user_id=\"user-id\",\n        agent_id=\"agent-id\",\n        agent_version=1,\n        slug=\"test-agent\",\n        name=\"Test Agent\",\n        description=\"Test description\",\n    )",
+                                    "children": [
+                                        {
+                                            "type": "call",
+                                            "start_token": 992,
+                                            "end_token": 1027,
+                                            "label": "db.create_store_submission(\n        user_id=\"user-id\",\n        agent_id=\"agent-id\",\n        agent_version=1,\n        slug=\"test-agent\",\n        name=\"Test Agent\",\n        description=\"Test description\",\n    )",
+                                            "children": []
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "assert_statement",
+                                    "start_token": 1034,
+                                    "end_token": 1048,
+                                    "label": "assert result.name == \"Test Agent\"\n    assert result.description == \"Test description\"",
+                                    "children": [
+                                        {
+                                            "type": "comparison_operator",
+                                            "start_token": 1037,
+                                            "end_token": 1048,
+                                            "label": "name == \"Test Agent\"\n    assert result.description == \"Test description\"",
+                                            "children": []
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "call",
+                                    "start_token": 1083,
+                                    "end_token": 1085,
+                                    "label": "assert_called_once()",
+                                    "children": [
+                                        {
+                                            "type": "attribute",
+                                            "start_token": 1082,
+                                            "end_token": 1083,
+                                            "label": ".assert_called_once",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "decorated_definition",
+            "start_token": 1089,
+            "end_token": 1328,
+            "label": "@pytest.mark.asyncio\nasync def test_update_profile(mocker):\n    # Mock data\n    mock_profile = prisma.models.Profile(\n        id=\"profile-id\",\n        name=\"Test Creator\",\n        username=\"creator\",\n        description=\"Test description\",\n        links=[\"link1\"],\n        avatarUrl=\"avatar.jpg\",\n        isFeatured=False,\n        createdAt=datetime.now(),\n        updatedAt=datetime.now(),\n    )\n\n    # Mock prisma calls\n    mock_profile_db = mocker.patch(\"prisma.models.Profile.prisma\")\n    mock_profile_db.return_value.find_first = mocker.AsyncMock(\n        return_value=mock_profile\n    )\n    mock_profile_db.return_value.update = mocker.AsyncMock(return_value=mock_profile)\n\n    # Test data\n    profile = Profile(\n        name=\"Test Creator\",\n        username=\"creator\",\n        description=\"Test description\",\n        links=[\"link1\"],\n        avatar_url=\"avatar.jpg\",\n        is_featured=False,\n    )\n\n    # Call function\n    result = await db.update_or_create_profile(\"user-id\", profile)\n\n    # Verify results\n    assert result.username == \"creator\"\n    assert result.name == \"Test Creator\"\n\n    # Verify mocks called correctly\n    mock_profile_db.return_value.find_first.assert_called_once()\n    mock_profile_db.return_value.update.assert_called_once()",
+            "children": [
+                {
+                    "type": "decorator",
+                    "start_token": 1089,
+                    "end_token": 1095,
+                    "label": "@pytest.mark.asyncio\n",
+                    "children": [
+                        {
+                            "type": "attribute",
+                            "start_token": 1090,
+                            "end_token": 1094,
+                            "label": "pytest.mark.asyncio",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "function_definition",
+                    "start_token": 1096,
+                    "end_token": 1328,
+                    "label": "async def test_update_profile(mocker):\n    # Mock data\n    mock_profile = prisma.models.Profile(\n        id=\"profile-id\",\n        name=\"Test Creator\",\n        username=\"creator\",\n        description=\"Test description\",\n        links=[\"link1\"],\n        avatarUrl=\"avatar.jpg\",\n        isFeatured=False,\n        createdAt=datetime.now(),\n        updatedAt=datetime.now(),\n    )\n\n    # Mock prisma calls\n    mock_profile_db = mocker.patch(\"prisma.models.Profile.prisma\")\n    mock_profile_db.return_value.find_first = mocker.AsyncMock(\n        return_value=mock_profile\n    )\n    mock_profile_db.return_value.update = mocker.AsyncMock(return_value=mock_profile)\n\n    # Test data\n    profile = Profile(\n        name=\"Test Creator\",\n        username=\"creator\",\n        description=\"Test description\",\n        links=[\"link1\"],\n        avatar_url=\"avatar.jpg\",\n        is_featured=False,\n    )\n\n    # Call function\n    result = await db.update_or_create_profile(\"user-id\", profile)\n\n    # Verify results\n    assert result.username == \"creator\"\n    assert result.name == \"Test Creator\"\n\n    # Verify mocks called correctly\n    mock_profile_db.return_value.find_first.assert_called_once()\n    mock_profile_db.return_value.update.assert_called_once()",
+                    "children": [
+                        {
+                            "type": "parameters",
+                            "start_token": 1098,
+                            "end_token": 1101,
+                            "label": "test_update_profile(mocker)",
+                            "children": []
+                        },
+                        {
+                            "type": "block",
+                            "start_token": 1102,
+                            "end_token": 1328,
+                            "label": ":\n    # Mock data\n    mock_profile = prisma.models.Profile(\n        id=\"profile-id\",\n        name=\"Test Creator\",\n        username=\"creator\",\n        description=\"Test description\",\n        links=[\"link1\"],\n        avatarUrl=\"avatar.jpg\",\n        isFeatured=False,\n        createdAt=datetime.now(),\n        updatedAt=datetime.now(),\n    )\n\n    # Mock prisma calls\n    mock_profile_db = mocker.patch(\"prisma.models.Profile.prisma\")\n    mock_profile_db.return_value.find_first = mocker.AsyncMock(\n        return_value=mock_profile\n    )\n    mock_profile_db.return_value.update = mocker.AsyncMock(return_value=mock_profile)\n\n    # Test data\n    profile = Profile(\n        name=\"Test Creator\",\n        username=\"creator\",\n        description=\"Test description\",\n        links=[\"link1\"],\n        avatar_url=\"avatar.jpg\",\n        is_featured=False,\n    )\n\n    # Call function\n    result = await db.update_or_create_profile(\"user-id\", profile)\n\n    # Verify results\n    assert result.username == \"creator\"\n    assert result.name == \"Test Creator\"\n\n    # Verify mocks called correctly\n    mock_profile_db.return_value.find_first.assert_called_once()\n    mock_profile_db.return_value.update.assert_called_once()",
+                            "children": [
+                                {
+                                    "type": "assignment",
+                                    "start_token": 1108,
+                                    "end_token": 1172,
+                                    "label": "mock_profile = prisma.models.Profile(\n        id=\"profile-id\",\n        name=\"Test Creator\",\n        username=\"creator\",\n        description=\"Test description\",\n        links=[\"link1\"],\n        avatarUrl=\"avatar.jpg\",\n        isFeatured=False,\n        createdAt=datetime.now(),\n        updatedAt=datetime.now(),\n    )",
+                                    "children": [
+                                        {
+                                            "type": "attribute",
+                                            "start_token": 1110,
+                                            "end_token": 1114,
+                                            "label": "prisma.models.Profile",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "block",
+                                            "start_token": 1115,
+                                            "end_token": 1172,
+                                            "label": "(\n        id=\"profile-id\",\n        name=\"Test Creator\",\n        username=\"creator\",\n        description=\"Test description\",\n        links=[\"link1\"],\n        avatarUrl=\"avatar.jpg\",\n        isFeatured=False,\n        createdAt=datetime.now(),\n        updatedAt=datetime.now(),\n    )",
+                                            "children": []
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "await",
+                                    "start_token": 1272,
+                                    "end_token": 1280,
+                                    "label": "await db.update_or_create_profile(\"user-id\", profile)",
+                                    "children": [
+                                        {
+                                            "type": "call",
+                                            "start_token": 1273,
+                                            "end_token": 1280,
+                                            "label": "db.update_or_create_profile(\"user-id\", profile)",
+                                            "children": []
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "assert_statement",
+                                    "start_token": 1287,
+                                    "end_token": 1301,
+                                    "label": "assert result.username == \"creator\"\n    assert result.name == \"Test Creator\"",
+                                    "children": [
+                                        {
+                                            "type": "comparison_operator",
+                                            "start_token": 1290,
+                                            "end_token": 1301,
+                                            "label": "username == \"creator\"\n    assert result.name == \"Test Creator\"",
+                                            "children": []
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "call",
+                                    "start_token": 1328,
+                                    "end_token": 1329,
+                                    "label": ")\n",
+                                    "children": [
+                                        {
+                                            "type": "attribute",
+                                            "start_token": 1327,
+                                            "end_token": 1328,
+                                            "label": "()",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

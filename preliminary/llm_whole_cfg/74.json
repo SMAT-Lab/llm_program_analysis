@@ -1,0 +1,132 @@
+{
+  "source_file": "74.py",
+  "cfg": {
+    "blocks": [
+      {
+        "id": 1,
+        "start_line": 1,
+        "end_line": 1,
+        "label": "import logging",
+        "successors": [
+          2
+        ]
+      },
+      {
+        "id": 2,
+        "start_line": 3,
+        "end_line": 5,
+        "label": "from google.auth.external_account_authorized_user import (...\nin this code snippet",
+        "successors": [
+          3
+        ]
+      },
+      {
+        "id": 3,
+        "start_line": 6,
+        "end_line": 8,
+        "label": "from google.auth.transport.requests import AuthorizedSession, Request\nfrom google.oauth2.credentials import Credentials\nfrom google_auth_oauthlib.flow import Flow\nfrom pydantic import SecretStr\nfrom backend.data.model import OAuth2Credentials\nfrom backend.integrations.providers import ProviderName",
+        "successors": [
+          4
+        ]
+      },
+      {
+        "id": 4,
+        "start_line": 14,
+        "end_line": 14,
+        "label": "from .base import BaseOAuthHandler",
+        "successors": [
+          5
+        ]
+      },
+      {
+        "id": 5,
+        "start_line": 16,
+        "end_line": 16,
+        "label": "logger = logging.getLogger(__name__)",
+        "successors": [
+          6
+        ]
+      },
+      {
+        "id": 6,
+        "start_line": 19,
+        "end_line": 20,
+        "label": "# --8<-- [start:GoogleOAuthHandlerExample]\nclass GoogleOAuthHandler(BaseOAuthHandler):",
+        "successors": [
+          7
+        ]
+      },
+      {
+        "id": 7,
+        "start_line": 21,
+        "end_line": 31,
+        "label": "\"\"\"\nBased on the documentation at https://developers.google.com/identity/protocols/oauth2/web-server\n\"\"\"\nPROVIDER_NAME = ProviderName.GOOGLE\nEMAIL_ENDPOINT = \"https://www.googleapis.com/oauth2/v2/userinfo\"\nDEFAULT_SCOPES = [\n\"https://www.googleapis.com/auth/userinfo.email\",\n\"https://www.googleapis.com/auth/userinfo.profile\",\n\"openid\",\n]",
+        "successors": [
+          8
+        ]
+      },
+      {
+        "id": 8,
+        "start_line": 34,
+        "end_line": 39,
+        "label": "def __init__(self, client_id: str, client_secret: str, redirect_uri: str):\nself.client_id = client_id\nself.client_secret = client_secret\nself.redirect_uri = redirect_uri\nself.token_uri = \"https://oauth2.googleapis.com/token\"\nself.revoke_uri = \"https://oauth2.googleapis.com/revoke\"",
+        "successors": [
+          9
+        ]
+      },
+      {
+        "id": 9,
+        "start_line": 41,
+        "end_line": 52,
+        "label": "def get_login_url(self, scopes: list[str], state: str) -> str:\nall_scopes = list(set(scopes + self.DEFAULT_SCOPES))\nlogger.debug(f\"Setting up OAuth flow with scopes: {all_scopes}\")\nflow = self._setup_oauth_flow(all_scopes)\nflow.redirect_uri = self.redirect_uri\nauthorization_url, _ = flow.authorization_url(\naccess_type=\"offline\",\ninclude_granted_scopes=\"true\",\nstate=state,\nprompt=\"consent\",\n)\nreturn authorization_url",
+        "successors": [
+          10
+        ]
+      },
+      {
+        "id": 10,
+        "start_line": 54,
+        "end_line": 104,
+        "label": "def exchange_code_for_tokens(\nself, code: str, scopes: list[str]\n) -> OAuth2Credentials:\nlogger.debug(f\"Exchanging code for tokens with scopes: {scopes}\")\n# Use the scopes from the initial request\nflow = self._setup_oauth_flow(scopes)\nflow.redirect_uri = self.redirect_uri\nlogger.debug(\"Fetching token from Google\")\n# Disable scope check in fetch_token\nflow.oauth2session.scope = None\ntoken = flow.fetch_token(code=code)\nlogger.debug(\"Token fetched successfully\")\n# Get the actual scopes granted by Google\ngranted_scopes: list[str] = token.get(\"scope\", []) \nlogger.debug(f\"Scopes granted by Google: {granted_scopes}\")\ngoogle_creds = flow.credentials\nlogger.debug(f\"Received credentials: {google_creds}\")\nlogger.debug(\"Requesting user email\")\nusername = self._request_email(google_creds)\nlogger.debug(f\"User email retrieved: {username}\")\nassert google_creds.token\nassert google_creds.refresh_token\nassert google_creds.expiry\nassert granted_scopes\n# Create OAuth2Credentials with the granted scopes\ncredentials = OAuth2Credentials(\nprovider=self.PROVIDER_NAME,\ntitle=None,\nusername=username,\naccess_token=SecretStr(google_creds.token),\nrefresh_token=(SecretStr(google_creds.refresh_token)),\naccess_token_expires_at=(int(google_creds.expiry.timestamp()) if google_creds.expiry else None),\nrefresh_token_expires_at=None,\nscopes=granted_scopes,\nwith logger.debug(\nf\"OAuth2Credentials object created successfully with scopes: {credentials.scopes}\"\n)\nreturn credentials",
+        "successors": [
+          11
+        ]
+      },
+      {
+        "id": 11,
+        "start_line": 106,
+        "end_line": 113,
+        "label": "def revoke_tokens(self, credentials: OAuth2Credentials) -> bool:\nsession = AuthorizedSession(credentials)\nsession.post(\nself.revoke_uri,\nparams={\"token\": credentials.access_token.get_secret_value()},\nheaders={\"content-type\": \"application/x-www-form-urlencoded\"},\n)\nreturn True",
+        "successors": [
+          12
+        ]
+      },
+      {
+        "id": 12,
+        "start_line": 115,
+        "end_line": 125,
+        "label": "def _request_email(\nself, creds: Credentials | ExternalAccountCredentials\n) -> str | None:\nsession = AuthorizedSession(creds)\nresponse = session.get(self.EMAIL_ENDPOINT)\nif not response.ok:\nlogger.error(\nf\"Failed to get user email. Status code: {response.status_code}\"\n)\nreturn None\nreturn response.json()[\"email\"]",
+        "successors": [
+          13
+        ]
+      },
+      {
+        "id": 13,
+        "start_line": 127,
+        "end_line": 156,
+        "label": "def _refresh_tokens(self, credentials: OAuth2Credentials) -> OAuth2Credentials:\n# Google credentials should ALWAYS have a refresh token\nassert credentials.refresh_token\ngoogle_creds = Credentials(\ntoken=credentials.access_token.get_secret_value(),\nrefresh_token=credentials.refresh_token.get_secret_value(),\ntoken_uri=self.token_uri,\nclient_id=self.client_id,\nclient_secret=self.client_secret,\nscopes=credentials.scopes,\n)\n# Google's OAuth library is poorly typed so we need some of these:\nassert google_creds.refresh_token\nassert google_creds.scopes\ngoogle_creds.refresh(Request())\nassert google_creds.expiry\nreturn OAuth2Credentials(\nprovider=self.PROVIDER_NAME,\nid=credentials.id,\ntitle=credentials.title,\nusername=credentials.username,\naccess_token=SecretStr(google_creds.token),\nrefresh_token=SecretStr(google_creds.refresh_token),\naccess_token_expires_at=int(google_creds.expiry.timestamp()),\nrefresh_token_expires_at=None,\nscopes=google_creds.scopes,\n)",
+        "successors": [
+          14
+        ]
+      },
+      {
+        "id": 14,
+        "start_line": 158,
+        "end_line": 169,
+        "label": "def _setup_oauth_flow(self, scopes: list[str]) -> Flow:\nreturn Flow.from_client_config(\n{\n\"web\": {\n\"client_id\": self.client_id,\n\"client_secret\": self.client_secret,\n\"auth_uri\": \"https://accounts.google.com/o/oauth2/auth\",\n\"token_uri\": self.token_uri,\n}\n},\nscopes=scopes,\n)",
+        "successors": []
+      }
+    ]
+  },
+  "code_length": 169
+}

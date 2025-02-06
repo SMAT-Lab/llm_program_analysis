@@ -1,0 +1,893 @@
+{
+    "type": "module",
+    "start_token": 0,
+    "end_token": 1009,
+    "label": "import logging\n\nfrom google.auth.external_account_authorized_user import (\n    Credentials as ExternalAccountCredentials,\n)\nfrom google.auth.transport.requests import AuthorizedSession, Request\nfrom google.oauth2.credentials import Credentials\nfrom google_auth_oauthlib.flow import Flow\nfrom pydantic import SecretStr\n\nfrom backend.data.model import OAuth2Credentials\nfrom backend.integrations.providers import ProviderName\n\nfrom .base import BaseOAuthHandler\n\nlogger = logging.getLogger(__name__)\n\n\n# --8<-- [start:GoogleOAuthHandlerExample]\nclass GoogleOAuthHandler(BaseOAuthHandler):\n    \"\"\"\n    Based on the documentation at https://developers.google.com/identity/protocols/oauth2/web-server\n    \"\"\"  # noqa\n\n    PROVIDER_NAME = ProviderName.GOOGLE\n    EMAIL_ENDPOINT = \"https://www.googleapis.com/oauth2/v2/userinfo\"\n    DEFAULT_SCOPES = [\n        \"https://www.googleapis.com/auth/userinfo.email\",\n        \"https://www.googleapis.com/auth/userinfo.profile\",\n        \"openid\",\n    ]\n    # --8<-- [end:GoogleOAuthHandlerExample]\n\n    def __init__(self, client_id: str, client_secret: str, redirect_uri: str):\n        self.client_id = client_id\n        self.client_secret = client_secret\n        self.redirect_uri = redirect_uri\n        self.token_uri = \"https://oauth2.googleapis.com/token\"\n        self.revoke_uri = \"https://oauth2.googleapis.com/revoke\"\n\n    def get_login_url(self, scopes: list[str], state: str) -> str:\n        all_scopes = list(set(scopes + self.DEFAULT_SCOPES))\n        logger.debug(f\"Setting up OAuth flow with scopes: {all_scopes}\")\n        flow = self._setup_oauth_flow(all_scopes)\n        flow.redirect_uri = self.redirect_uri\n        authorization_url, _ = flow.authorization_url(\n            access_type=\"offline\",\n            include_granted_scopes=\"true\",\n            state=state,\n            prompt=\"consent\",\n        )\n        return authorization_url\n\n    def exchange_code_for_tokens(\n        self, code: str, scopes: list[str]\n    ) -> OAuth2Credentials:\n        logger.debug(f\"Exchanging code for tokens with scopes: {scopes}\")\n\n        # Use the scopes from the initial request\n        flow = self._setup_oauth_flow(scopes)\n        flow.redirect_uri = self.redirect_uri\n\n        logger.debug(\"Fetching token from Google\")\n\n        # Disable scope check in fetch_token\n        flow.oauth2session.scope = None\n        token = flow.fetch_token(code=code)\n        logger.debug(\"Token fetched successfully\")\n\n        # Get the actual scopes granted by Google\n        granted_scopes: list[str] = token.get(\"scope\", [])\n\n        logger.debug(f\"Scopes granted by Google: {granted_scopes}\")\n\n        google_creds = flow.credentials\n        logger.debug(f\"Received credentials: {google_creds}\")\n\n        logger.debug(\"Requesting user email\")\n        username = self._request_email(google_creds)\n        logger.debug(f\"User email retrieved: {username}\")\n\n        assert google_creds.token\n        assert google_creds.refresh_token\n        assert google_creds.expiry\n        assert granted_scopes\n\n        # Create OAuth2Credentials with the granted scopes\n        credentials = OAuth2Credentials(\n            provider=self.PROVIDER_NAME,\n            title=None,\n            username=username,\n            access_token=SecretStr(google_creds.token),\n            refresh_token=(SecretStr(google_creds.refresh_token)),\n            access_token_expires_at=(\n                int(google_creds.expiry.timestamp()) if google_creds.expiry else None\n            ),\n            refresh_token_expires_at=None,\n            scopes=granted_scopes,\n        )\n        logger.debug(\n            f\"OAuth2Credentials object created successfully with scopes: {credentials.scopes}\"\n        )\n\n        return credentials\n\n    def revoke_tokens(self, credentials: OAuth2Credentials) -> bool:\n        session = AuthorizedSession(credentials)\n        session.post(\n            self.revoke_uri,\n            params={\"token\": credentials.access_token.get_secret_value()},\n            headers={\"content-type\": \"application/x-www-form-urlencoded\"},\n        )\n        return True\n\n    def _request_email(\n        self, creds: Credentials | ExternalAccountCredentials\n    ) -> str | None:\n        session = AuthorizedSession(creds)\n        response = session.get(self.EMAIL_ENDPOINT)\n        if not response.ok:\n            logger.error(\n                f\"Failed to get user email. Status code: {response.status_code}\"\n            )\n            return None\n        return response.json()[\"email\"]\n\n    def _refresh_tokens(self, credentials: OAuth2Credentials) -> OAuth2Credentials:\n        # Google credentials should ALWAYS have a refresh token\n        assert credentials.refresh_token\n\n        google_creds = Credentials(\n            token=credentials.access_token.get_secret_value(),\n            refresh_token=credentials.refresh_token.get_secret_value(),\n            token_uri=self.token_uri,\n            client_id=self.client_id,\n            client_secret=self.client_secret,\n            scopes=credentials.scopes,\n        )\n        # Google's OAuth library is poorly typed so we need some of these:\n        assert google_creds.refresh_token\n        assert google_creds.scopes\n\n        google_creds.refresh(Request())\n        assert google_creds.expiry\n\n        return OAuth2Credentials(\n            provider=self.PROVIDER_NAME,\n            id=credentials.id,\n            title=credentials.title,\n            username=credentials.username,\n            access_token=SecretStr(google_creds.token),\n            refresh_token=SecretStr(google_creds.refresh_token),\n            access_token_expires_at=int(google_creds.expiry.timestamp()),\n            refresh_token_expires_at=None,\n            scopes=google_creds.scopes,\n        )\n\n    def _setup_oauth_flow(self, scopes: list[str]) -> Flow:\n        return Flow.from_client_config(\n            {\n                \"web\": {\n                    \"client_id\": self.client_id,\n                    \"client_secret\": self.client_secret,\n                    \"auth_uri\": \"https://accounts.google.com/o/oauth2/auth\",\n                    \"token_uri\": self.token_uri,\n                }\n            },\n            scopes=scopes,\n        )\n",
+    "children": [
+        {
+            "type": "import_statement",
+            "start_token": 0,
+            "end_token": 1,
+            "label": "import logging",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 1,
+                    "end_token": 1,
+                    "label": "logging",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 4,
+            "end_token": 18,
+            "label": "from google.auth.external_account_authorized_user import (\n    Credentials as ExternalAccountCredentials,\n)",
+            "children": [
+                {
+                    "type": "import_prefix",
+                    "start_token": 4,
+                    "end_token": 9,
+                    "label": "from google.auth.external_account_authorized_user",
+                    "children": [
+                        {
+                            "type": "dotted_name",
+                            "start_token": 5,
+                            "end_token": 9,
+                            "label": "google.auth.external_account_authorized_user",
+                            "children": [
+                                {
+                                    "type": "identifier",
+                                    "start_token": 5,
+                                    "end_token": 5,
+                                    "label": "google",
+                                    "children": []
+                                },
+                                {
+                                    "type": "identifier",
+                                    "start_token": 7,
+                                    "end_token": 7,
+                                    "label": "auth",
+                                    "children": []
+                                },
+                                {
+                                    "type": "identifier",
+                                    "start_token": 9,
+                                    "end_token": 9,
+                                    "label": "external_account_authorized_user",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "type": "aliased_import",
+                    "start_token": 13,
+                    "end_token": 15,
+                    "label": "Credentials as ExternalAccountCredentials",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 13,
+                            "end_token": 13,
+                            "label": "Credentials",
+                            "children": []
+                        },
+                        {
+                            "type": "identifier",
+                            "start_token": 15,
+                            "end_token": 15,
+                            "label": "ExternalAccountCredentials",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 20,
+            "end_token": 31,
+            "label": "from google.auth.transport.requests import AuthorizedSession, Request",
+            "children": [
+                {
+                    "type": "import_prefix",
+                    "start_token": 20,
+                    "end_token": 27,
+                    "label": "from google.auth.transport.requests",
+                    "children": [
+                        {
+                            "type": "dotted_name",
+                            "start_token": 21,
+                            "end_token": 27,
+                            "label": "google.auth.transport.requests",
+                            "children": [
+                                {
+                                    "type": "identifier",
+                                    "start_token": 21,
+                                    "end_token": 21,
+                                    "label": "google",
+                                    "children": []
+                                },
+                                {
+                                    "type": "identifier",
+                                    "start_token": 23,
+                                    "end_token": 23,
+                                    "label": "auth",
+                                    "children": []
+                                },
+                                {
+                                    "type": "identifier",
+                                    "start_token": 25,
+                                    "end_token": 25,
+                                    "label": "transport",
+                                    "children": []
+                                },
+                                {
+                                    "type": "identifier",
+                                    "start_token": 27,
+                                    "end_token": 27,
+                                    "label": "requests",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "type": "identifier",
+                    "start_token": 29,
+                    "end_token": 29,
+                    "label": "AuthorizedSession",
+                    "children": []
+                },
+                {
+                    "type": "identifier",
+                    "start_token": 31,
+                    "end_token": 31,
+                    "label": "Request",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 33,
+            "end_token": 40,
+            "label": "from google.oauth2.credentials import Credentials",
+            "children": [
+                {
+                    "type": "import_prefix",
+                    "start_token": 33,
+                    "end_token": 38,
+                    "label": "from google.oauth2.credentials",
+                    "children": [
+                        {
+                            "type": "dotted_name",
+                            "start_token": 34,
+                            "end_token": 38,
+                            "label": "google.oauth2.credentials",
+                            "children": [
+                                {
+                                    "type": "identifier",
+                                    "start_token": 34,
+                                    "end_token": 34,
+                                    "label": "google",
+                                    "children": []
+                                },
+                                {
+                                    "type": "identifier",
+                                    "start_token": 36,
+                                    "end_token": 36,
+                                    "label": "oauth2",
+                                    "children": []
+                                },
+                                {
+                                    "type": "identifier",
+                                    "start_token": 38,
+                                    "end_token": 38,
+                                    "label": "credentials",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "type": "identifier",
+                    "start_token": 40,
+                    "end_token": 40,
+                    "label": "Credentials",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 42,
+            "end_token": 47,
+            "label": "from google_auth_oauthlib.flow import Flow",
+            "children": [
+                {
+                    "type": "import_prefix",
+                    "start_token": 42,
+                    "end_token": 45,
+                    "label": "from google_auth_oauthlib.flow",
+                    "children": [
+                        {
+                            "type": "dotted_name",
+                            "start_token": 43,
+                            "end_token": 45,
+                            "label": "google_auth_oauthlib.flow",
+                            "children": [
+                                {
+                                    "type": "identifier",
+                                    "start_token": 43,
+                                    "end_token": 43,
+                                    "label": "google_auth_oauthlib",
+                                    "children": []
+                                },
+                                {
+                                    "type": "identifier",
+                                    "start_token": 45,
+                                    "end_token": 45,
+                                    "label": "flow",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "type": "identifier",
+                    "start_token": 47,
+                    "end_token": 47,
+                    "label": "Flow",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 49,
+            "end_token": 52,
+            "label": "from pydantic import SecretStr",
+            "children": [
+                {
+                    "type": "import_prefix",
+                    "start_token": 49,
+                    "end_token": 50,
+                    "label": "from pydantic",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 50,
+                            "end_token": 50,
+                            "label": "pydantic",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "identifier",
+                    "start_token": 52,
+                    "end_token": 52,
+                    "label": "SecretStr",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 55,
+            "end_token": 62,
+            "label": "from backend.data.model import OAuth2Credentials",
+            "children": [
+                {
+                    "type": "import_prefix",
+                    "start_token": 55,
+                    "end_token": 60,
+                    "label": "from backend.data.model",
+                    "children": [
+                        {
+                            "type": "dotted_name",
+                            "start_token": 56,
+                            "end_token": 60,
+                            "label": "backend.data.model",
+                            "children": [
+                                {
+                                    "type": "identifier",
+                                    "start_token": 56,
+                                    "end_token": 56,
+                                    "label": "backend",
+                                    "children": []
+                                },
+                                {
+                                    "type": "identifier",
+                                    "start_token": 58,
+                                    "end_token": 58,
+                                    "label": "data",
+                                    "children": []
+                                },
+                                {
+                                    "type": "identifier",
+                                    "start_token": 60,
+                                    "end_token": 60,
+                                    "label": "model",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "type": "identifier",
+                    "start_token": 62,
+                    "end_token": 62,
+                    "label": "OAuth2Credentials",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 64,
+            "end_token": 71,
+            "label": "from backend.integrations.providers import ProviderName",
+            "children": [
+                {
+                    "type": "import_prefix",
+                    "start_token": 64,
+                    "end_token": 69,
+                    "label": "from backend.integrations.providers",
+                    "children": [
+                        {
+                            "type": "dotted_name",
+                            "start_token": 65,
+                            "end_token": 69,
+                            "label": "backend.integrations.providers",
+                            "children": [
+                                {
+                                    "type": "identifier",
+                                    "start_token": 65,
+                                    "end_token": 65,
+                                    "label": "backend",
+                                    "children": []
+                                },
+                                {
+                                    "type": "identifier",
+                                    "start_token": 67,
+                                    "end_token": 67,
+                                    "label": "integrations",
+                                    "children": []
+                                },
+                                {
+                                    "type": "identifier",
+                                    "start_token": 69,
+                                    "end_token": 69,
+                                    "label": "providers",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "type": "identifier",
+                    "start_token": 71,
+                    "end_token": 71,
+                    "label": "ProviderName",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 74,
+            "end_token": 78,
+            "label": "from .base import BaseOAuthHandler",
+            "children": [
+                {
+                    "type": "relative_import",
+                    "start_token": 74,
+                    "end_token": 76,
+                    "label": "from .base",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 76,
+                            "end_token": 76,
+                            "label": "base",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "identifier",
+                    "start_token": 78,
+                    "end_token": 78,
+                    "label": "BaseOAuthHandler",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "assignment",
+            "start_token": 81,
+            "end_token": 88,
+            "label": "logger = logging.getLogger(__name__)",
+            "children": [
+                {
+                    "type": "attribute",
+                    "start_token": 81,
+                    "end_token": 85,
+                    "label": "logger = logging.getLogger",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 81,
+                            "end_token": 81,
+                            "label": "logger",
+                            "children": []
+                        },
+                        {
+                            "type": "identifier",
+                            "start_token": 85,
+                            "end_token": 85,
+                            "label": "getLogger",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "identifier",
+                    "start_token": 87,
+                    "end_token": 87,
+                    "label": "__name__",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "class_definition",
+            "start_token": 105,
+            "end_token": 155,
+            "label": "class GoogleOAuthHandler(BaseOAuthHandler):\n    \"\"\"\n    Based on the documentation at https://developers.google.com/identity/protocols/oauth2/web-server\n    \"\"\"  # noqa\n\n    PROVIDER_NAME = ProviderName.GOOGLE\n    EMAIL_ENDPOINT = \"https://www.googleapis.com/oauth2/v2/userinfo\"\n    DEFAULT_SCOPES = [\n        \"https://www.googleapis.com/auth/userinfo.email\",\n        \"https://www.googleapis.com/auth/userinfo.profile\",\n        \"openid\",\n    ]\n    # --8<-- [end:GoogleOAuthHandlerExample]",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 106,
+                    "end_token": 106,
+                    "label": "GoogleOAuthHandler",
+                    "children": []
+                },
+                {
+                    "type": "block",
+                    "start_token": 111,
+                    "end_token": 114,
+                    "label": "\n    \"\"\"\n    Based on the documentation at https://developers.google.com/identity/protocols/oauth2/web-server\n    \"\"\"",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "assignment",
+            "start_token": 119,
+            "end_token": 123,
+            "label": "PROVIDER_NAME = ProviderName.GOOGLE",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 119,
+                    "end_token": 119,
+                    "label": "PROVIDER_NAME",
+                    "children": []
+                },
+                {
+                    "type": "attribute",
+                    "start_token": 121,
+                    "end_token": 123,
+                    "label": "ProviderName.GOOGLE",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 121,
+                            "end_token": 121,
+                            "label": "ProviderName",
+                            "children": []
+                        },
+                        {
+                            "type": "identifier",
+                            "start_token": 123,
+                            "end_token": 123,
+                            "label": "GOOGLE",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "assignment",
+            "start_token": 125,
+            "end_token": 127,
+            "label": "EMAIL_ENDPOINT = \"https://www.googleapis.com/oauth2/v2/userinfo\"",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 125,
+                    "end_token": 125,
+                    "label": "EMAIL_ENDPOINT",
+                    "children": []
+                },
+                {
+                    "type": "string",
+                    "start_token": 127,
+                    "end_token": 127,
+                    "label": "\"https://www.googleapis.com/oauth2/v2/userinfo\"",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "assignment",
+            "start_token": 129,
+            "end_token": 142,
+            "label": "DEFAULT_SCOPES = [\n        \"https://www.googleapis.com/auth/userinfo.email\",\n        \"https://www.googleapis.com/auth/userinfo.profile\",\n        \"openid\",\n    ]",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 129,
+                    "end_token": 129,
+                    "label": "DEFAULT_SCOPES",
+                    "children": []
+                },
+                {
+                    "type": "list",
+                    "start_token": 131,
+                    "end_token": 142,
+                    "label": "[\n        \"https://www.googleapis.com/auth/userinfo.email\",\n        \"https://www.googleapis.com/auth/userinfo.profile\",\n        \"openid\",\n    ]",
+                    "children": [
+                        {
+                            "type": "string",
+                            "start_token": 133,
+                            "end_token": 133,
+                            "label": "\"https://www.googleapis.com/auth/userinfo.email\"",
+                            "children": []
+                        },
+                        {
+                            "type": "string",
+                            "start_token": 136,
+                            "end_token": 136,
+                            "label": "\"https://www.googleapis.com/auth/userinfo.profile\"",
+                            "children": []
+                        },
+                        {
+                            "type": "string",
+                            "start_token": 139,
+                            "end_token": 139,
+                            "label": "\"openid\"",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "start_token": 158,
+            "end_token": 194,
+            "label": "def __init__(self, client_id: str, client_secret: str, redirect_uri: str):\n        self.client_id = client_id\n        self.client_secret = client_secret\n        self.redirect_uri = redirect_uri\n",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 159,
+                    "end_token": 159,
+                    "label": "__init__",
+                    "children": []
+                },
+                {
+                    "type": "parameters",
+                    "start_token": 160,
+                    "end_token": 174,
+                    "label": "(self, client_id: str, client_secret: str, redirect_uri: str)",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 161,
+                            "end_token": 161,
+                            "label": "self",
+                            "children": []
+                        },
+                        {
+                            "type": "typed_parameter",
+                            "start_token": 163,
+                            "end_token": 165,
+                            "label": "client_id: str",
+                            "children": [
+                                {
+                                    "type": "identifier",
+                                    "start_token": 163,
+                                    "end_token": 163,
+                                    "label": "client_id",
+                                    "children": []
+                                },
+                                {
+                                    "type": "identifier",
+                                    "start_token": 165,
+                                    "end_token": 165,
+                                    "label": "str",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "typed_parameter",
+                            "start_token": 167,
+                            "end_token": 169,
+                            "label": "client_secret: str",
+                            "children": [
+                                {
+                                    "type": "identifier",
+                                    "start_token": 167,
+                                    "end_token": 167,
+                                    "label": "client_secret",
+                                    "children": []
+                                },
+                                {
+                                    "type": "identifier",
+                                    "start_token": 169,
+                                    "end_token": 169,
+                                    "label": "str",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "typed_parameter",
+                            "start_token": 171,
+                            "end_token": 173,
+                            "label": "redirect_uri: str",
+                            "children": [
+                                {
+                                    "type": "identifier",
+                                    "start_token": 171,
+                                    "end_token": 171,
+                                    "label": "redirect_uri",
+                                    "children": []
+                                },
+                                {
+                                    "type": "identifier",
+                                    "start_token": 173,
+                                    "end_token": 173,
+                                    "label": "str",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "type": "block",
+                    "start_token": 175,
+                    "end_token": 194,
+                    "label": ":\n        self.client_id = client_id\n        self.client_secret = client_secret\n        self.redirect_uri = redirect_uri\n",
+                    "children": [
+                        {
+                            "type": "assignment",
+                            "start_token": 177,
+                            "end_token": 181,
+                            "label": "self.client_id = client_id",
+                            "children": [
+                                {
+                                    "type": "attribute",
+                                    "start_token": 177,
+                                    "end_token": 179,
+                                    "label": "self.client_id",
+                                    "children": [
+                                        {
+                                            "type": "identifier",
+                                            "start_token": 177,
+                                            "end_token": 177,
+                                            "label": "self",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "identifier",
+                                            "start_token": 179,
+                                            "end_token": 179,
+                                            "label": "client_id",
+                                            "children": []
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "identifier",
+                                    "start_token": 181,
+                                    "end_token": 181,
+                                    "label": "client_id",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "start_token": 208,
+            "end_token": 301,
+            "label": "def get_login_url(self, scopes: list[str], state: str) -> str:\n        all_scopes = list(set(scopes + self.DEFAULT_SCOPES))\n        logger.debug(f\"Setting up OAuth flow with scopes: {all_scopes}\")\n        flow = self._setup_oauth_flow(all_scopes)\n        flow.redirect_uri = self.redirect_uri\n        authorization_url, _ = flow.authorization_url(\n            access_type=\"offline\",\n            include_granted_scopes=\"true\",\n            state=state,\n            prompt=\"consent\",\n        )\n        return authorization_url\n",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 209,
+                    "end_token": 209,
+                    "label": "get_login_url",
+                    "children": []
+                },
+                {
+                    "type": "parameters",
+                    "start_token": 210,
+                    "end_token": 223,
+                    "label": "(self, scopes: list[str], state: str)",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 211,
+                            "end_token": 211,
+                            "label": "self",
+                            "children": []
+                        },
+                        {
+                            "type": "typed_parameter",
+                            "start_token": 213,
+                            "end_token": 215,
+                            "label": "scopes: list",
+                            "children": [
+                                {
+                                    "type": "identifier",
+                                    "start_token": 213,
+                                    "end_token": 213,
+                                    "label": "scopes",
+                                    "children": []
+                                },
+                                {
+                                    "type": "generic_type",
+                                    "start_token": 215,
+                                    "end_token": 218,
+                                    "label": "list[str]",
+                                    "children": [
+                                        {
+                                            "type": "identifier",
+                                            "start_token": 215,
+                                            "end_token": 215,
+                                            "label": "list",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "generic_type",
+                                            "start_token": 217,
+                                            "end_token": 218,
+                                            "label": "str]",
+                                            "children": [
+                                                {
+                                                    "type": "identifier",
+                                                    "start_token": 217,
+                                                    "end_token": 217,
+                                                    "label": "str",
+                                                    "children": []
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "typed_parameter",
+                            "start_token": 220,
+                            "end_token": 222,
+                            "label": "state: str",
+                            "children": [
+                                {
+                                    "type": "identifier",
+                                    "start_token": 220,
+                                    "end_token": 220,
+                                    "label": "state",
+                                    "children": []
+                                },
+                                {
+                                    "type": "identifier",
+                                    "start_token": 222,
+                                    "end_token": 222,
+                                    "label": "str",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "type": "block",
+                    "start_token": 224,
+                    "end_token": 301,
+                    "label": "-> str:\n        all_scopes = list(set(scopes + self.DEFAULT_SCOPES))\n        logger.debug(f\"Setting up OAuth flow with scopes: {all_scopes}\")\n        flow = self._setup_oauth_flow(all_scopes)\n        flow.redirect_uri = self.redirect_uri\n        authorization_url, _ = flow.authorization_url(\n            access_type=\"offline\",\n            include_granted_scopes=\"true\",\n            state=state,\n            prompt=\"consent\",\n        )\n        return authorization_url\n",
+                    "children": [
+                        {
+                            "type": "assignment",
+                            "start_token": 229,
+                            "end_token": 241,
+                            "label": "all_scopes = list(set(scopes + self.DEFAULT_SCOPES))",
+                            "children": [
+                                {
+                                    "type": "identifier",
+                                    "start_token": 229,
+                                    "end_token": 229,
+                                    "label": "all_scopes",
+                                    "children": []
+                                },
+                                {
+                                    "type": "call",
+                                    "start_token": 231,
+                                    "end_token": 241,
+                                    "label": "list(set(scopes + self.DEFAULT_SCOPES))",
+                                    "children": [
+                                        {
+                                            "type": "call",
+                                            "start_token": 233,
+                                            "end_token": 240,
+                                            "label": "set(scopes + self.DEFAULT_SCOPES)",
+                                            "children": [
+                                                {
+                                                    "type": "binary_operator",
+                                                    "start_token": 235,
+                                                    "end_token": 239,
+                                                    "label": "scopes + self.DEFAULT_SCOPES",
+                                                    "children": [
+                                                        {
+                                                            "type": "identifier",
+                                                            "start_token": 235,
+                                                            "end_token": 235,
+                                                            "label": "scopes",
+                                                            "children": []
+                                                        },
+                                                        {
+                                                            "type": "attribute",
+                                                            "start_token": 237,
+                                                            "end_token": 239,
+                                                            "label": "self.DEFAULT_SCOPES",
+                                                            "children": [
+                                                                {
+                                                                    "type": "identifier",
+                                                                    "start_token": 237,
+                                                                    "end_token": 237,
+                                                                    "label": "self",
+                                                                    "children": []
+                                                                },
+                                                                {
+                                                                    "type": "identifier",
+                                                                    "start_token": 239,
+                                                                    "end_token": 239,
+                                                                    "label": "DEFAULT_SCOPES",
+                                                                    "children": []
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

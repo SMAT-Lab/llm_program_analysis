@@ -1,0 +1,1095 @@
+{
+    "type": "module",
+    "start_token": 0,
+    "end_token": 1938,
+    "label": "import logging\nimport time\nfrom enum import Enum\nfrom typing import Literal\n\nfrom pydantic import SecretStr\n\nfrom backend.data.block import Block, BlockCategory, BlockOutput, BlockSchema\nfrom backend.data.model import (\n    APIKeyCredentials,\n    CredentialsField,\n    CredentialsMetaInput,\n    SchemaField,\n)\nfrom backend.integrations.providers import ProviderName\nfrom backend.util.request import requests\n\nTEST_CREDENTIALS = APIKeyCredentials(\n    id=\"01234567-89ab-cdef-0123-456789abcdef\",\n    provider=\"revid\",\n    api_key=SecretStr(\"mock-revid-api-key\"),\n    title=\"Mock Revid API key\",\n    expires_at=None,\n)\nTEST_CREDENTIALS_INPUT = {\n    \"provider\": TEST_CREDENTIALS.provider,\n    \"id\": TEST_CREDENTIALS.id,\n    \"type\": TEST_CREDENTIALS.type,\n    \"title\": TEST_CREDENTIALS.type,\n}\n\n\nclass AudioTrack(str, Enum):\n    OBSERVER = (\"Observer\",)\n    FUTURISTIC_BEAT = (\"Futuristic Beat\",)\n    SCIENCE_DOCUMENTARY = (\"Science Documentary\",)\n    HOTLINE = (\"Hotline\",)\n    BLADERUNNER_2049 = (\"Bladerunner 2049\",)\n    A_FUTURE = (\"A Future\",)\n    ELYSIAN_EMBERS = (\"Elysian Embers\",)\n    INSPIRING_CINEMATIC = (\"Inspiring Cinematic\",)\n    BLADERUNNER_REMIX = (\"Bladerunner Remix\",)\n    IZZAMUZZIC = (\"Izzamuzzic\",)\n    NAS = (\"Nas\",)\n    PARIS_ELSE = (\"Paris - Else\",)\n    SNOWFALL = (\"Snowfall\",)\n    BURLESQUE = (\"Burlesque\",)\n    CORNY_CANDY = (\"Corny Candy\",)\n    HIGHWAY_NOCTURNE = (\"Highway Nocturne\",)\n    I_DONT_THINK_SO = (\"I Don't Think So\",)\n    LOSING_YOUR_MARBLES = (\"Losing Your Marbles\",)\n    REFRESHER = (\"Refresher\",)\n    TOURIST = (\"Tourist\",)\n    TWIN_TYCHES = (\"Twin Tyches\",)\n\n    @property\n    def audio_url(self):\n        audio_urls = {\n            AudioTrack.OBSERVER: \"https://cdn.tfrv.xyz/audio/observer.mp3\",\n            AudioTrack.FUTURISTIC_BEAT: \"https://cdn.tfrv.xyz/audio/_futuristic-beat.mp3\",\n            AudioTrack.SCIENCE_DOCUMENTARY: \"https://cdn.tfrv.xyz/audio/_science-documentary.mp3\",\n            AudioTrack.HOTLINE: \"https://cdn.tfrv.xyz/audio/_hotline.mp3\",\n            AudioTrack.BLADERUNNER_2049: \"https://cdn.tfrv.xyz/audio/_bladerunner-2049.mp3\",\n            AudioTrack.A_FUTURE: \"https://cdn.tfrv.xyz/audio/a-future.mp3\",\n            AudioTrack.ELYSIAN_EMBERS: \"https://cdn.tfrv.xyz/audio/elysian-embers.mp3\",\n            AudioTrack.INSPIRING_CINEMATIC: \"https://cdn.tfrv.xyz/audio/inspiring-cinematic-ambient.mp3\",\n            AudioTrack.BLADERUNNER_REMIX: \"https://cdn.tfrv.xyz/audio/bladerunner-remix.mp3\",\n            AudioTrack.IZZAMUZZIC: \"https://cdn.tfrv.xyz/audio/_izzamuzzic.mp3\",\n            AudioTrack.NAS: \"https://cdn.tfrv.xyz/audio/_nas.mp3\",\n            AudioTrack.PARIS_ELSE: \"https://cdn.tfrv.xyz/audio/_paris-else.mp3\",\n            AudioTrack.SNOWFALL: \"https://cdn.tfrv.xyz/audio/_snowfall.mp3\",\n            AudioTrack.BURLESQUE: \"https://cdn.tfrv.xyz/audio/burlesque.mp3\",\n            AudioTrack.CORNY_CANDY: \"https://cdn.tfrv.xyz/audio/corny-candy.mp3\",\n            AudioTrack.HIGHWAY_NOCTURNE: \"https://cdn.tfrv.xyz/audio/highway-nocturne.mp3\",\n            AudioTrack.I_DONT_THINK_SO: \"https://cdn.tfrv.xyz/audio/i-dont-think-so.mp3\",\n            AudioTrack.LOSING_YOUR_MARBLES: \"https://cdn.tfrv.xyz/audio/losing-your-marbles.mp3\",\n            AudioTrack.REFRESHER: \"https://cdn.tfrv.xyz/audio/refresher.mp3\",\n            AudioTrack.TOURIST: \"https://cdn.tfrv.xyz/audio/tourist.mp3\",\n            AudioTrack.TWIN_TYCHES: \"https://cdn.tfrv.xyz/audio/twin-tynches.mp3\",\n        }\n        return audio_urls[self]\n\n\nclass GenerationPreset(str, Enum):\n    LEONARDO = (\"Default\",)\n    ANIME = (\"Anime\",)\n    REALISM = (\"Realist\",)\n    ILLUSTRATION = (\"Illustration\",)\n    SKETCH_COLOR = (\"Sketch Color\",)\n    SKETCH_BW = (\"Sketch B&W\",)\n    PIXAR = (\"Pixar\",)\n    INK = (\"Japanese Ink\",)\n    RENDER_3D = (\"3D Render\",)\n    LEGO = (\"Lego\",)\n    SCIFI = (\"Sci-Fi\",)\n    RECRO_CARTOON = (\"Retro Cartoon\",)\n    PIXEL_ART = (\"Pixel Art\",)\n    CREATIVE = (\"Creative\",)\n    PHOTOGRAPHY = (\"Photography\",)\n    RAYTRACED = (\"Raytraced\",)\n    ENVIRONMENT = (\"Environment\",)\n    FANTASY = (\"Fantasy\",)\n    ANIME_SR = (\"Anime Realism\",)\n    MOVIE = (\"Movie\",)\n    STYLIZED_ILLUSTRATION = (\"Stylized Illustration\",)\n    MANGA = (\"Manga\",)\n\n\nclass Voice(str, Enum):\n    LILY = \"Lily\"\n    DANIEL = \"Daniel\"\n    BRIAN = \"Brian\"\n    JESSICA = \"Jessica\"\n    CHARLOTTE = \"Charlotte\"\n    CALLUM = \"Callum\"\n\n    @property\n    def voice_id(self):\n        voice_id_map = {\n            Voice.LILY: \"pFZP5JQG7iQjIQuC4Bku\",\n            Voice.DANIEL: \"onwK4e9ZLuTAKqWW03F9\",\n            Voice.BRIAN: \"nPczCjzI2devNBz1zQrb\",\n            Voice.JESSICA: \"cgSgspJ2msm6clMCkdW9\",\n            Voice.CHARLOTTE: \"XB0fDUnXU5powFXDhCwa\",\n            Voice.CALLUM: \"N2lVS1w4EtoT3dr4eOWO\",\n        }\n        return voice_id_map[self]\n\n    def __str__(self):\n        return self.value\n\n\nclass VisualMediaType(str, Enum):\n    STOCK_VIDEOS = (\"stockVideo\",)\n    MOVING_AI_IMAGES = (\"movingImage\",)\n    AI_VIDEO = (\"aiVideo\",)\n\n\nlogger = logging.getLogger(__name__)\n\n\nclass AIShortformVideoCreatorBlock(Block):\n    class Input(BlockSchema):\n        credentials: CredentialsMetaInput[\n            Literal[ProviderName.REVID], Literal[\"api_key\"]\n        ] = CredentialsField(\n            description=\"The revid.ai integration can be used with \"\n            \"any API key with sufficient permissions for the blocks it is used on.\",\n        )\n        script: str = SchemaField(\n            description=\"\"\"1. Use short and punctuated sentences\\n\\n2. Use linebreaks to create a new clip\\n\\n3. Text outside of brackets is spoken by the AI, and [text between brackets] will be used to guide the visual generation. For example, [close-up of a cat] will show a close-up of a cat.\"\"\",\n            placeholder=\"[close-up of a cat] Meow!\",\n        )\n        ratio: str = SchemaField(\n            description=\"Aspect ratio of the video\", default=\"9 / 16\"\n        )\n        resolution: str = SchemaField(\n            description=\"Resolution of the video\", default=\"720p\"\n        )\n        frame_rate: int = SchemaField(description=\"Frame rate of the video\", default=60)\n        generation_preset: GenerationPreset = SchemaField(\n            description=\"Generation preset for visual style - only effects AI generated visuals\",\n            default=GenerationPreset.LEONARDO,\n            placeholder=GenerationPreset.LEONARDO,\n        )\n        background_music: AudioTrack = SchemaField(\n            description=\"Background music track\",\n            default=AudioTrack.HIGHWAY_NOCTURNE,\n            placeholder=AudioTrack.HIGHWAY_NOCTURNE,\n        )\n        voice: Voice = SchemaField(\n            description=\"AI voice to use for narration\",\n            default=Voice.LILY,\n            placeholder=Voice.LILY,\n        )\n        video_style: VisualMediaType = SchemaField(\n            description=\"Type of visual media to use for the video\",\n            default=VisualMediaType.STOCK_VIDEOS,\n            placeholder=VisualMediaType.STOCK_VIDEOS,\n        )\n\n    class Output(BlockSchema):\n        video_url: str = SchemaField(description=\"The URL of the created video\")\n        error: str = SchemaField(description=\"Error message if the request failed\")\n\n    def __init__(self):\n        super().__init__(\n            id=\"361697fb-0c4f-4feb-aed3-8320c88c771b\",\n            description=\"Creates a shortform video using revid.ai\",\n            categories={BlockCategory.SOCIAL, BlockCategory.AI},\n            input_schema=AIShortformVideoCreatorBlock.Input,\n            output_schema=AIShortformVideoCreatorBlock.Output,\n            test_input={\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n                \"script\": \"[close-up of a cat] Meow!\",\n                \"ratio\": \"9 / 16\",\n                \"resolution\": \"720p\",\n                \"frame_rate\": 60,\n                \"generation_preset\": GenerationPreset.LEONARDO,\n                \"background_music\": AudioTrack.HIGHWAY_NOCTURNE,\n                \"voice\": Voice.LILY,\n                \"video_style\": VisualMediaType.STOCK_VIDEOS,\n            },\n            test_output=(\n                \"video_url\",\n                \"https://example.com/video.mp4\",\n            ),\n            test_mock={\n                \"create_webhook\": lambda: (\n                    \"test_uuid\",\n                    \"https://webhook.site/test_uuid\",\n                ),\n                \"create_video\": lambda api_key, payload: {\"pid\": \"test_pid\"},\n                \"wait_for_video\": lambda api_key, pid, webhook_token, max_wait_time=1000: \"https://example.com/video.mp4\",\n            },\n            test_credentials=TEST_CREDENTIALS,\n        )\n\n    def create_webhook(self):\n        url = \"https://webhook.site/token\"\n        headers = {\"Accept\": \"application/json\", \"Content-Type\": \"application/json\"}\n        response = requests.post(url, headers=headers)\n        webhook_data = response.json()\n        return webhook_data[\"uuid\"], f\"https://webhook.site/{webhook_data['uuid']}\"\n\n    def create_video(self, api_key: SecretStr, payload: dict) -> dict:\n        url = \"https://www.revid.ai/api/public/v2/render\"\n        headers = {\"key\": api_key.get_secret_value()}\n        response = requests.post(url, json=payload, headers=headers)\n        logger.debug(\n            f\"API Response Status Code: {response.status_code}, Content: {response.text}\"\n        )\n        return response.json()\n\n    def check_video_status(self, api_key: SecretStr, pid: str) -> dict:\n        url = f\"https://www.revid.ai/api/public/v2/status?pid={pid}\"\n        headers = {\"key\": api_key.get_secret_value()}\n        response = requests.get(url, headers=headers)\n        return response.json()\n\n    def wait_for_video(\n        self,\n        api_key: SecretStr,\n        pid: str,\n        webhook_token: str,\n        max_wait_time: int = 1000,\n    ) -> str:\n        start_time = time.time()\n        while time.time() - start_time < max_wait_time:\n            status = self.check_video_status(api_key, pid)\n            logger.debug(f\"Video status: {status}\")\n\n            if status.get(\"status\") == \"ready\" and \"videoUrl\" in status:\n                return status[\"videoUrl\"]\n            elif status.get(\"status\") == \"error\":\n                error_message = status.get(\"error\", \"Unknown error occurred\")\n                logger.error(f\"Video creation failed: {error_message}\")\n                raise ValueError(f\"Video creation failed: {error_message}\")\n            elif status.get(\"status\") in [\"FAILED\", \"CANCELED\"]:\n                logger.error(f\"Video creation failed: {status.get('message')}\")\n                raise ValueError(f\"Video creation failed: {status.get('message')}\")\n\n            time.sleep(10)\n\n        logger.error(\"Video creation timed out\")\n        raise TimeoutError(\"Video creation timed out\")\n\n    def run(\n        self, input_data: Input, *, credentials: APIKeyCredentials, **kwargs\n    ) -> BlockOutput:\n        # Create a new Webhook.site URL\n        webhook_token, webhook_url = self.create_webhook()\n        logger.debug(f\"Webhook URL: {webhook_url}\")\n\n        audio_url = input_data.background_music.audio_url\n\n        payload = {\n            \"frameRate\": input_data.frame_rate,\n            \"resolution\": input_data.resolution,\n            \"frameDurationMultiplier\": 18,\n            \"webhook\": webhook_url,\n            \"creationParams\": {\n                \"mediaType\": input_data.video_style,\n                \"captionPresetName\": \"Wrap 1\",\n                \"selectedVoice\": input_data.voice.voice_id,\n                \"hasEnhancedGeneration\": True,\n                \"generationPreset\": input_data.generation_preset.name,\n                \"selectedAudio\": input_data.background_music,\n                \"origin\": \"/create\",\n                \"inputText\": input_data.script,\n                \"flowType\": \"text-to-video\",\n                \"slug\": \"create-tiktok-video\",\n                \"hasToGenerateVoice\": True,\n                \"hasToTranscript\": False,\n                \"hasToSearchMedia\": True,\n                \"hasAvatar\": False,\n                \"hasWebsiteRecorder\": False,\n                \"hasTextSmallAtBottom\": False,\n                \"ratio\": input_data.ratio,\n                \"sourceType\": \"contentScraping\",\n                \"selectedStoryStyle\": {\"value\": \"custom\", \"label\": \"Custom\"},\n                \"hasToGenerateVideos\": input_data.video_style\n                != VisualMediaType.STOCK_VIDEOS,\n                \"audioUrl\": audio_url,\n            },\n        }\n\n        logger.debug(\"Creating video...\")\n        response = self.create_video(credentials.api_key, payload)\n        pid = response.get(\"pid\")\n\n        if not pid:\n            logger.error(\n                f\"Failed to create video: No project ID returned. API Response: {response}\"\n            )\n            raise RuntimeError(\"Failed to create video: No project ID returned\")\n        else:\n            logger.debug(\n                f\"Video created with project ID: {pid}. Waiting for completion...\"\n            )\n            video_url = self.wait_for_video(credentials.api_key, pid, webhook_token)\n            logger.debug(f\"Video ready: {video_url}\")\n            yield \"video_url\", video_url\n",
+    "children": [
+        {
+            "type": "import_statement",
+            "start_token": 0,
+            "end_token": 1,
+            "label": "import logging",
+            "children": []
+        },
+        {
+            "type": "import_statement",
+            "start_token": 3,
+            "end_token": 4,
+            "label": "import time",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 6,
+            "end_token": 9,
+            "label": "from enum import Enum",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 11,
+            "end_token": 14,
+            "label": "from typing import Literal",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 17,
+            "end_token": 20,
+            "label": "from pydantic import SecretStr",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 23,
+            "end_token": 36,
+            "label": "from backend.data.block import Block, BlockCategory, BlockOutput, BlockSchema",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 38,
+            "end_token": 59,
+            "label": "from backend.data.model import (\n    APIKeyCredentials,\n    CredentialsField,\n    CredentialsMetaInput,\n    SchemaField,\n)",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 61,
+            "end_token": 68,
+            "label": "from backend.integrations.providers import ProviderName",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 70,
+            "end_token": 77,
+            "label": "from backend.util.request import requests",
+            "children": []
+        },
+        {
+            "type": "assignment",
+            "start_token": 80,
+            "end_token": 113,
+            "label": "TEST_CREDENTIALS = APIKeyCredentials(\n    id=\"01234567-89ab-cdef-0123-456789abcdef\",\n    provider=\"revid\",\n    api_key=SecretStr(\"mock-revid-api-key\"),\n    title=\"Mock Revid API key\",\n    expires_at=None,\n)",
+            "children": []
+        },
+        {
+            "type": "assignment",
+            "start_token": 115,
+            "end_token": 147,
+            "label": "TEST_CREDENTIALS_INPUT = {\n    \"provider\": TEST_CREDENTIALS.provider,\n    \"id\": TEST_CREDENTIALS.id,\n    \"type\": TEST_CREDENTIALS.type,\n    \"title\": TEST_CREDENTIALS.type,\n}",
+            "children": []
+        },
+        {
+            "type": "class_definition",
+            "start_token": 151,
+            "end_token": 306,
+            "label": "class AudioTrack(str, Enum):\n    OBSERVER = (\"Observer\",)\n    FUTURISTIC_BEAT = (\"Futuristic Beat\",)\n    SCIENCE_DOCUMENTARY = (\"Science Documentary\",)\n    HOTLINE = (\"Hotline\",)\n    BLADERUNNER_2049 = (\"Bladerunner 2049\",)\n    A_FUTURE = (\"A Future\",)\n    ELYSIAN_EMBERS = (\"Elysian Embers\",)\n    INSPIRING_CINEMATIC = (\"Inspiring Cinematic\",)\n    BLADERUNNER_REMIX = (\"Bladerunner Remix\",)\n    IZZAMUZZIC = (\"Izzamuzzic\",)\n    NAS = (\"Nas\",)\n    PARIS_ELSE = (\"Paris - Else\",)\n    SNOWFALL = (\"Snowfall\",)\n    BURLESQUE = (\"Burlesque\",)\n    CORNY_CANDY = (\"Corny Candy\",)\n    HIGHWAY_NOCTURNE = (\"Highway Nocturne\",)\n    I_DONT_THINK_SO = (\"I Don't Think So\",)\n    LOSING_YOUR_MARBLES = (\"Losing Your Marbles\",)\n    REFRESHER = (\"Refresher\",)\n    TOURIST = (\"Tourist\",)\n    TWIN_TYCHES = (\"Twin Tyches\",)\n",
+            "children": [
+                {
+                    "type": "assignment",
+                    "start_token": 160,
+                    "end_token": 165,
+                    "label": "OBSERVER = (\"Observer\",)",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "start_token": 167,
+                    "end_token": 172,
+                    "label": "FUTURISTIC_BEAT = (\"Futuristic Beat\",)",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "start_token": 174,
+                    "end_token": 179,
+                    "label": "SCIENCE_DOCUMENTARY = (\"Science Documentary\",)",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "start_token": 181,
+                    "end_token": 186,
+                    "label": "HOTLINE = (\"Hotline\",)",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "start_token": 188,
+                    "end_token": 193,
+                    "label": "BLADERUNNER_2049 = (\"Bladerunner 2049\",)",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "start_token": 195,
+                    "end_token": 200,
+                    "label": "A_FUTURE = (\"A Future\",)",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "start_token": 202,
+                    "end_token": 207,
+                    "label": "ELYSIAN_EMBERS = (\"Elysian Embers\",)",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "start_token": 209,
+                    "end_token": 214,
+                    "label": "INSPIRING_CINEMATIC = (\"Inspiring Cinematic\",)",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "start_token": 216,
+                    "end_token": 221,
+                    "label": "BLADERUNNER_REMIX = (\"Bladerunner Remix\",)",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "start_token": 223,
+                    "end_token": 228,
+                    "label": "IZZAMUZZIC = (\"Izzamuzzic\",)",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "start_token": 230,
+                    "end_token": 235,
+                    "label": "NAS = (\"Nas\",)",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "start_token": 237,
+                    "end_token": 242,
+                    "label": "PARIS_ELSE = (\"Paris - Else\",)",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "start_token": 244,
+                    "end_token": 249,
+                    "label": "SNOWFALL = (\"Snowfall\",)",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "start_token": 251,
+                    "end_token": 256,
+                    "label": "BURLESQUE = (\"Burlesque\",)",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "start_token": 258,
+                    "end_token": 263,
+                    "label": "CORNY_CANDY = (\"Corny Candy\",)",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "start_token": 265,
+                    "end_token": 270,
+                    "label": "HIGHWAY_NOCTURNE = (\"Highway Nocturne\",)",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "start_token": 272,
+                    "end_token": 277,
+                    "label": "I_DONT_THINK_SO = (\"I Don't Think So\",)",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "start_token": 279,
+                    "end_token": 284,
+                    "label": "LOSING_YOUR_MARBLES = (\"Losing Your Marbles\",)",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "start_token": 286,
+                    "end_token": 291,
+                    "label": "REFRESHER = (\"Refresher\",)",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "start_token": 293,
+                    "end_token": 298,
+                    "label": "TOURIST = (\"Tourist\",)",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "start_token": 300,
+                    "end_token": 305,
+                    "label": "TWIN_TYCHES = (\"Twin Tyches\",)",
+                    "children": []
+                },
+                {
+                    "type": "property",
+                    "start_token": 308,
+                    "end_token": 475,
+                    "label": "@property\n    def audio_url(self):\n        audio_urls = {\n            AudioTrack.OBSERVER: \"https://cdn.tfrv.xyz/audio/observer.mp3\",\n            AudioTrack.FUTURISTIC_BEAT: \"https://cdn.tfrv.xyz/audio/_futuristic-beat.mp3\",\n            AudioTrack.SCIENCE_DOCUMENTARY: \"https://cdn.tfrv.xyz/audio/_science-documentary.mp3\",\n            AudioTrack.HOTLINE: \"https://cdn.tfrv.xyz/audio/_hotline.mp3\",\n            AudioTrack.BLADERUNNER_2049: \"https://cdn.tfrv.xyz/audio/_bladerunner-2049.mp3\",\n            AudioTrack.A_FUTURE: \"https://cdn.tfrv.xyz/audio/a-future.mp3\",\n            AudioTrack.ELYSIAN_EMBERS: \"https://cdn.tfrv.xyz/audio/elysian-embers.mp3\",\n            AudioTrack.INSPIRING_CINEMATIC: \"https://cdn.tfrv.xyz/audio/inspiring-cinematic-ambient.mp3\",\n            AudioTrack.BLADERUNNER_REMIX: \"https://cdn.tfrv.xyz/audio/bladerunner-remix.mp3\",\n            AudioTrack.IZZAMUZZIC: \"https://cdn.tfrv.xyz/audio/_izzamuzzic.mp3\",\n            AudioTrack.NAS: \"https://cdn.tfrv.xyz/audio/_nas.mp3\",\n            AudioTrack.PARIS_ELSE: \"https://cdn.tfrv.xyz/audio/_paris-else.mp3\",\n            AudioTrack.SNOWFALL: \"https://cdn.tfrv.xyz/audio/_snowfall.mp3\",\n            AudioTrack.BURLESQUE: \"https://cdn.tfrv.xyz/audio/burlesque.mp3\",\n            AudioTrack.CORNY_CANDY: \"https://cdn.tfrv.xyz/audio/corny-candy.mp3\",\n            AudioTrack.HIGHWAY_NOCTURNE: \"https://cdn.tfrv.xyz/audio/highway-nocturne.mp3\",\n            AudioTrack.I_DONT_THINK_SO: \"https://cdn.tfrv.xyz/audio/i-dont-think-so.mp3\",\n            AudioTrack.LOSING_YOUR_MARBLES: \"https://cdn.tfrv.xyz/audio/losing-your-marbles.mp3\",\n            AudioTrack.REFRESHER: \"https://cdn.tfrv.xyz/audio/refresher.mp3\",\n            AudioTrack.TOURIST: \"https://cdn.tfrv.xyz/audio/tourist.mp3\",\n            AudioTrack.TWIN_TYCHES: \"https://cdn.tfrv.xyz/audio/twin-tynches.mp3\",\n        }\n        return audio_urls[self]",
+                    "children": [
+                        {
+                            "type": "assignment",
+                            "start_token": 318,
+                            "end_token": 469,
+                            "label": "audio_urls = {\n            AudioTrack.OBSERVER: \"https://cdn.tfrv.xyz/audio/observer.mp3\",\n            AudioTrack.FUTURISTIC_BEAT: \"https://cdn.tfrv.xyz/audio/_futuristic-beat.mp3\",\n            AudioTrack.SCIENCE_DOCUMENTARY: \"https://cdn.tfrv.xyz/audio/_science-documentary.mp3\",\n            AudioTrack.HOTLINE: \"https://cdn.tfrv.xyz/audio/_hotline.mp3\",\n            AudioTrack.BLADERUNNER_2049: \"https://cdn.tfrv.xyz/audio/_bladerunner-2049.mp3\",\n            AudioTrack.A_FUTURE: \"https://cdn.tfrv.xyz/audio/a-future.mp3\",\n            AudioTrack.ELYSIAN_EMBERS: \"https://cdn.tfrv.xyz/audio/elysian-embers.mp3\",\n            AudioTrack.INSPIRING_CINEMATIC: \"https://cdn.tfrv.xyz/audio/inspiring-cinematic-ambient.mp3\",\n            AudioTrack.BLADERUNNER_REMIX: \"https://cdn.tfrv.xyz/audio/bladerunner-remix.mp3\",\n            AudioTrack.IZZAMUZZIC: \"https://cdn.tfrv.xyz/audio/_izzamuzzic.mp3\",\n            AudioTrack.NAS: \"https://cdn.tfrv.xyz/audio/_nas.mp3\",\n            AudioTrack.PARIS_ELSE: \"https://cdn.tfrv.xyz/audio/_paris-else.mp3\",\n            AudioTrack.SNOWFALL: \"https://cdn.tfrv.xyz/audio/_snowfall.mp3\",\n            AudioTrack.BURLESQUE: \"https://cdn.tfrv.xyz/audio/burlesque.mp3\",\n            AudioTrack.CORNY_CANDY: \"https://cdn.tfrv.xyz/audio/corny-candy.mp3\",\n            AudioTrack.HIGHWAY_NOCTURNE: \"https://cdn.tfrv.xyz/audio/highway-nocturne.mp3\",\n            AudioTrack.I_DONT_THINK_SO: \"https://cdn.tfrv.xyz/audio/i-dont-think-so.mp3\",\n            AudioTrack.LOSING_YOUR_MARBLES: \"https://cdn.tfrv.xyz/audio/losing-your-marbles.mp3\",\n            AudioTrack.REFRESHER: \"https://cdn.tfrv.xyz/audio/refresher.mp3\",\n            AudioTrack.TOURIST: \"https://cdn.tfrv.xyz/audio/tourist.mp3\",\n            AudioTrack.TWIN_TYCHES: \"https://cdn.tfrv.xyz/audio/twin-tynches.mp3\",\n        }",
+                            "children": [
+                                {
+                                    "type": "pair",
+                                    "start_token": 322,
+                                    "end_token": 327,
+                                    "label": "AudioTrack.OBSERVER: \"https://cdn.tfrv.xyz/audio/observer.mp3\",",
+                                    "children": []
+                                },
+                                {
+                                    "type": "pair",
+                                    "start_token": 329,
+                                    "end_token": 334,
+                                    "label": "AudioTrack.FUTURISTIC_BEAT: \"https://cdn.tfrv.xyz/audio/_futuristic-beat.mp3\",",
+                                    "children": []
+                                },
+                                {
+                                    "type": "pair",
+                                    "start_token": 336,
+                                    "end_token": 341,
+                                    "label": "AudioTrack.SCIENCE_DOCUMENTARY: \"https://cdn.tfrv.xyz/audio/_science-documentary.mp3\",",
+                                    "children": []
+                                },
+                                {
+                                    "type": "pair",
+                                    "start_token": 343,
+                                    "end_token": 348,
+                                    "label": "AudioTrack.HOTLINE: \"https://cdn.tfrv.xyz/audio/_hotline.mp3\",",
+                                    "children": []
+                                },
+                                {
+                                    "type": "pair",
+                                    "start_token": 350,
+                                    "end_token": 355,
+                                    "label": "AudioTrack.BLADERUNNER_2049: \"https://cdn.tfrv.xyz/audio/_bladerunner-2049.mp3\",",
+                                    "children": []
+                                },
+                                {
+                                    "type": "pair",
+                                    "start_token": 357,
+                                    "end_token": 362,
+                                    "label": "AudioTrack.A_FUTURE: \"https://cdn.tfrv.xyz/audio/a-future.mp3\",",
+                                    "children": []
+                                },
+                                {
+                                    "type": "pair",
+                                    "start_token": 364,
+                                    "end_token": 369,
+                                    "label": "AudioTrack.ELYSIAN_EMBERS: \"https://cdn.tfrv.xyz/audio/elysian-embers.mp3\",",
+                                    "children": []
+                                },
+                                {
+                                    "type": "pair",
+                                    "start_token": 371,
+                                    "end_token": 376,
+                                    "label": "AudioTrack.INSPIRING_CINEMATIC: \"https://cdn.tfrv.xyz/audio/inspiring-cinematic-ambient.mp3\",",
+                                    "children": []
+                                },
+                                {
+                                    "type": "pair",
+                                    "start_token": 378,
+                                    "end_token": 383,
+                                    "label": "AudioTrack.BLADERUNNER_REMIX: \"https://cdn.tfrv.xyz/audio/bladerunner-remix.mp3\",",
+                                    "children": []
+                                },
+                                {
+                                    "type": "pair",
+                                    "start_token": 385,
+                                    "end_token": 390,
+                                    "label": "AudioTrack.IZZAMUZZIC: \"https://cdn.tfrv.xyz/audio/_izzamuzzic.mp3\",",
+                                    "children": []
+                                },
+                                {
+                                    "type": "pair",
+                                    "start_token": 392,
+                                    "end_token": 397,
+                                    "label": "AudioTrack.NAS: \"https://cdn.tfrv.xyz/audio/_nas.mp3\",",
+                                    "children": []
+                                },
+                                {
+                                    "type": "pair",
+                                    "start_token": 399,
+                                    "end_token": 404,
+                                    "label": "AudioTrack.PARIS_ELSE: \"https://cdn.tfrv.xyz/audio/_paris-else.mp3\",",
+                                    "children": []
+                                },
+                                {
+                                    "type": "pair",
+                                    "start_token": 406,
+                                    "end_token": 411,
+                                    "label": "AudioTrack.SNOWFALL: \"https://cdn.tfrv.xyz/audio/_snowfall.mp3\",",
+                                    "children": []
+                                },
+                                {
+                                    "type": "pair",
+                                    "start_token": 413,
+                                    "end_token": 417,
+                                    "label": "AudioTrack.BURLESQUE: \"https://cdn.tfrv.xyz/audio/burlesque.mp3\"",
+                                    "children": []
+                                },
+                                {
+                                    "type": "pair",
+                                    "start_token": 420,
+                                    "end_token": 425,
+                                    "label": "AudioTrack.CORNY_CANDY: \"https://cdn.tfrv.xyz/audio/corny-candy.mp3\",",
+                                    "children": []
+                                },
+                                {
+                                    "type": "pair",
+                                    "start_token": 427,
+                                    "end_token": 432,
+                                    "label": "AudioTrack.HIGHWAY_NOCTURNE: \"https://cdn.tfrv.xyz/audio/highway-nocturne.mp3\",",
+                                    "children": []
+                                },
+                                {
+                                    "type": "pair",
+                                    "start_token": 434,
+                                    "end_token": 439,
+                                    "label": "AudioTrack.I_DONT_THINK_SO: \"https://cdn.tfrv.xyz/audio/i-dont-think-so.mp3\",",
+                                    "children": []
+                                },
+                                {
+                                    "type": "pair",
+                                    "start_token": 441,
+                                    "end_token": 446,
+                                    "label": "AudioTrack.LOSING_YOUR_MARBLES: \"https://cdn.tfrv.xyz/audio/losing-your-marbles.mp3\",",
+                                    "children": []
+                                },
+                                {
+                                    "type": "pair",
+                                    "start_token": 448,
+                                    "end_token": 453,
+                                    "label": "AudioTrack.REFRESHER: \"https://cdn.tfrv.xyz/audio/refresher.mp3\",",
+                                    "children": []
+                                },
+                                {
+                                    "type": "pair",
+                                    "start_token": 455,
+                                    "end_token": 460,
+                                    "label": "AudioTrack.TOURIST: \"https://cdn.tfrv.xyz/audio/tourist.mp3\",",
+                                    "children": []
+                                },
+                                {
+                                    "type": "pair",
+                                    "start_token": 462,
+                                    "end_token": 467,
+                                    "label": "AudioTrack.TWIN_TYCHES: \"https://cdn.tfrv.xyz/audio/twin-tynches.mp3\",",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "return_statement",
+                            "start_token": 471,
+                            "end_token": 475,
+                            "label": "return audio_urls[self]",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "class_definition",
+            "start_token": 479,
+            "end_token": 640,
+            "label": "class GenerationPreset(str, Enum):\n    LEONARDO = (\"Default\",)\n    ANIME = (\"Anime\",)\n    REALISM = (\"Realist\",)\n    ILLUSTRATION = (\"Illustration\",)\n    SKETCH_COLOR = (\"Sketch Color\",)\n    SKETCH_BW = (\"Sketch B&W\",)\n    PIXAR = (\"Pixar\",)\n    INK = (\"Japanese Ink\",)\n    RENDER_3D = (\"3D Render\",)\n    LEGO = (\"Lego\",)\n    SCIFI = (\"Sci-Fi\",)\n    RECRO_CARTOON = (\"Retro Cartoon\",)\n    PIXEL_ART = (\"Pixel Art\",)\n    CREATIVE = (\"Creative\",)\n    PHOTOGRAPHY = (\"Photography\",)\n    RAYTRACED = (\"Raytraced\",)\n    ENVIRONMENT = (\"Environment\",)\n    FANTASY = (\"Fantasy\",)\n    ANIME_SR = (\"Anime Realism\",)\n    MOVIE = (\"Movie\",)\n    STYLIZED_ILLUSTRATION = (\"Stylized Illustration\",)\n    MANGA = (\"Manga\",)",
+            "children": [
+                {
+                    "type": "assignment",
+                    "start_token": 488,
+                    "end_token": 493,
+                    "label": "LEONARDO = (\"Default\",)",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "start_token": 495,
+                    "end_token": 500,
+                    "label": "ANIME = (\"Anime\",)",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "start_token": 502,
+                    "end_token": 507,
+                    "label": "REALISM = (\"Realist\",)",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "start_token": 509,
+                    "end_token": 514,
+                    "label": "ILLUSTRATION = (\"Illustration\",)",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "start_token": 516,
+                    "end_token": 521,
+                    "label": "SKETCH_COLOR = (\"Sketch Color\",)",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "start_token": 523,
+                    "end_token": 528,
+                    "label": "SKETCH_BW = (\"Sketch B&W\",)",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "start_token": 530,
+                    "end_token": 535,
+                    "label": "PIXAR = (\"Pixar\",)",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "start_token": 537,
+                    "end_token": 542,
+                    "label": "INK = (\"Japanese Ink\",)",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "start_token": 544,
+                    "end_token": 549,
+                    "label": "RENDER_3D = (\"3D Render\",)",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "start_token": 551,
+                    "end_token": 556,
+                    "label": "LEGO = (\"Lego\",)",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "start_token": 558,
+                    "end_token": 563,
+                    "label": "SCIFI = (\"Sci-Fi\",)",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "start_token": 565,
+                    "end_token": 570,
+                    "label": "RECRO_CARTOON = (\"Retro Cartoon\",)",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "start_token": 572,
+                    "end_token": 577,
+                    "label": "PIXEL_ART = (\"Pixel Art\",)",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "start_token": 579,
+                    "end_token": 584,
+                    "label": "CREATIVE = (\"Creative\",)",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "start_token": 586,
+                    "end_token": 591,
+                    "label": "PHOTOGRAPHY = (\"Photography\",)",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "start_token": 593,
+                    "end_token": 598,
+                    "label": "RAYTRACED = (\"Raytraced\",)",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "start_token": 600,
+                    "end_token": 605,
+                    "label": "ENVIRONMENT = (\"Environment\",)",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "start_token": 607,
+                    "end_token": 612,
+                    "label": "FANTASY = (\"Fantasy\",)",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "start_token": 614,
+                    "end_token": 619,
+                    "label": "ANIME_SR = (\"Anime Realism\",)",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "start_token": 621,
+                    "end_token": 626,
+                    "label": "MOVIE = (\"Movie\",)",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "start_token": 628,
+                    "end_token": 633,
+                    "label": "STYLIZED_ILLUSTRATION = (\"Stylized Illustration\",)",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "start_token": 635,
+                    "end_token": 640,
+                    "label": "MANGA = (\"Manga\",)",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "class_definition",
+            "start_token": 644,
+            "end_token": 740,
+            "label": "class Voice(str, Enum):\n    LILY = \"Lily\"\n    DANIEL = \"Daniel\"\n    BRIAN = \"Brian\"\n    JESSICA = \"Jessica\"\n    CHARLOTTE = \"Charlotte\"\n    CALLUM = \"Callum\"\n\n    @property\n    def voice_id(self):\n        voice_id_map = {\n            Voice.LILY: \"pFZP5JQG7iQjIQuC4Bku\",\n            Voice.DANIEL: \"onwK4e9ZLuTAKqWW03F9\",\n            Voice.BRIAN: \"nPczCjzI2devNBz1zQrb\",\n            Voice.JESSICA: \"cgSgspJ2msm6clMCkdW9\",\n            Voice.CHARLOTTE: \"XB0fDUnXU5powFXDhCwa\",\n            Voice.CALLUM: \"N2lVS1w4EtoT3dr4eOWO\",\n        }\n        return voice_id_map[self]",
+            "children": [
+                {
+                    "type": "assignment",
+                    "start_token": 653,
+                    "end_token": 655,
+                    "label": "LILY = \"Lily\"",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "start_token": 657,
+                    "end_token": 659,
+                    "label": "DANIEL = \"Daniel\"",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "start_token": 661,
+                    "end_token": 663,
+                    "label": "BRIAN = \"Brian\"",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "start_token": 665,
+                    "end_token": 667,
+                    "label": "JESSICA = \"Jessica\"",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "start_token": 669,
+                    "end_token": 671,
+                    "label": "CHARLOTTE = \"Charlotte\"",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "start_token": 673,
+                    "end_token": 675,
+                    "label": "CALLUM = \"Callum\"",
+                    "children": []
+                },
+                {
+                    "type": "property",
+                    "start_token": 678,
+                    "end_token": 740,
+                    "label": "@property\n    def voice_id(self):\n        voice_id_map = {\n            Voice.LILY: \"pFZP5JQG7iQjIQuC4Bku\",\n            Voice.DANIEL: \"onwK4e9ZLuTAKqWW03F9\",\n            Voice.BRIAN: \"nPczCjzI2devNBz1zQrb\",\n            Voice.JESSICA: \"cgSgspJ2msm6clMCkdW9\",\n            Voice.CHARLOTTE: \"XB0fDUnXU5powFXDhCwa\",\n            Voice.CALLUM: \"N2lVS1w4EtoT3dr4eOWO\",\n        }\n        return voice_id_map[self]",
+                    "children": [
+                        {
+                            "type": "assignment",
+                            "start_token": 688,
+                            "end_token": 734,
+                            "label": "voice_id_map = {\n            Voice.LILY: \"pFZP5JQG7iQjIQuC4Bku\",\n            Voice.DANIEL: \"onwK4e9ZLuTAKqWW03F9\",\n            Voice.BRIAN: \"nPczCjzI2devNBz1zQrb\",\n            Voice.JESSICA: \"cgSgspJ2msm6clMCkdW9\",\n            Voice.CHARLOTTE: \"XB0fDUnXU5powFXDhCwa\",\n            Voice.CALLUM: \"N2lVS1w4EtoT3dr4eOWO\",\n        }",
+                            "children": [
+                                {
+                                    "type": "pair",
+                                    "start_token": 692,
+                                    "end_token": 697,
+                                    "label": "Voice.LILY: \"pFZP5JQG7iQjIQuC4Bku\",",
+                                    "children": []
+                                },
+                                {
+                                    "type": "pair",
+                                    "start_token": 699,
+                                    "end_token": 704,
+                                    "label": "Voice.DANIEL: \"onwK4e9ZLuTAKqWW03F9\",",
+                                    "children": []
+                                },
+                                {
+                                    "type": "pair",
+                                    "start_token": 706,
+                                    "end_token": 711,
+                                    "label": "Voice.BRIAN: \"nPczCjzI2devNBz1zQrb\",",
+                                    "children": []
+                                },
+                                {
+                                    "type": "pair",
+                                    "start_token": 713,
+                                    "end_token": 718,
+                                    "label": "Voice.JESSICA: \"cgSgspJ2msm6clMCkdW9\",",
+                                    "children": []
+                                },
+                                {
+                                    "type": "pair",
+                                    "start_token": 720,
+                                    "end_token": 725,
+                                    "label": "Voice.CHARLOTTE: \"XB0fDUnXU5powFXDhCwa\",",
+                                    "children": []
+                                },
+                                {
+                                    "type": "pair",
+                                    "start_token": 727,
+                                    "end_token": 732,
+                                    "label": "Voice.CALLUM: \"N2lVS1w4EtoT3dr4eOWO\",",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "return_statement",
+                            "start_token": 736,
+                            "end_token": 740,
+                            "label": "return voice_id_map[self]",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "class_definition",
+            "start_token": 757,
+            "end_token": 785,
+            "label": "class VisualMediaType(str, Enum):\n    STOCK_VIDEOS = (\"stockVideo\",)\n    MOVING_AI_IMAGES = (\"movingImage\",)\n    AI_VIDEO = (\"aiVideo\",)",
+            "children": [
+                {
+                    "type": "assignment",
+                    "start_token": 766,
+                    "end_token": 771,
+                    "label": "STOCK_VIDEOS = (\"stockVideo\",)",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "start_token": 773,
+                    "end_token": 778,
+                    "label": "MOVING_AI_IMAGES = (\"movingImage\",)",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "start_token": 780,
+                    "end_token": 785,
+                    "label": "AI_VIDEO = (\"aiVideo\",)",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "assignment",
+            "start_token": 789,
+            "end_token": 796,
+            "label": "logger = logging.getLogger(__name__)",
+            "children": []
+        },
+        {
+            "type": "class_definition",
+            "start_token": 800,
+            "end_token": 1239,
+            "label": "class AIShortformVideoCreatorBlock(Block):\n    class Input(BlockSchema):\n        credentials: CredentialsMetaInput[\n            Literal[ProviderName.REVID], Literal[\"api_key\"]\n        ] = CredentialsField(\n            description=\"The revid.ai integration can be used with \"\n            \"any API key with sufficient permissions for the blocks it is used on.\",\n        )\n        script: str = SchemaField(\n            description=\"\"\"1. Use short and punctuated sentences\\n\\n2. Use linebreaks to create a new clip\\n\\n3. Text outside of brackets is spoken by the AI, and [text between brackets] will be used to guide the visual generation. For example, [close-up of a cat] will show a close-up of a cat.\"\"\",\n            placeholder=\"[close-up of a cat] Meow!\",\n        )\n        ratio: str = SchemaField(\n            description=\"Aspect ratio of the video\", default=\"9 / 16\"\n        )\n        resolution: str = SchemaField(\n            description=\"Resolution of the video\", default=\"720p\"\n        )\n        frame_rate: int = SchemaField(description=\"Frame rate of the video\", default=60)\n        generation_preset: GenerationPreset = SchemaField(\n            description=\"Generation preset for visual style - only effects AI generated visuals\",\n            default=GenerationPreset.LEONARDO,\n            placeholder=GenerationPreset.LEONARDO,\n        )\n        background_music: AudioTrack = SchemaField(\n            description=\"Background music track\",\n            default=AudioTrack.HIGHWAY_NOCTURNE,\n            placeholder=AudioTrack.HIGHWAY_NOCTURNE,\n        )\n        voice: Voice = SchemaField(\n            description=\"AI voice to use for narration\",\n            default=Voice.LILY,\n            placeholder=Voice.LILY,\n        )\n        video_style: VisualMediaType = SchemaField(\n            description=\"Type of visual media to use for the video\",\n            default=VisualMediaType.STOCK_VIDEOS,\n            placeholder=VisualMediaType.STOCK_VIDEOS,\n        )\n\n    class Output(BlockSchema):\n        video_url: str = SchemaField(description=\"The URL of the created video\")\n        error: str = SchemaField(description=\"Error message if the request failed\")\n\n    def __init__(self):\n        super().__init__(\n            id=\"361697fb-0c4f-4feb-aed3-8320c88c771b\",\n            description=\"Creates a shortform video using revid.ai\",\n            categories={BlockCategory.SOCIAL, BlockCategory.AI},\n            input_schema=AIShortformVideoCreatorBlock.Input,\n            output_schema=AIShortformVideoCreatorBlock.Output,\n            test_input={\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n                \"script\": \"[close-up of a cat] Meow!\",\n                \"ratio\": \"9 / 16\",\n                \"resolution\": \"720p\",\n                \"frame_rate\": 60,\n                \"generation_preset\": GenerationPreset.LEONARDO,\n                \"background_music\": AudioTrack.HIGHWAY_NOCTURNE,\n                \"voice\": Voice.LILY,\n                \"video_style\": VisualMediaType.STOCK_VIDEOS,\n            },\n            test_output=(\n                \"video_url\",\n                \"https://example.com/video.mp4\",\n            ),\n            test_mock={\n                \"create_webhook\": lambda: (\n                    \"test_uuid\",\n                    \"https://webhook.site/test_uuid\",\n                ),\n                \"create_video\": lambda api_key, payload: {\"pid\": \"test_pid\"},\n                \"wait_for_video\": lambda api_key, pid, webhook_token, max_wait_time=1000: \"https://example.com/video.mp4\",\n            },\n            test_credentials=TEST_CREDENTIALS,\n        )",
+            "children": [
+                {
+                    "type": "class_definition",
+                    "start_token": 807,
+                    "end_token": 1044,
+                    "label": "class Input(BlockSchema):\n        credentials: CredentialsMetaInput[\n            Literal[ProviderName.REVID], Literal[\"api_key\"]\n        ] = CredentialsField(\n            description=\"The revid.ai integration can be used with \"\n            \"any API key with sufficient permissions for the blocks it is used on.\",\n        )\n        script: str = SchemaField(\n            description=\"\"\"1. Use short and punctuated sentences\\n\\n2. Use linebreaks to create a new clip\\n\\n3. Text outside of brackets is spoken by the AI, and [text between brackets] will be used to guide the visual generation. For example, [close-up of a cat] will show a close-up of a cat.\"\"\",\n            placeholder=\"[close-up of a cat] Meow!\",\n        )\n        ratio: str = SchemaField(\n            description=\"Aspect ratio of the video\", default=\"9 / 16\"\n        )\n        resolution: str = SchemaField(\n            description=\"Resolution of the video\", default=\"720p\"\n        )\n        frame_rate: int = SchemaField(description=\"Frame rate of the video\", default=60)\n        generation_preset: GenerationPreset = SchemaField(\n            description=\"Generation preset for visual style - only effects AI generated visuals\",\n            default=GenerationPreset.LEONARDO,\n            placeholder=GenerationPreset.LEONARDO,\n        )\n        background_music: AudioTrack = SchemaField(\n            description=\"Background music track\",\n            default=AudioTrack.HIGHWAY_NOCTURNE,\n            placeholder=AudioTrack.HIGHWAY_NOCTURNE,\n        )\n        voice: Voice = SchemaField(\n            description=\"AI voice to use for narration\",\n            default=Voice.LILY,\n            placeholder=Voice.LILY,\n        )\n        video_style: VisualMediaType = SchemaField(\n            description=\"Type of visual media to use for the video\",\n            default=VisualMediaType.STOCK_VIDEOS,\n            placeholder=VisualMediaType.STOCK_VIDEOS,\n        )\n\n    class Output(BlockSchema):\n        video_url: str = SchemaField(description=\"The URL of the created video\")",
+                    "children": [
+                        {
+                            "type": "assignment",
+                            "start_token": 814,
+                            "end_token": 843,
+                            "label": "credentials: CredentialsMetaInput[\n            Literal[ProviderName.REVID], Literal[\"api_key\"]\n        ] = CredentialsField(\n            description=\"The revid.ai integration can be used with \"\n            \"any API key with sufficient permissions for the blocks it is used on.\",\n        )",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 845,
+                            "end_token": 864,
+                            "label": "script: str = SchemaField(\n            description=\"\"\"1. Use short and punctuated sentences\\n\\n2. Use linebreaks to create a new clip\\n\\n3. Text outside of brackets is spoken by the AI, and [text between brackets] will be used to guide the visual generation. For example, [close-up of a cat] will show a close-up of a cat.\"\"\",\n            placeholder=\"[close-up of a cat] Meow!\",\n        )",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 866,
+                            "end_token": 880,
+                            "label": "ratio: str = SchemaField(\n            description=\"Aspect ratio of the video\", default=\"9 / 16\"\n",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 883,
+                            "end_token": 896,
+                            "label": "resolution: str = SchemaField(\n            description=\"Resolution of the video\", default=\"720p\"",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 900,
+                            "end_token": 913,
+                            "label": "frame_rate: int = SchemaField(description=\"Frame rate of the video\", default=60)",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 915,
+                            "end_token": 941,
+                            "label": "generation_preset: GenerationPreset = SchemaField(\n            description=\"Generation preset for visual style - only effects AI generated visuals\",\n            default=GenerationPreset.LEONARDO,\n            placeholder=GenerationPreset.LEONARDO,\n        )",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 943,
+                            "end_token": 969,
+                            "label": "background_music: AudioTrack = SchemaField(\n            description=\"Background music track\",\n            default=AudioTrack.HIGHWAY_NOCTURNE,\n            placeholder=AudioTrack.HIGHWAY_NOCTURNE,\n        )",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 971,
+                            "end_token": 997,
+                            "label": "voice: Voice = SchemaField(\n            description=\"AI voice to use for narration\",\n            default=Voice.LILY,\n            placeholder=Voice.LILY,\n        )",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 999,
+                            "end_token": 1025,
+                            "label": "video_style: VisualMediaType = SchemaField(\n            description=\"Type of visual media to use for the video\",\n            default=VisualMediaType.STOCK_VIDEOS,\n            placeholder=VisualMediaType.STOCK_VIDEOS,\n        )",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "class_definition",
+                    "start_token": 1028,
+                    "end_token": 1055,
+                    "label": "class Output(BlockSchema):\n        video_url: str = SchemaField(description=\"The URL of the created video\")\n        error: str = SchemaField(description=\"Error message if the request failed\")",
+                    "children": [
+                        {
+                            "type": "assignment",
+                            "start_token": 1035,
+                            "end_token": 1044,
+                            "label": "video_url: str = SchemaField(description=\"The URL of the created video\")",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 1046,
+                            "end_token": 1055,
+                            "label": "error: str = SchemaField(description=\"Error message if the request failed\")",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "function_definition",
+                    "start_token": 1058,
+                    "end_token": 1239,
+                    "label": "def __init__(self):\n        super().__init__(\n            id=\"361697fb-0c4f-4feb-aed3-8320c88c771b\",\n            description=\"Creates a shortform video using revid.ai\",\n            categories={BlockCategory.SOCIAL, BlockCategory.AI},\n            input_schema=AIShortformVideoCreatorBlock.Input,\n            output_schema=AIShortformVideoCreatorBlock.Output,\n            test_input={\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n                \"script\": \"[close-up of a cat] Meow!\",\n                \"ratio\": \"9 / 16\",\n                \"resolution\": \"720p\",\n                \"frame_rate\": 60,\n                \"generation_preset\": GenerationPreset.LEONARDO,\n                \"background_music\": AudioTrack.HIGHWAY_NOCTURNE,\n                \"voice\": Voice.LILY,\n                \"video_style\": VisualMediaType.STOCK_VIDEOS,\n            },\n            test_output=(\n                \"video_url\",\n                \"https://example.com/video.mp4\",\n            ),\n            test_mock={\n                \"create_webhook\": lambda: (\n                    \"test_uuid\",\n                    \"https://webhook.site/test_uuid\",\n                ),\n                \"create_video\": lambda api_key, payload: {\"pid\": \"test_pid\"},\n                \"wait_for_video\": lambda api_key, pid, webhook_token, max_wait_time=1000: \"https://example.com/video.mp4\",\n            },\n            test_credentials=TEST_CREDENTIALS,\n        )",
+                    "children": [
+                        {
+                            "type": "super",
+                            "start_token": 1065,
+                            "end_token": 1070,
+                            "label": "super().__init__(",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 1072,
+                            "end_token": 1237,
+                            "label": "id=\"361697fb-0c4f-4feb-aed3-8320c88c771b\",\n            description=\"Creates a shortform video using revid.ai\",\n            categories={BlockCategory.SOCIAL, BlockCategory.AI},\n            input_schema=AIShortformVideoCreatorBlock.Input,\n            output_schema=AIShortformVideoCreatorBlock.Output,\n            test_input={\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n                \"script\": \"[close-up of a cat] Meow!\",\n                \"ratio\": \"9 / 16\",\n                \"resolution\": \"720p\",\n                \"frame_rate\": 60,\n                \"generation_preset\": GenerationPreset.LEONARDO,\n                \"background_music\": AudioTrack.HIGHWAY_NOCTURNE,\n                \"voice\": Voice.LILY,\n                \"video_style\": VisualMediaType.STOCK_VIDEOS,\n            },\n            test_output=(\n                \"video_url\",\n                \"https://example.com/video.mp4\",\n            ),\n            test_mock={\n                \"create_webhook\": lambda: (\n                    \"test_uuid\",\n                    \"https://webhook.site/test_uuid\",\n                ),\n                \"create_video\": lambda api_key, payload: {\"pid\": \"test_pid\"},\n                \"wait_for_video\": lambda api_key, pid, webhook_token, max_wait_time=1000: \"https://example.com/video.mp4\",\n            },\n            test_credentials=TEST_CREDENTIALS,",
+                            "children": [
+                                {
+                                    "type": "pair",
+                                    "start_token": 1077,
+                                    "end_token": 1080,
+                                    "label": "description=\"Creates a shortform video using revid.ai\",",
+                                    "children": []
+                                },
+                                {
+                                    "type": "pair",
+                                    "start_token": 1082,
+                                    "end_token": 1092,
+                                    "label": "categories={BlockCategory.SOCIAL, BlockCategory.AI}",
+                                    "children": []
+                                },
+                                {
+                                    "type": "pair",
+                                    "start_token": 1095,
+                                    "end_token": 1100,
+                                    "label": "input_schema=AIShortformVideoCreatorBlock.Input,",
+                                    "children": []
+                                },
+                                {
+                                    "type": "pair",
+                                    "start_token": 1102,
+                                    "end_token": 1107,
+                                    "label": "output_schema=AIShortformVideoCreatorBlock.Output,",
+                                    "children": []
+                                },
+                                {
+                                    "type": "pair",
+                                    "start_token": 1109,
+                                    "end_token": 1166,
+                                    "label": "test_input={\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n                \"script\": \"[close-up of a cat] Meow!\",\n                \"ratio\": \"9 / 16\",\n                \"resolution\": \"720p\",\n                \"frame_rate\": 60,\n                \"generation_preset\": GenerationPreset.LEONARDO,\n                \"background_music\": AudioTrack.HIGHWAY_NOCTURNE,\n                \"voice\": Voice.LILY,\n                \"video_style\": VisualMediaType.STOCK_VIDEOS,\n            }",
+                                    "children": []
+                                },
+                                {
+                                    "type": "pair",
+                                    "start_token": 1169,
+                                    "end_token": 1237,
+                                    "label": "test_output=(\n                \"video_url\",\n                \"https://example.com/video.mp4\",\n            ),\n            test_mock={\n                \"create_webhook\": lambda: (\n                    \"test_uuid\",\n                    \"https://webhook.site/test_uuid\",\n                ),\n                \"create_video\": lambda api_key, payload: {\"pid\": \"test_pid\"},\n                \"wait_for_video\": lambda api_key, pid, webhook_token, max_wait_time=1000: \"https://example.com/video.mp4\",\n            },\n            test_credentials=TEST_CREDENTIALS,",
+                                    "children": [
+                                        {
+                                            "type": "lambda",
+                                            "start_token": 1188,
+                                            "end_token": 1198,
+                                            "label": "lambda: (\n                    \"test_uuid\",\n                    \"https://webhook.site/test_uuid\",\n                )",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "lambda",
+                                            "start_token": 1201,
+                                            "end_token": 1212,
+                                            "label": "\"create_video\": lambda api_key, payload: {\"pid\": \"test_pid\"}",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "lambda",
+                                            "start_token": 1215,
+                                            "end_token": 1228,
+                                            "label": "\"wait_for_video\": lambda api_key, pid, webhook_token, max_wait_time=1000: \"https://example.com/video.mp4\"",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "start_token": 1242,
+            "end_token": 1294,
+            "label": "def create_webhook(self):\n        url = \"https://webhook.site/token\"\n        headers = {\"Accept\": \"application/json\", \"Content-Type\": \"application/json\"}\n        response = requests.post(url, headers=headers)\n        webhook_data = response.json()\n        return webhook_data[\"uuid\"], f\"https://webhook.site/{webhook_data['uuid']}\"\n",
+            "children": [
+                {
+                    "type": "assignment",
+                    "start_token": 1250,
+                    "end_token": 1263,
+                    "label": "= \"https://webhook.site/token\"\n        headers = {\"Accept\": \"application/json\", \"Content-Type\": \"application/json\"}",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "start_token": 1265,
+                    "end_token": 1284,
+                    "label": "response = requests.post(url, headers=headers)\n        webhook_data = response.json()",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "start_token": 1296,
+            "end_token": 1363,
+            "label": "def create_video(self, api_key: SecretStr, payload: dict) -> dict:\n        url = \"https://www.revid.ai/api/public/v2/render\"\n        headers = {\"key\": api_key.get_secret_value()}\n        response = requests.post(url, json=payload, headers=headers)\n        logger.debug(\n            f\"API Response Status Code: {response.status_code}, Content: {response.text}\"\n        )\n        return response.json()\n",
+            "children": [
+                {
+                    "type": "assignment",
+                    "start_token": 1314,
+                    "end_token": 1345,
+                    "label": "url = \"https://www.revid.ai/api/public/v2/render\"\n        headers = {\"key\": api_key.get_secret_value()}\n        response = requests.post(url, json=payload, headers=headers)",
+                    "children": []
+                },
+                {
+                    "type": "return_statement",
+                    "start_token": 1357,
+                    "end_token": 1362,
+                    "label": "return response.json()",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "start_token": 1365,
+            "end_token": 1418,
+            "label": "def check_video_status(self, api_key: SecretStr, pid: str) -> dict:\n        url = f\"https://www.revid.ai/api/public/v2/status?pid={pid}\"\n        headers = {\"key\": api_key.get_secret_value()}\n        response = requests.get(url, headers=headers)\n        return response.json()",
+            "children": [
+                {
+                    "type": "assignment",
+                    "start_token": 1383,
+                    "end_token": 1409,
+                    "label": "url = f\"https://www.revid.ai/api/public/v2/status?pid={pid}\"\n        headers = {\"key\": api_key.get_secret_value()}\n        response = requests.get(url, headers=",
+                    "children": []
+                },
+                {
+                    "type": "return_statement",
+                    "start_token": 1413,
+                    "end_token": 1418,
+                    "label": "return response.json()",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "start_token": 1421,
+            "end_token": 1606,
+            "label": "def wait_for_video(\n        self,\n        api_key: SecretStr,\n        pid: str,\n        webhook_token: str,\n        max_wait_time: int = 1000,\n    ) -> str:\n        start_time = time.time()\n        while time.time() - start_time < max_wait_time:\n            status = self.check_video_status(api_key, pid)\n            logger.debug(f\"Video status: {status}\")\n\n            if status.get(\"status\") == \"ready\" and \"videoUrl\" in status:\n                return status[\"videoUrl\"]\n            elif status.get(\"status\") == \"error\":\n                error_message = status.get(\"error\", \"Unknown error occurred\")\n                logger.error(f\"Video creation failed: {error_message}\")\n                raise ValueError(f\"Video creation failed: {error_message}\")\n            elif status.get(\"status\") in [\"FAILED\", \"CANCELED\"]:\n                logger.error(f\"Video creation failed: {status.get('message')}\")\n                raise ValueError(f\"Video creation failed: {status.get('message')}\")\n\n            time.sleep(10)\n\n        logger.error(\"Video creation timed out\")\n        raise TimeoutError(\"Video creation timed out\")",
+            "children": [
+                {
+                    "type": "assignment",
+                    "start_token": 1456,
+                    "end_token": 1462,
+                    "label": "start_time = time.time()",
+                    "children": []
+                },
+                {
+                    "type": "while_statement",
+                    "start_token": 1464,
+                    "end_token": 1592,
+                    "label": "while time.time() - start_time < max_wait_time:\n            status = self.check_video_status(api_key, pid)\n            logger.debug(f\"Video status: {status}\")\n\n            if status.get(\"status\") == \"ready\" and \"videoUrl\" in status:\n                return status[\"videoUrl\"]\n            elif status.get(\"status\") == \"error\":\n                error_message = status.get(\"error\", \"Unknown error occurred\")\n                logger.error(f\"Video creation failed: {error_message}\")\n                raise ValueError(f\"Video creation failed: {error_message}\")\n            elif status.get(\"status\") in [\"FAILED\", \"CANCELED\"]:\n                logger.error(f\"Video creation failed: {status.get('message')}\")\n                raise ValueError(f\"Video creation failed: {status.get('message')}\")\n\n            time.sleep(10)",
+                    "children": [
+                        {
+                            "type": "assignment",
+                            "start_token": 1476,
+                            "end_token": 1485,
+                            "label": "status = self.check_video_status(api_key, pid)",
+                            "children": []
+                        },
+                        {
+                            "type": "conditional_expression",
+                            "start_token": 1496,
+                            "end_token": 1516,
+                            "label": "if status.get(\"status\") == \"ready\" and \"videoUrl\" in status:\n                return status[\"videoUrl\"]",
+                            "children": []
+                        },
+                        {
+                            "type": "raise_statement",
+                            "start_token": 1529,
+                            "end_token": 1547,
+                            "label": "\n                error_message = status.get(\"error\", \"Unknown error occurred\")\n                logger.error(f\"Video creation failed: {error_message}\")",
+                            "children": []
+                        },
+                        {
+                            "type": "raise_statement",
+                            "start_token": 1571,
+                            "end_token": 1584,
+                            "label": "logger.error(f\"Video creation failed: {status.get('message')}\")\n                raise ValueError(f\"Video creation failed: {status.get('message')}\")",
+                            "children": []
+                        },
+                        {
+                            "type": "time_sleep",
+                            "start_token": 1587,
+                            "end_token": 1592,
+                            "label": "time.sleep(10)",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "start_token": 1609,
+            "end_token": 1938,
+            "label": "def run(\n        self, input_data: Input, *, credentials: APIKeyCredentials, **kwargs\n    ) -> BlockOutput:\n        # Create a new Webhook.site URL\n        webhook_token, webhook_url = self.create_webhook()\n        logger.debug(f\"Webhook URL: {webhook_url}\")\n\n        audio_url = input_data.background_music.audio_url\n\n        payload = {\n            \"frameRate\": input_data.frame_rate,\n            \"resolution\": input_data.resolution,\n            \"frameDurationMultiplier\": 18,\n            \"webhook\": webhook_url,\n            \"creationParams\": {\n                \"mediaType\": input_data.video_style,\n                \"captionPresetName\": \"Wrap 1\",\n                \"selectedVoice\": input_data.voice.voice_id,\n                \"hasEnhancedGeneration\": True,\n                \"generationPreset\": input_data.generation_preset.name,\n                \"selectedAudio\": input_data.background_music,\n                \"origin\": \"/create\",\n                \"inputText\": input_data.script,\n                \"flowType\": \"text-to-video\",\n                \"slug\": \"create-tiktok-video\",\n                \"hasToGenerateVoice\": True,\n                \"hasToTranscript\": False,\n                \"hasToSearchMedia\": True,\n                \"hasAvatar\": False,\n                \"hasWebsiteRecorder\": False,\n                \"hasTextSmallAtBottom\": False,\n                \"ratio\": input_data.ratio,\n                \"sourceType\": \"contentScraping\",\n                \"selectedStoryStyle\": {\"value\": \"custom\", \"label\": \"Custom\"},\n                \"hasToGenerateVideos\": input_data.video_style\n                != VisualMediaType.STOCK_VIDEOS,\n                \"audioUrl\": audio_url,\n            },\n        }\n\n        logger.debug(\"Creating video...\")\n        response = self.create_video(credentials.api_key, payload)\n        pid = response.get(\"pid\")\n\n        if not pid:\n            logger.error(\n                f\"Failed to create video: No project ID returned. API Response: {response}\"\n            )\n            raise RuntimeError(\"Failed to create video: No project ID returned\")\n        else:\n            logger.debug(\n                f\"Video created with project ID: {pid}. Waiting for completion...\"\n            )\n            video_url = self.wait_for_video(credentials.api_key, pid, webhook_token)\n            logger.debug(f\"Video ready: {video_url}\")\n            yield \"video_url\", video_url\n",
+            "children": [
+                {
+                    "type": "block",
+                    "start_token": 1635,
+                    "end_token": 1670,
+                    "label": "# Create a new Webhook.site URL\n        webhook_token, webhook_url = self.create_webhook()\n        logger.debug(f\"Webhook URL: {webhook_url}\")\n\n        audio_url = input_data.background_music.audio_url\n",
+                    "children": [
+                        {
+                            "type": "assignment",
+                            "start_token": 1644,
+                            "end_token": 1652,
+                            "label": "webhook_token, webhook_url = self.create_webhook()",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 1663,
+                            "end_token": 1670,
+                            "label": "audio_url = input_data.background_music.audio_url\n",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "block",
+                    "start_token": 1672,
+                    "end_token": 1844,
+                    "label": "payload = {\n            \"frameRate\": input_data.frame_rate,\n            \"resolution\": input_data.resolution,\n            \"frameDurationMultiplier\": 18,\n            \"webhook\": webhook_url,\n            \"creationParams\": {\n                \"mediaType\": input_data.video_style,\n                \"captionPresetName\": \"Wrap 1\",\n                \"selectedVoice\": input_data.voice.voice_id,\n                \"hasEnhancedGeneration\": True,\n                \"generationPreset\": input_data.generation_preset.name,\n                \"selectedAudio\": input_data.background_music,\n                \"origin\": \"/create\",\n                \"inputText\": input_data.script,\n                \"flowType\": \"text-to-video\",\n                \"slug\": \"create-tiktok-video\",\n                \"hasToGenerateVoice\": True,\n                \"hasToTranscript\": False,\n                \"hasToSearchMedia\": True,\n                \"hasAvatar\": False,\n                \"hasWebsiteRecorder\": False,\n                \"hasTextSmallAtBottom\": False,\n                \"ratio\": input_data.ratio,\n                \"sourceType\": \"contentScraping\",\n                \"selectedStoryStyle\": {\"value\": \"custom\", \"label\": \"Custom\"},\n                \"hasToGenerateVideos\": input_data.video_style\n                != VisualMediaType.STOCK_VIDEOS,\n                \"audioUrl\": audio_url,\n            },\n        }",
+                    "children": [
+                        {
+                            "type": "assignment",
+                            "start_token": 1672,
+                            "end_token": 1843,
+                            "label": "payload = {\n            \"frameRate\": input_data.frame_rate,\n            \"resolution\": input_data.resolution,\n            \"frameDurationMultiplier\": 18,\n            \"webhook\": webhook_url,\n            \"creationParams\": {\n                \"mediaType\": input_data.video_style,\n                \"captionPresetName\": \"Wrap 1\",\n                \"selectedVoice\": input_data.voice.voice_id,\n                \"hasEnhancedGeneration\": True,\n                \"generationPreset\": input_data.generation_preset.name,\n                \"selectedAudio\": input_data.background_music,\n                \"origin\": \"/create\",\n                \"inputText\": input_data.script,\n                \"flowType\": \"text-to-video\",\n                \"slug\": \"create-tiktok-video\",\n                \"hasToGenerateVoice\": True,\n                \"hasToTranscript\": False,\n                \"hasToSearchMedia\": True,\n                \"hasAvatar\": False,\n                \"hasWebsiteRecorder\": False,\n                \"hasTextSmallAtBottom\": False,\n                \"ratio\": input_data.ratio,\n                \"sourceType\": \"contentScraping\",\n                \"selectedStoryStyle\": {\"value\": \"custom\", \"label\": \"Custom\"},\n                \"hasToGenerateVideos\": input_data.video_style\n                != VisualMediaType.STOCK_VIDEOS,\n                \"audioUrl\": audio_url,\n            },\n",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "block",
+                    "start_token": 1846,
+                    "end_token": 1938,
+                    "label": "\n        logger.debug(\"Creating video...\")\n        response = self.create_video(credentials.api_key, payload)\n        pid = response.get(\"pid\")\n\n        if not pid:\n            logger.error(\n                f\"Failed to create video: No project ID returned. API Response: {response}\"\n            )\n            raise RuntimeError(\"Failed to create video: No project ID returned\")\n        else:\n            logger.debug(\n                f\"Video created with project ID: {pid}. Waiting for completion...\"\n            )\n            video_url = self.wait_for_video(credentials.api_key, pid, webhook_token)\n            logger.debug(f\"Video ready: {video_url}\")\n            yield \"video_url\", video_url\n",
+                    "children": [
+                        {
+                            "type": "assignment",
+                            "start_token": 1847,
+                            "end_token": 1932,
+                            "label": "logger.debug(\"Creating video...\")\n        response = self.create_video(credentials.api_key, payload)\n        pid = response.get(\"pid\")\n\n        if not pid:\n            logger.error(\n                f\"Failed to create video: No project ID returned. API Response: {response}\"\n            )\n            raise RuntimeError(\"Failed to create video: No project ID returned\")\n        else:\n            logger.debug(\n                f\"Video created with project ID: {pid}. Waiting for completion...\"\n            )\n            video_url = self.wait_for_video(credentials.api_key, pid, webhook_token)\n            logger.debug(f\"Video ready: {video_url}\")",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

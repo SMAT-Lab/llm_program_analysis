@@ -1,0 +1,406 @@
+{
+    "type": "module",
+    "code": "",
+    "children": [
+        {
+            "type": "import_statement",
+            "code": "from datetime import datetime, timezone",
+            "children": []
+        },
+        {
+            "type": "import_statement",
+            "code": "from typing import Iterator",
+            "children": []
+        },
+        {
+            "type": "import_statement",
+            "code": "import praw",
+            "children": []
+        },
+        {
+            "type": "import_statement",
+            "code": "from pydantic import BaseModel, ConfigDict",
+            "children": []
+        },
+        {
+            "type": "import_statement",
+            "code": "from backend.data.block import Block, BlockCategory, BlockOutput, BlockSchema",
+            "children": []
+        },
+        {
+            "type": "import_statement",
+            "code": "from backend.data.model import BlockSecret, SchemaField, SecretField",
+            "children": []
+        },
+        {
+            "type": "import_statement",
+            "code": "from backend.util.mock import MockObject",
+            "children": []
+        },
+        {
+            "type": "class_definition",
+            "code": "class RedditCredentials(BaseModel):",
+            "children": [
+                {
+                    "type": "assignment",
+                    "code": "client_id: BlockSecret = SecretField(key=\"reddit_client_id\")",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "code": "client_secret: BlockSecret = SecretField(key=\"reddit_client_secret\")",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "code": "username: BlockSecret = SecretField(key=\"reddit_username\")",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "code": "password: BlockSecret = SecretField(key=\"reddit_password\")",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "code": "user_agent: str = \"AutoGPT:1.0 (by /u/autogpt)\"",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "code": "model_config = ConfigDict(title=\"Reddit Credentials\")",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "class_definition",
+            "code": "class RedditPost(BaseModel):",
+            "children": [
+                {
+                    "type": "assignment",
+                    "code": "id: str",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "code": "subreddit: str",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "code": "title: str",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "code": "body: str",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "class_definition",
+            "code": "class RedditComment(BaseModel):",
+            "children": [
+                {
+                    "type": "assignment",
+                    "code": "post_id: str",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "code": "comment: str",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "code": "def get_praw(creds: RedditCredentials) -> praw.Reddit:",
+            "children": [
+                {
+                    "type": "assignment",
+                    "code": "client = praw.Reddit(",
+                    "children": [
+                        {
+                            "type": "argument_list",
+                            "code": "client_id=creds.client_id.get_secret_value(),\n        client_secret=creds.client_secret.get_secret_value(),\n        username=creds.username.get_secret_value(),\n        password=creds.password.get_secret_value(),\n        user_agent=creds.user_agent",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "assignment",
+                    "code": "me = client.user.me()",
+                    "children": []
+                },
+                {
+                    "type": "if_statement",
+                    "code": "if not me:",
+                    "children": [
+                        {
+                            "type": "raise_statement",
+                            "code": "raise ValueError(\"Invalid Reddit credentials.\")",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "expression_statement",
+                    "code": "print(f\"Logged in as Reddit user: {me.name}\")",
+                    "children": []
+                },
+                {
+                    "type": "return_statement",
+                    "code": "return client",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "class_definition",
+            "code": "class GetRedditPostsBlock(Block):",
+            "children": [
+                {
+                    "type": "class_definition",
+                    "code": "class Input(BlockSchema):",
+                    "children": [
+                        {
+                            "type": "assignment",
+                            "code": "subreddit: str = SchemaField(description=\"Subreddit name\")",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "code": "creds: RedditCredentials = SchemaField(\n        description=\"Reddit credentials\",\n        default=RedditCredentials(),\n    )",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "code": "last_minutes: int | None = SchemaField(\n        description=\"Post time to stop minutes ago while fetching posts\",\n        default=None,\n    )",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "code": "last_post: str | None = SchemaField(\n        description=\"Post ID to stop when reached while fetching posts\",\n        default=None,\n    )",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "code": "post_limit: int | None = SchemaField(\n        description=\"Number of posts to fetch\", default=10\n    )",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "class_definition",
+                    "code": "class Output(BlockSchema):",
+                    "children": [
+                        {
+                            "type": "assignment",
+                            "code": "post: RedditPost = SchemaField(description=\"Reddit post\")",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "function_definition",
+                    "code": "def __init__(self):",
+                    "children": [
+                        {
+                            "type": "expression_statement",
+                            "code": "super().__init__(\n        disabled=True,\n        id=\"c6731acb-4285-4ee1-bc9b-03d0766c370f\",\n        description=\"This block fetches Reddit posts from a defined subreddit name.\",\n        categories={BlockCategory.SOCIAL},\n        input_schema=GetRedditPostsBlock.Input,\n        output_schema=GetRedditPostsBlock.Output,\n        test_input={\n            \"creds\": {\n                \"client_id\": \"client_id\",\n                \"client_secret\": \"client_secret\",\n                \"username\": \"username\",\n                \"password\": \"password\",\n                \"user_agent\": \"user_agent\",\n            },\n            \"subreddit\": \"subreddit\",\n            \"last_post\": \"id3\",\n            \"post_limit\": 2,\n        },\n        test_output=[\n            (\n                \"post\",\n                RedditPost(\n                    id=\"id1\", subreddit=\"subreddit\", title=\"title1\", body=\"body1\"\n                ),\n            ),\n            (\n                \"post\",\n                RedditPost(\n                    id=\"id2\", subreddit=\"subreddit\", title=\"title2\", body=\"body2\"\n                ),\n            ),\n        ],\n        test_mock={\n            \"get_posts\": lambda _: [\n                MockObject(id=\"id1\", title=\"title1\", selftext=\"body1\"),\n                MockObject(id=\"id2\", title=\"title2\", selftext=\"body2\"),\n                MockObject(id=\"id3\", title=\"title2\", selftext=\"body2\"),\n            ]\n        },\n    )",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "staticmethod",
+                    "code": "@staticmethod",
+                    "children": [
+                        {
+                            "type": "function_definition",
+                            "code": "def get_posts(input_data: Input) -> Iterator[praw.reddit.Submission]:",
+                            "children": [
+                                {
+                                    "type": "assignment",
+                                    "code": "client = get_praw(input_data.creds)",
+                                    "children": []
+                                },
+                                {
+                                    "type": "assignment",
+                                    "code": "subreddit = client.subreddit(input_data.subreddit)",
+                                    "children": []
+                                },
+                                {
+                                    "type": "return_statement",
+                                    "code": "return subreddit.new(limit=input_data.post_limit or 10)",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "type": "function_definition",
+                    "code": "def run(self, input_data: Input, **kwargs) -> BlockOutput:",
+                    "children": [
+                        {
+                            "type": "assignment",
+                            "code": "current_time = datetime.now(tz=timezone.utc)",
+                            "children": []
+                        },
+                        {
+                            "type": "for_statement",
+                            "code": "for post in self.get_posts(input_data):",
+                            "children": [
+                                {
+                                    "type": "if_statement",
+                                    "code": "if input_data.last_minutes:",
+                                    "children": [
+                                        {
+                                            "type": "assignment",
+                                            "code": "post_datetime = datetime.fromtimestamp(\n        post.created_utc, tz=timezone.utc\n    )",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "assignment",
+                                            "code": "time_difference = current_time - post_datetime",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "if_statement",
+                                            "code": "if time_difference.total_seconds() / 60 > input_data.last_minutes:",
+                                            "children": [
+                                                {
+                                                    "type": "continue_statement",
+                                                    "code": "continue",
+                                                    "children": []
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "if_statement",
+                                    "code": "if input_data.last_post and post.id == input_data.last_post:",
+                                    "children": [
+                                        {
+                                            "type": "break_statement",
+                                            "code": "break",
+                                            "children": []
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "yield",
+                                    "code": "yield \"post\", RedditPost(\n        id=post.id,\n        subreddit=input_data.subreddit,\n        title=post.title,\n        body=post.selftext,\n    )",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "class_definition",
+            "code": "class PostRedditCommentBlock(Block):",
+            "children": [
+                {
+                    "type": "class_definition",
+                    "code": "class Input(BlockSchema):",
+                    "children": [
+                        {
+                            "type": "assignment",
+                            "code": "creds: RedditCredentials = SchemaField(\n        description=\"Reddit credentials\", default=RedditCredentials()\n    )",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "code": "data: RedditComment = SchemaField(description=\"Reddit comment\")",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "class_definition",
+                    "code": "class Output(BlockSchema):",
+                    "children": [
+                        {
+                            "type": "assignment",
+                            "code": "comment_id: str = SchemaField(description=\"Posted comment ID\")",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "function_definition",
+                    "code": "def __init__(self):",
+                    "children": [
+                        {
+                            "type": "expression_statement",
+                            "code": "super().__init__(\n        id=\"4a92261b-701e-4ffb-8970-675fd28e261f\",\n        description=\"This block posts a Reddit comment on a specified Reddit post.\",\n        categories={BlockCategory.SOCIAL},\n        input_schema=PostRedditCommentBlock.Input,\n        output_schema=PostRedditCommentBlock.Output,\n        test_input={\"data\": {\"post_id\": \"id\", \"comment\": \"comment\"}},\n        test_output=[(\"comment_id\", \"dummy_comment_id\")],\n        test_mock={\"reply_post\": lambda creds, comment: \"dummy_comment_id\"},\n    )",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "staticmethod",
+                    "code": "@staticmethod",
+                    "children": [
+                        {
+                            "type": "function_definition",
+                            "code": "def reply_post(creds: RedditCredentials, comment: RedditComment) -> str:",
+                            "children": [
+                                {
+                                    "type": "assignment",
+                                    "code": "client = get_praw(creds)",
+                                    "children": []
+                                },
+                                {
+                                    "type": "assignment",
+                                    "code": "submission = client.submission(id=comment.post_id)",
+                                    "children": []
+                                },
+                                {
+                                    "type": "assignment",
+                                    "code": "new_comment = submission.reply(comment.comment)",
+                                    "children": []
+                                },
+                                {
+                                    "type": "if_statement",
+                                    "code": "if not new_comment:",
+                                    "children": [
+                                        {
+                                            "type": "raise_statement",
+                                            "code": "raise ValueError(\"Failed to post comment.\")",
+                                            "children": []
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "return_statement",
+                                    "code": "return new_comment.id",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "type": "function_definition",
+                    "code": "def run(self, input_data: Input, **kwargs) -> BlockOutput:",
+                    "children": [
+                        {
+                            "type": "yield",
+                            "code": "yield \"comment_id\", self.reply_post(input_data.creds, input_data.data)",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

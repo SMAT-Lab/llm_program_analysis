@@ -1,0 +1,1193 @@
+{
+    "type": "module",
+    "start_token": 0,
+    "end_token": 1654,
+    "label": "# -*- coding: utf-8 -*-\n\nimport re\nimport sys\nfrom string import punctuation\nfrom typing import List, Tuple, Dict\n\n# Temporary replacement\n# The descriptions that contain () at the end must adapt to the new policy later\npunctuation = punctuation.replace('()', '')\n\nanchor = '###'\nauth_keys = ['apiKey', 'OAuth', 'X-Mashape-Key', 'User-Agent', 'No']\nhttps_keys = ['Yes', 'No']\ncors_keys = ['Yes', 'No', 'Unknown']\n\nindex_title = 0\nindex_desc = 1\nindex_auth = 2\nindex_https = 3\nindex_cors = 4\n\nnum_segments = 5\nmin_entries_per_category = 3\nmax_description_length = 100\n\nanchor_re = re.compile(anchor + '\\s(.+)')\ncategory_title_in_index_re = re.compile('\\*\\s\\[(.*)\\]')\nlink_re = re.compile('\\[(.+)\\]\\((http.*)\\)')\n\n# Type aliases\nAPIList = List[str]\nCategories = Dict[str, APIList]\nCategoriesLineNumber = Dict[str, int]\n\n\ndef error_message(line_number: int, message: str) -> str:\n    line = line_number + 1\n    return f'(L{line:03d}) {message}'\n\n\ndef get_categories_content(contents: List[str]) -> Tuple[Categories, CategoriesLineNumber]:\n\n    categories = {}\n    category_line_num = {}\n\n    for line_num, line_content in enumerate(contents):\n\n        if line_content.startswith(anchor):\n            category = line_content.split(anchor)[1].strip()\n            categories[category] = []\n            category_line_num[category] = line_num\n            continue\n\n        if not line_content.startswith('|') or line_content.startswith('|---'):\n            continue\n\n        raw_title = [\n            raw_content.strip() for raw_content in line_content.split('|')[1:-1]\n        ][0]\n\n        title_match = link_re.match(raw_title)\n        if title_match:\n                title = title_match.group(1).upper()\n                categories[category].append(title)\n\n    return (categories, category_line_num)\n\n\ndef check_alphabetical_order(lines: List[str]) -> List[str]:\n\n    err_msgs = []\n\n    categories, category_line_num = get_categories_content(contents=lines)\n\n    for category, api_list in categories.items():\n        if sorted(api_list) != api_list:\n            err_msg = error_message(\n                category_line_num[category], \n                f'{category} category is not alphabetical order'\n            )\n            err_msgs.append(err_msg)\n    \n    return err_msgs\n\n\ndef check_title(line_num: int, raw_title: str) -> List[str]:\n\n    err_msgs = []\n\n    title_match = link_re.match(raw_title)\n\n    # url should be wrapped in \"[TITLE](LINK)\" Markdown syntax\n    if not title_match:\n        err_msg = error_message(line_num, 'Title syntax should be \"[TITLE](LINK)\"')\n        err_msgs.append(err_msg)\n    else:\n        # do not allow \"... API\" in the entry title\n        title = title_match.group(1)\n        if title.upper().endswith(' API'):\n            err_msg = error_message(line_num, 'Title should not end with \"... API\". Every entry is an API here!')\n            err_msgs.append(err_msg)\n\n    return err_msgs\n\n\ndef check_description(line_num: int, description: str) -> List[str]:\n\n    err_msgs = []\n\n    first_char = description[0]\n    if first_char.upper() != first_char:\n        err_msg = error_message(line_num, 'first character of description is not capitalized')\n        err_msgs.append(err_msg)\n\n    last_char = description[-1]\n    if last_char in punctuation:\n        err_msg = error_message(line_num, f'description should not end with {last_char}')\n        err_msgs.append(err_msg)\n\n    desc_length = len(description)\n    if desc_length > max_description_length:\n        err_msg = error_message(line_num, f'description should not exceed {max_description_length} characters (currently {desc_length})')\n        err_msgs.append(err_msg)\n    \n    return err_msgs\n\n\ndef check_auth(line_num: int, auth: str) -> List[str]:\n\n    err_msgs = []\n\n    backtick = '`'\n    if auth != 'No' and (not auth.startswith(backtick) or not auth.endswith(backtick)):\n        err_msg = error_message(line_num, 'auth value is not enclosed with `backticks`')\n        err_msgs.append(err_msg)\n\n    if auth.replace(backtick, '') not in auth_keys:\n        err_msg = error_message(line_num, f'{auth} is not a valid Auth option')\n        err_msgs.append(err_msg)\n    \n    return err_msgs\n\n\ndef check_https(line_num: int, https: str) -> List[str]:\n\n    err_msgs = []\n\n    if https not in https_keys:\n        err_msg = error_message(line_num, f'{https} is not a valid HTTPS option')\n        err_msgs.append(err_msg)\n\n    return err_msgs\n\n\ndef check_cors(line_num: int, cors: str) -> List[str]:\n\n    err_msgs = []\n\n    if cors not in cors_keys:\n        err_msg = error_message(line_num, f'{cors} is not a valid CORS option')\n        err_msgs.append(err_msg)\n    \n    return err_msgs\n\n\ndef check_entry(line_num: int, segments: List[str]) -> List[str]:\n\n    raw_title = segments[index_title]\n    description = segments[index_desc]\n    auth = segments[index_auth]\n    https = segments[index_https]\n    cors = segments[index_cors]\n\n    title_err_msgs = check_title(line_num, raw_title)\n    desc_err_msgs = check_description(line_num, description)\n    auth_err_msgs = check_auth(line_num, auth)\n    https_err_msgs = check_https(line_num, https)\n    cors_err_msgs = check_cors(line_num, cors)\n\n    err_msgs = [\n        *title_err_msgs,\n        *desc_err_msgs,\n        *auth_err_msgs,\n        *https_err_msgs,\n        *cors_err_msgs\n    ]\n\n    return err_msgs\n\n\ndef check_file_format(lines: List[str]) -> List[str]:\n\n    err_msgs = []\n    category_title_in_index = []\n\n    alphabetical_err_msgs = check_alphabetical_order(lines)\n    err_msgs.extend(alphabetical_err_msgs)\n\n    num_in_category = min_entries_per_category + 1\n    category = ''\n    category_line = 0\n\n    for line_num, line_content in enumerate(lines):\n\n        category_title_match = category_title_in_index_re.match(line_content)\n        if category_title_match:\n            category_title_in_index.append(category_title_match.group(1))\n\n        # check each category for the minimum number of entries\n        if line_content.startswith(anchor):\n            category_match = anchor_re.match(line_content)\n            if category_match:\n                if category_match.group(1) not in category_title_in_index:\n                    err_msg = error_message(line_num, f'category header ({category_match.group(1)}) not added to Index section')\n                    err_msgs.append(err_msg)\n            else:\n                err_msg = error_message(line_num, 'category header is not formatted correctly')\n                err_msgs.append(err_msg)\n\n            if num_in_category < min_entries_per_category:\n                err_msg = error_message(category_line, f'{category} category does not have the minimum {min_entries_per_category} entries (only has {num_in_category})')\n                err_msgs.append(err_msg)\n\n            category = line_content.split(' ')[1]\n            category_line = line_num\n            num_in_category = 0\n            continue\n\n        # skips lines that we do not care about\n        if not line_content.startswith('|') or line_content.startswith('|---'):\n            continue\n\n        num_in_category += 1\n        segments = line_content.split('|')[1:-1]\n        if len(segments) < num_segments:\n            err_msg = error_message(line_num, f'entry does not have all the required columns (have {len(segments)}, need {num_segments})')\n            err_msgs.append(err_msg)\n            continue\n    \n        for segment in segments:\n            # every line segment should start and end with exactly 1 space\n            if len(segment) - len(segment.lstrip()) != 1 or len(segment) - len(segment.rstrip()) != 1:\n                err_msg = error_message(line_num, 'each segment must start and end with exactly 1 space')\n                err_msgs.append(err_msg)\n        \n        segments = [segment.strip() for segment in segments]\n        entry_err_msgs = check_entry(line_num, segments)\n        err_msgs.extend(entry_err_msgs)\n    \n    return err_msgs\n\n\ndef main(filename: str) -> None:\n\n    with open(filename, mode='r', encoding='utf-8') as file:\n        lines = list(line.rstrip() for line in file)\n\n    file_format_err_msgs = check_file_format(lines)\n\n    if file_format_err_msgs:\n        for err_msg in file_format_err_msgs:\n            print(err_msg)\n        sys.exit(1)\n\n\nif __name__ == '__main__':\n\n    num_args = len(sys.argv)\n\n    if num_args < 2:\n        print('No .md file passed (file should contain Markdown table syntax)')\n        sys.exit(1)\n\n    filename = sys.argv[1]\n\n    main(filename)\n",
+    "children": [
+        {
+            "type": "comment",
+            "start_token": 0,
+            "end_token": 12,
+            "label": "# -*- coding: utf-8 -*-\n",
+            "children": []
+        },
+        {
+            "type": "import_statement",
+            "start_token": 14,
+            "end_token": 16,
+            "label": "import re\n",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 14,
+                    "end_token": 14,
+                    "label": "import",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "import_statement",
+            "start_token": 17,
+            "end_token": 19,
+            "label": "import sys\n",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 17,
+                    "end_token": 17,
+                    "label": "import",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 20,
+            "end_token": 23,
+            "label": "from string import punctuation",
+            "children": [
+                {
+                    "type": "dotted_name",
+                    "start_token": 21,
+                    "end_token": 21,
+                    "label": "string",
+                    "children": []
+                },
+                {
+                    "type": "import_prefix",
+                    "start_token": 22,
+                    "end_token": 23,
+                    "label": "import punctuation",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 23,
+                            "end_token": 23,
+                            "label": "punctuation",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 25,
+            "end_token": 32,
+            "label": "from typing import List, Tuple, Dict",
+            "children": [
+                {
+                    "type": "dotted_name",
+                    "start_token": 26,
+                    "end_token": 26,
+                    "label": "typing",
+                    "children": []
+                },
+                {
+                    "type": "import_prefix",
+                    "start_token": 27,
+                    "end_token": 32,
+                    "label": "import List, Tuple, Dict",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 28,
+                            "end_token": 28,
+                            "label": "List",
+                            "children": []
+                        },
+                        {
+                            "type": "identifier",
+                            "start_token": 30,
+                            "end_token": 30,
+                            "label": "Tuple",
+                            "children": []
+                        },
+                        {
+                            "type": "identifier",
+                            "start_token": 32,
+                            "end_token": 32,
+                            "label": "Dict",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "comment",
+            "start_token": 35,
+            "end_token": 37,
+            "label": "# Temporary replacement",
+            "children": []
+        },
+        {
+            "type": "comment",
+            "start_token": 39,
+            "end_token": 56,
+            "label": "# The descriptions that contain () at the end must adapt to the new policy later\n",
+            "children": []
+        },
+        {
+            "type": "assignment",
+            "start_token": 57,
+            "end_token": 66,
+            "label": "punctuation = punctuation.replace('()', '')",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 57,
+                    "end_token": 57,
+                    "label": "punctuation",
+                    "children": []
+                },
+                {
+                    "type": "call",
+                    "start_token": 59,
+                    "end_token": 66,
+                    "label": "punctuation.replace('()', '')",
+                    "children": [
+                        {
+                            "type": "attribute",
+                            "start_token": 59,
+                            "end_token": 61,
+                            "label": "punctuation.replace",
+                            "children": [
+                                {
+                                    "type": "identifier",
+                                    "start_token": 59,
+                                    "end_token": 59,
+                                    "label": "punctuation",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "argument_list",
+                            "start_token": 62,
+                            "end_token": 66,
+                            "label": "('()', '')",
+                            "children": [
+                                {
+                                    "type": "string",
+                                    "start_token": 63,
+                                    "end_token": 63,
+                                    "label": "'()'",
+                                    "children": []
+                                },
+                                {
+                                    "type": "string",
+                                    "start_token": 65,
+                                    "end_token": 65,
+                                    "label": "''",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "assignment",
+            "start_token": 69,
+            "end_token": 71,
+            "label": "anchor = '###'",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 69,
+                    "end_token": 69,
+                    "label": "anchor",
+                    "children": []
+                },
+                {
+                    "type": "string",
+                    "start_token": 71,
+                    "end_token": 71,
+                    "label": "'###'",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "assignment",
+            "start_token": 73,
+            "end_token": 85,
+            "label": "auth_keys = ['apiKey', 'OAuth', 'X-Mashape-Key', 'User-Agent', 'No']",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 73,
+                    "end_token": 73,
+                    "label": "auth_keys",
+                    "children": []
+                },
+                {
+                    "type": "list",
+                    "start_token": 75,
+                    "end_token": 85,
+                    "label": "['apiKey', 'OAuth', 'X-Mashape-Key', 'User-Agent', 'No']",
+                    "children": [
+                        {
+                            "type": "string",
+                            "start_token": 76,
+                            "end_token": 76,
+                            "label": "'apiKey'",
+                            "children": []
+                        },
+                        {
+                            "type": "string",
+                            "start_token": 78,
+                            "end_token": 78,
+                            "label": "'OAuth'",
+                            "children": []
+                        },
+                        {
+                            "type": "string",
+                            "start_token": 80,
+                            "end_token": 80,
+                            "label": "'X-Mashape-Key'",
+                            "children": []
+                        },
+                        {
+                            "type": "string",
+                            "start_token": 82,
+                            "end_token": 82,
+                            "label": "'User-Agent'",
+                            "children": []
+                        },
+                        {
+                            "type": "string",
+                            "start_token": 84,
+                            "end_token": 84,
+                            "label": "'No'",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "assignment",
+            "start_token": 87,
+            "end_token": 93,
+            "label": "https_keys = ['Yes', 'No']",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 87,
+                    "end_token": 87,
+                    "label": "https_keys",
+                    "children": []
+                },
+                {
+                    "type": "list",
+                    "start_token": 89,
+                    "end_token": 93,
+                    "label": "['Yes', 'No']",
+                    "children": [
+                        {
+                            "type": "string",
+                            "start_token": 90,
+                            "end_token": 90,
+                            "label": "'Yes'",
+                            "children": []
+                        },
+                        {
+                            "type": "string",
+                            "start_token": 92,
+                            "end_token": 92,
+                            "label": "'No'",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "assignment",
+            "start_token": 95,
+            "end_token": 103,
+            "label": "cors_keys = ['Yes', 'No', 'Unknown']",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 95,
+                    "end_token": 95,
+                    "label": "cors_keys",
+                    "children": []
+                },
+                {
+                    "type": "list",
+                    "start_token": 97,
+                    "end_token": 103,
+                    "label": "['Yes', 'No', 'Unknown']",
+                    "children": [
+                        {
+                            "type": "string",
+                            "start_token": 98,
+                            "end_token": 98,
+                            "label": "'Yes'",
+                            "children": []
+                        },
+                        {
+                            "type": "string",
+                            "start_token": 100,
+                            "end_token": 100,
+                            "label": "'No'",
+                            "children": []
+                        },
+                        {
+                            "type": "string",
+                            "start_token": 102,
+                            "end_token": 102,
+                            "label": "'Unknown'",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "assignment",
+            "start_token": 106,
+            "end_token": 108,
+            "label": "index_title = 0",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 106,
+                    "end_token": 106,
+                    "label": "index_title",
+                    "children": []
+                },
+                {
+                    "type": "integer",
+                    "start_token": 108,
+                    "end_token": 108,
+                    "label": "0",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "assignment",
+            "start_token": 110,
+            "end_token": 112,
+            "label": "index_desc = 1",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 110,
+                    "end_token": 110,
+                    "label": "index_desc",
+                    "children": []
+                },
+                {
+                    "type": "integer",
+                    "start_token": 112,
+                    "end_token": 112,
+                    "label": "1",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "assignment",
+            "start_token": 114,
+            "end_token": 116,
+            "label": "index_auth = 2",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 114,
+                    "end_token": 114,
+                    "label": "index_auth",
+                    "children": []
+                },
+                {
+                    "type": "integer",
+                    "start_token": 116,
+                    "end_token": 116,
+                    "label": "2",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "assignment",
+            "start_token": 118,
+            "end_token": 120,
+            "label": "index_https = 3",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 118,
+                    "end_token": 118,
+                    "label": "index_https",
+                    "children": []
+                },
+                {
+                    "type": "integer",
+                    "start_token": 120,
+                    "end_token": 120,
+                    "label": "3",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "assignment",
+            "start_token": 122,
+            "end_token": 124,
+            "label": "index_cors = 4",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 122,
+                    "end_token": 122,
+                    "label": "index_cors",
+                    "children": []
+                },
+                {
+                    "type": "integer",
+                    "start_token": 124,
+                    "end_token": 124,
+                    "label": "4",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "assignment",
+            "start_token": 127,
+            "end_token": 129,
+            "label": "num_segments = 5",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 127,
+                    "end_token": 127,
+                    "label": "num_segments",
+                    "children": []
+                },
+                {
+                    "type": "integer",
+                    "start_token": 129,
+                    "end_token": 129,
+                    "label": "5",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "assignment",
+            "start_token": 131,
+            "end_token": 133,
+            "label": "min_entries_per_category = 3",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 131,
+                    "end_token": 131,
+                    "label": "min_entries_per_category",
+                    "children": []
+                },
+                {
+                    "type": "integer",
+                    "start_token": 133,
+                    "end_token": 133,
+                    "label": "3",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "assignment",
+            "start_token": 135,
+            "end_token": 137,
+            "label": "max_description_length = 100",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 135,
+                    "end_token": 135,
+                    "label": "max_description_length",
+                    "children": []
+                },
+                {
+                    "type": "integer",
+                    "start_token": 137,
+                    "end_token": 137,
+                    "label": "100",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "assignment",
+            "start_token": 140,
+            "end_token": 149,
+            "label": "anchor_re = re.compile(anchor + '\\s(.+)')",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 140,
+                    "end_token": 140,
+                    "label": "anchor_re",
+                    "children": []
+                },
+                {
+                    "type": "call",
+                    "start_token": 142,
+                    "end_token": 149,
+                    "label": "re.compile(anchor + '\\s(.+)')",
+                    "children": [
+                        {
+                            "type": "attribute",
+                            "start_token": 142,
+                            "end_token": 144,
+                            "label": "re.compile",
+                            "children": [
+                                {
+                                    "type": "identifier",
+                                    "start_token": 142,
+                                    "end_token": 142,
+                                    "label": "re",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "argument_list",
+                            "start_token": 145,
+                            "end_token": 149,
+                            "label": "(anchor + '\\s(.+)')",
+                            "children": [
+                                {
+                                    "type": "binary_operator",
+                                    "start_token": 146,
+                                    "end_token": 148,
+                                    "label": "anchor + '\\s(.+)'",
+                                    "children": [
+                                        {
+                                            "type": "identifier",
+                                            "start_token": 146,
+                                            "end_token": 146,
+                                            "label": "anchor",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "string",
+                                            "start_token": 148,
+                                            "end_token": 148,
+                                            "label": "'\\s(.+)'",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "assignment",
+            "start_token": 151,
+            "end_token": 158,
+            "label": "category_title_in_index_re = re.compile('\\*\\s\\[(.*)\\]')",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 151,
+                    "end_token": 151,
+                    "label": "category_title_in_index_re",
+                    "children": []
+                },
+                {
+                    "type": "call",
+                    "start_token": 153,
+                    "end_token": 158,
+                    "label": "re.compile('\\*\\s\\[(.*)\\]')",
+                    "children": [
+                        {
+                            "type": "attribute",
+                            "start_token": 153,
+                            "end_token": 155,
+                            "label": "re.compile",
+                            "children": [
+                                {
+                                    "type": "identifier",
+                                    "start_token": 153,
+                                    "end_token": 153,
+                                    "label": "re",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "argument_list",
+                            "start_token": 156,
+                            "end_token": 158,
+                            "label": "('\\*\\s\\[(.*)\\]')",
+                            "children": [
+                                {
+                                    "type": "string",
+                                    "start_token": 157,
+                                    "end_token": 157,
+                                    "label": "'\\*\\s\\[(.*)\\]'",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "assignment",
+            "start_token": 160,
+            "end_token": 167,
+            "label": "link_re = re.compile('\\[(.+)\\]\\((http.*)\\)')",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 160,
+                    "end_token": 160,
+                    "label": "link_re",
+                    "children": []
+                },
+                {
+                    "type": "call",
+                    "start_token": 162,
+                    "end_token": 167,
+                    "label": "re.compile('\\[(.+)\\]\\((http.*)\\)')",
+                    "children": [
+                        {
+                            "type": "attribute",
+                            "start_token": 162,
+                            "end_token": 164,
+                            "label": "re.compile",
+                            "children": [
+                                {
+                                    "type": "identifier",
+                                    "start_token": 162,
+                                    "end_token": 162,
+                                    "label": "re",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "argument_list",
+                            "start_token": 165,
+                            "end_token": 167,
+                            "label": "('\\[(.+)\\]\\((http.*)\\)')",
+                            "children": [
+                                {
+                                    "type": "string",
+                                    "start_token": 166,
+                                    "end_token": 166,
+                                    "label": "'\\[(.+)\\]\\((http.*)\\)'",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "comment",
+            "start_token": 170,
+            "end_token": 172,
+            "label": "# Type aliases",
+            "children": []
+        },
+        {
+            "type": "assignment",
+            "start_token": 174,
+            "end_token": 180,
+            "label": "APIList = List[str]\n",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 174,
+                    "end_token": 174,
+                    "label": "APIList",
+                    "children": []
+                },
+                {
+                    "type": "generic_type",
+                    "start_token": 176,
+                    "end_token": 179,
+                    "label": "List[str]",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 176,
+                            "end_token": 176,
+                            "label": "List",
+                            "children": []
+                        },
+                        {
+                            "type": "identifier",
+                            "start_token": 178,
+                            "end_token": 178,
+                            "label": "str",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "assignment",
+            "start_token": 181,
+            "end_token": 189,
+            "label": "Categories = Dict[str, APIList]\n",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 181,
+                    "end_token": 181,
+                    "label": "Categories",
+                    "children": []
+                },
+                {
+                    "type": "generic_type",
+                    "start_token": 183,
+                    "end_token": 188,
+                    "label": "Dict[str, APIList]",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 183,
+                            "end_token": 183,
+                            "label": "Dict",
+                            "children": []
+                        },
+                        {
+                            "type": "identifier",
+                            "start_token": 185,
+                            "end_token": 185,
+                            "label": "str",
+                            "children": []
+                        },
+                        {
+                            "type": "generic_type",
+                            "start_token": 187,
+                            "end_token": 188,
+                            "label": "APIList]",
+                            "children": [
+                                {
+                                    "type": "identifier",
+                                    "start_token": 187,
+                                    "end_token": 187,
+                                    "label": "APIList",
+                                    "children": []
+                                },
+                                {
+                                    "type": "identifier",
+                                    "start_token": 188,
+                                    "end_token": 188,
+                                    "label": "]",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "assignment",
+            "start_token": 190,
+            "end_token": 198,
+            "label": "CategoriesLineNumber = Dict[str, int]\n",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 190,
+                    "end_token": 190,
+                    "label": "CategoriesLineNumber",
+                    "children": []
+                },
+                {
+                    "type": "generic_type",
+                    "start_token": 192,
+                    "end_token": 197,
+                    "label": "Dict[str, int]",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 192,
+                            "end_token": 192,
+                            "label": "Dict",
+                            "children": []
+                        },
+                        {
+                            "type": "identifier",
+                            "start_token": 194,
+                            "end_token": 194,
+                            "label": "str",
+                            "children": []
+                        },
+                        {
+                            "type": "identifier",
+                            "start_token": 196,
+                            "end_token": 196,
+                            "label": "int",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "start_token": 201,
+            "end_token": 226,
+            "label": "def error_message(line_number: int, message: str) -> str:\n    line = line_number + 1\n    return f'(L{line:03d}) {message}'\n",
+            "children": [
+                {
+                    "type": "block",
+                    "start_token": 217,
+                    "end_token": 226,
+                    "label": "line = line_number + 1\n    return f'(L{line:03d}) {message}'\n",
+                    "children": [
+                        {
+                            "type": "assignment",
+                            "start_token": 218,
+                            "end_token": 221,
+                            "label": "= line_number + 1",
+                            "children": [
+                                {
+                                    "type": "identifier",
+                                    "start_token": 218,
+                                    "end_token": 218,
+                                    "label": "=",
+                                    "children": []
+                                },
+                                {
+                                    "type": "binary_operator",
+                                    "start_token": 220,
+                                    "end_token": 221,
+                                    "label": "+ 1",
+                                    "children": [
+                                        {
+                                            "type": "identifier",
+                                            "start_token": 220,
+                                            "end_token": 220,
+                                            "label": "+",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "integer",
+                                            "start_token": 221,
+                                            "end_token": 221,
+                                            "label": "1",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "return_statement",
+                            "start_token": 223,
+                            "end_token": 225,
+                            "label": "return f'(L{line:03d}) {message}'",
+                            "children": [
+                                {
+                                    "type": "string",
+                                    "start_token": 225,
+                                    "end_token": 225,
+                                    "label": "'(L{line:03d}) {message}'",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "start_token": 229,
+            "end_token": 409,
+            "label": "def get_categories_content(contents: List[str]) -> Tuple[Categories, CategoriesLineNumber]:\n\n    categories = {}\n    category_line_num = {}\n\n    for line_num, line_content in enumerate(contents):\n\n        if line_content.startswith(anchor):\n            category = line_content.split(anchor)[1].strip()\n            categories[category] = []\n            category_line_num[category] = line_num\n            continue\n\n        if not line_content.startswith('|') or line_content.startswith('|---'):\n            continue\n\n        raw_title = [\n            raw_content.strip() for raw_content in line_content.split('|')[1:-1]\n        ][0]\n\n        title_match = link_re.match(raw_title)\n        if title_match:\n                title = title_match.group(1).upper()\n                categories[category].append(title)\n\n    return (categories, category_line_num)",
+            "children": [
+                {
+                    "type": "block",
+                    "start_token": 248,
+                    "end_token": 409,
+                    "label": "\n\n    categories = {}\n    category_line_num = {}\n\n    for line_num, line_content in enumerate(contents):\n\n        if line_content.startswith(anchor):\n            category = line_content.split(anchor)[1].strip()\n            categories[category] = []\n            category_line_num[category] = line_num\n            continue\n\n        if not line_content.startswith('|') or line_content.startswith('|---'):\n            continue\n\n        raw_title = [\n            raw_content.strip() for raw_content in line_content.split('|')[1:-1]\n        ][0]\n\n        title_match = link_re.match(raw_title)\n        if title_match:\n                title = title_match.group(1).upper()\n                categories[category].append(title)\n\n    return (categories, category_line_num)",
+                    "children": [
+                        {
+                            "type": "assignment",
+                            "start_token": 250,
+                            "end_token": 253,
+                            "label": "categories = {}",
+                            "children": [
+                                {
+                                    "type": "identifier",
+                                    "start_token": 250,
+                                    "end_token": 250,
+                                    "label": "categories",
+                                    "children": []
+                                },
+                                {
+                                    "type": "dictionary",
+                                    "start_token": 252,
+                                    "end_token": 253,
+                                    "label": "{}",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 255,
+                            "end_token": 258,
+                            "label": "category_line_num = {}",
+                            "children": [
+                                {
+                                    "type": "identifier",
+                                    "start_token": 255,
+                                    "end_token": 255,
+                                    "label": "category_line_num",
+                                    "children": []
+                                },
+                                {
+                                    "type": "dictionary",
+                                    "start_token": 257,
+                                    "end_token": 258,
+                                    "label": "{}",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "for_statement",
+                            "start_token": 261,
+                            "end_token": 313,
+                            "label": "for line_num, line_content in enumerate(contents):\n\n        if line_content.startswith(anchor):\n            category = line_content.split(anchor)[1].strip()\n            categories[category] = []\n            category_line_num[category] = line_num\n            continue",
+                            "children": [
+                                {
+                                    "type": "for_in_clause",
+                                    "start_token": 261,
+                                    "end_token": 270,
+                                    "label": "for line_num, line_content in enumerate(contents):",
+                                    "children": [
+                                        {
+                                            "type": "identifier",
+                                            "start_token": 262,
+                                            "end_token": 263,
+                                            "label": "line_num,",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "identifier",
+                                            "start_token": 265,
+                                            "end_token": 268,
+                                            "label": "in enumerate(contents",
+                                            "children": []
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "block",
+                                    "start_token": 271,
+                                    "end_token": 313,
+                                    "label": "\n\n        if line_content.startswith(anchor):\n            category = line_content.split(anchor)[1].strip()\n            categories[category] = []\n            category_line_num[category] = line_num\n            continue",
+                                    "children": [
+                                        {
+                                            "type": "if_statement",
+                                            "start_token": 273,
+                                            "end_token": 280,
+                                            "label": "if line_content.startswith(anchor):",
+                                            "children": [
+                                                {
+                                                    "type": "conditional_expression",
+                                                    "start_token": 273,
+                                                    "end_token": 273,
+                                                    "label": "if",
+                                                    "children": [
+                                                        {
+                                                            "type": "attribute",
+                                                            "start_token": 274,
+                                                            "end_token": 275,
+                                                            "label": "line_content.",
+                                                            "children": [
+                                                                {
+                                                                    "type": "identifier",
+                                                                    "start_token": 274,
+                                                                    "end_token": 274,
+                                                                    "label": "line_content",
+                                                                    "children": []
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                },
+                                                {
+                                                    "type": "block",
+                                                    "start_token": 279,
+                                                    "end_token": 280,
+                                                    "label": "):",
+                                                    "children": [
+                                                        {
+                                                            "type": "assignment",
+                                                            "start_token": 282,
+                                                            "end_token": 296,
+                                                            "label": "category = line_content.split(anchor)[1].strip()",
+                                                            "children": [
+                                                                {
+                                                                    "type": "identifier",
+                                                                    "start_token": 282,
+                                                                    "end_token": 282,
+                                                                    "label": "category",
+                                                                    "children": []
+                                                                },
+                                                                {
+                                                                    "type": "call",
+                                                                    "start_token": 284,
+                                                                    "end_token": 296,
+                                                                    "label": "line_content.split(anchor)[1].strip()",
+                                                                    "children": [
+                                                                        {
+                                                                            "type": "attribute",
+                                                                            "start_token": 284,
+                                                                            "end_token": 285,
+                                                                            "label": "line_content.",
+                                                                            "children": [
+                                                                                {
+                                                                                    "type": "identifier",
+                                                                                    "start_token": 284,
+                                                                                    "end_token": 284,
+                                                                                    "label": "line_content",
+                                                                                    "children": []
+                                                                                }
+                                                                            ]
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "assignment",
+                                            "start_token": 298,
+                                            "end_token": 312,
+                                            "label": "categories[category] = []\n            category_line_num[category] = line_num\n",
+                                            "children": [
+                                                {
+                                                    "type": "subscript",
+                                                    "start_token": 298,
+                                                    "end_token": 301,
+                                                    "label": "categories[category]",
+                                                    "children": [
+                                                        {
+                                                            "type": "identifier",
+                                                            "start_token": 299,
+                                                            "end_token": 299,
+                                                            "label": "[",
+                                                            "children": []
+                                                        }
+                                                    ]
+                                                },
+                                                {
+                                                    "type": "list",
+                                                    "start_token": 303,
+                                                    "end_token": 304,
+                                                    "label": "[]",
+                                                    "children": []
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "for_statement",
+                            "start_token": 316,
+                            "end_token": 332,
+                            "label": "if not line_content.startswith('|') or line_content.startswith('|---'):\n",
+                            "children": [
+                                {
+                                    "type": "conditional_expression",
+                                    "start_token": 316,
+                                    "end_token": 331,
+                                    "label": "if not line_content.startswith('|') or line_content.startswith('|---'):",
+                                    "children": [
+                                        {
+                                            "type": "not_operator",
+                                            "start_token": 317,
+                                            "end_token": 319,
+                                            "label": "not line_content.",
+                                            "children": [
+                                                {
+                                                    "type": "attribute",
+                                                    "start_token": 318,
+                                                    "end_token": 322,
+                                                    "label": "line_content.startswith('|'",
+                                                    "children": [
+                                                        {
+                                                            "type": "identifier",
+                                                            "start_token": 318,
+                                                            "end_token": 319,
+                                                            "label": "line_content.",
+                                                            "children": []
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "return_statement",
+                            "start_token": 404,
+                            "end_token": 408,
+                            "label": "return (categories, category_line_num",
+                            "children": [
+                                {
+                                    "type": "tuple",
+                                    "start_token": 406,
+                                    "end_token": 408,
+                                    "label": "categories, category_line_num",
+                                    "children": [
+                                        {
+                                            "type": "identifier",
+                                            "start_token": 406,
+                                            "end_token": 406,
+                                            "label": "categories",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "identifier",
+                                            "start_token": 408,
+                                            "end_token": 408,
+                                            "label": "category_line_num",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

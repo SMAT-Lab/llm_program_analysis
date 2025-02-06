@@ -1,0 +1,382 @@
+{
+    "type": "module",
+    "start_token": 0,
+    "end_token": 693,
+    "label": "from prisma.models import User\n\nfrom backend.blocks.llm import AIStructuredResponseGeneratorBlock\nfrom backend.blocks.reddit import GetRedditPostsBlock, PostRedditCommentBlock\nfrom backend.blocks.text import FillTextTemplateBlock, MatchTextPatternBlock\nfrom backend.data.graph import Graph, Link, Node, create_graph\nfrom backend.data.user import get_or_create_user\nfrom backend.util.test import SpinTestServer, wait_execution\n\n\ndef create_test_graph() -> Graph:\n    \"\"\"\n                    subreddit\n                       ||\n                        v\n        GetRedditPostsBlock (post_id, post_title, post_body)\n                  //     ||     \\\\\n              post_id  post_title  post_body\n                 ||       ||        ||\n                 v        v         v\n              FillTextTemplateBlock (format)\n                      ||\n                      v\n            AIStructuredResponseBlock / TextRelevancy\n                 ||       ||       ||\n            post_id  is_relevant  marketing_text\n               ||       ||        ||\n               v        v         v\n                 MatchTextPatternBlock\n                 ||       ||\n              positive  negative\n                ||\n                v\n        PostRedditCommentBlock\n    \"\"\"\n    # Hardcoded inputs\n    reddit_get_post_input = {\n        \"post_limit\": 3,\n    }\n    text_formatter_input = {\n        \"format\": \"\"\"\nBased on the following post, write your marketing comment:\n* Post ID: {id}\n* Post Subreddit: {subreddit}\n* Post Title: {title}\n* Post Body: {body}\"\"\".strip(),\n    }\n    llm_call_input = {\n        \"sys_prompt\": \"\"\"\nYou are an expert at marketing.\nYou have been tasked with picking Reddit posts that are relevant to your product.\nThe product you are marketing is: Auto-GPT an autonomous AI agent utilizing GPT model.\nYou reply the post that you find it relevant to be replied with marketing text.\nMake sure to only comment on a relevant post.\n\"\"\",\n        \"expected_format\": {\n            \"post_id\": \"str, the reddit post id\",\n            \"is_relevant\": \"bool, whether the post is relevant for marketing\",\n            \"marketing_text\": \"str, marketing text, this is empty on irrelevant posts\",\n        },\n    }\n    text_matcher_input = {\"match\": \"true\", \"case_sensitive\": False}\n    reddit_comment_input = {}\n\n    # Nodes\n    reddit_get_post_node = Node(\n        block_id=GetRedditPostsBlock().id,\n        input_default=reddit_get_post_input,\n    )\n    text_formatter_node = Node(\n        block_id=FillTextTemplateBlock().id,\n        input_default=text_formatter_input,\n    )\n    llm_call_node = Node(\n        block_id=AIStructuredResponseGeneratorBlock().id, input_default=llm_call_input\n    )\n    text_matcher_node = Node(\n        block_id=MatchTextPatternBlock().id,\n        input_default=text_matcher_input,\n    )\n    reddit_comment_node = Node(\n        block_id=PostRedditCommentBlock().id,\n        input_default=reddit_comment_input,\n    )\n\n    nodes = [\n        reddit_get_post_node,\n        text_formatter_node,\n        llm_call_node,\n        text_matcher_node,\n        reddit_comment_node,\n    ]\n\n    # Links\n    links = [\n        Link(\n            source_id=reddit_get_post_node.id,\n            sink_id=text_formatter_node.id,\n            source_name=\"post\",\n            sink_name=\"values\",\n        ),\n        Link(\n            source_id=text_formatter_node.id,\n            sink_id=llm_call_node.id,\n            source_name=\"output\",\n            sink_name=\"prompt\",\n        ),\n        Link(\n            source_id=llm_call_node.id,\n            sink_id=text_matcher_node.id,\n            source_name=\"response\",\n            sink_name=\"data\",\n        ),\n        Link(\n            source_id=llm_call_node.id,\n            sink_id=text_matcher_node.id,\n            source_name=\"response_#_is_relevant\",\n            sink_name=\"text\",\n        ),\n        Link(\n            source_id=text_matcher_node.id,\n            sink_id=reddit_comment_node.id,\n            source_name=\"positive_#_post_id\",\n            sink_name=\"data_#_post_id\",\n        ),\n        Link(\n            source_id=text_matcher_node.id,\n            sink_id=reddit_comment_node.id,\n            source_name=\"positive_#_marketing_text\",\n            sink_name=\"data_#_comment\",\n        ),\n    ]\n\n    # Create graph\n    test_graph = Graph(\n        name=\"RedditMarketingAgent\",\n        description=\"Reddit marketing agent\",\n        nodes=nodes,\n        links=links,\n    )\n    return test_graph\n\n\nasync def create_test_user() -> User:\n    test_user_data = {\n        \"sub\": \"ef3b97d7-1161-4eb4-92b2-10c24fb154c1\",\n        \"email\": \"testuser@example.com\",\n        \"name\": \"Test User\",\n    }\n    user = await get_or_create_user(test_user_data)\n    return user\n\n\nasync def reddit_marketing_agent():\n    async with SpinTestServer() as server:\n        test_user = await create_test_user()\n        test_graph = await create_graph(create_test_graph(), user_id=test_user.id)\n        input_data = {\"subreddit\": \"AutoGPT\"}\n        response = await server.agent_server.test_execute_graph(\n            test_graph.id, input_data, test_user.id\n        )\n        print(response)\n        result = await wait_execution(test_user.id, test_graph.id, response[\"id\"], 120)\n        print(result)\n\n\nif __name__ == \"__main__\":\n    import asyncio\n\n    asyncio.run(reddit_marketing_agent())",
+    "children": [
+        {
+            "type": "import_from_statement",
+            "start_token": 0,
+            "end_token": 5,
+            "label": "from prisma.models import User",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 8,
+            "end_token": 15,
+            "label": "from backend.blocks.llm import AIStructuredResponseGeneratorBlock",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 17,
+            "end_token": 27,
+            "label": "from backend.blocks.reddit import GetRedditPostsBlock, PostRedditCommentBlock\n",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 28,
+            "end_token": 37,
+            "label": "from backend.blocks.text import FillTextTemplateBlock, MatchTextPatternBlock",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 39,
+            "end_token": 52,
+            "label": "from backend.data.graph import Graph, Link, Node, create_graph",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 54,
+            "end_token": 62,
+            "label": "from backend.data.user import get_or_create_user\n",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 63,
+            "end_token": 73,
+            "label": "from backend.util.test import SpinTestServer, wait_execution\n",
+            "children": []
+        },
+        {
+            "type": "function_definition",
+            "start_token": 76,
+            "end_token": 526,
+            "label": "def create_test_graph() -> Graph:\n    \"\"\"\n                    subreddit\n                       ||\n                        v\n        GetRedditPostsBlock (post_id, post_title, post_body)\n                  //     ||     \\\\\n              post_id  post_title  post_body\n                 ||       ||        ||\n                 v        v         v\n              FillTextTemplateBlock (format)\n                      ||\n                      v\n            AIStructuredResponseBlock / TextRelevancy\n                 ||       ||       ||\n            post_id  is_relevant  marketing_text\n               ||       ||        ||\n               v        v         v\n                 MatchTextPatternBlock\n                 ||       ||\n              positive  negative\n                ||\n                v\n        PostRedditCommentBlock\n    \"\"\"\n    # Hardcoded inputs\n    reddit_get_post_input = {\n        \"post_limit\": 3,\n    }\n    text_formatter_input = {\n        \"format\": \"\"\"\nBased on the following post, write your marketing comment:\n* Post ID: {id}\n* Post Subreddit: {subreddit}\n* Post Title: {title}\n* Post Body: {body}\"\"\".strip(),\n    }\n    llm_call_input = {\n        \"sys_prompt\": \"\"\"\nYou are an expert at marketing.\nYou have been tasked with picking Reddit posts that are relevant to your product.\nThe product you are marketing is: Auto-GPT an autonomous AI agent utilizing GPT model.\nYou reply the post that you find it relevant to be replied with marketing text.\nMake sure to only comment on a relevant post.\n\"\"\",\n        \"expected_format\": {\n            \"post_id\": \"str, the reddit post id\",\n            \"is_relevant\": \"bool, whether the post is relevant for marketing\",\n            \"marketing_text\": \"str, marketing text, this is empty on irrelevant posts\",\n        },\n    }\n    text_matcher_input = {\"match\": \"true\", \"case_sensitive\": False}\n    reddit_comment_input = {}\n\n    # Nodes\n    reddit_get_post_node = Node(\n        block_id=GetRedditPostsBlock().id,\n        input_default=reddit_get_post_input,\n    )\n    text_formatter_node = Node(\n        block_id=FillTextTemplateBlock().id,\n        input_default=text_formatter_input,\n    )\n    llm_call_node = Node(\n        block_id=AIStructuredResponseGeneratorBlock().id, input_default=llm_call_input\n    )\n    text_matcher_node = Node(\n        block_id=MatchTextPatternBlock().id,\n        input_default=text_matcher_input,\n    )\n    reddit_comment_node = Node(\n        block_id=PostRedditCommentBlock().id,\n        input_default=reddit_comment_input,\n    )\n\n    nodes = [\n        reddit_get_post_node,\n        text_formatter_node,\n        llm_call_node,\n        text_matcher_node,\n        reddit_comment_node,\n    ]\n\n    # Links\n    links = [\n        Link(\n            source_id=reddit_get_post_node.id,\n            sink_id=text_formatter_node.id,\n            source_name=\"post\",\n            sink_name=\"values\",\n        ),\n        Link(\n            source_id=text_formatter_node.id,\n            sink_id=llm_call_node.id,\n            source_name=\"output\",\n            sink_name=\"prompt\",\n        ),\n        Link(\n            source_id=llm_call_node.id,\n            sink_id=text_matcher_node.id,\n            source_name=\"response\",\n            sink_name=\"data\",\n        ),\n        Link(\n            source_id=llm_call_node.id,\n            sink_id=text_matcher_node.id,\n            source_name=\"response_#_is_relevant\",\n            sink_name=\"text\",\n        ),\n        Link(\n            source_id=text_matcher_node.id,\n            sink_id=reddit_comment_node.id,\n            source_name=\"positive_#_post_id\",\n            sink_name=\"data_#_post_id\",\n        ),\n        Link(\n            source_id=text_matcher_node.id,\n            sink_id=reddit_comment_node.id,\n            source_name=\"positive_#_marketing_text\",\n            sink_name=\"data_#_comment\",\n        ),\n    ]\n\n    # Create graph\n    test_graph = Graph(\n        name=\"RedditMarketingAgent\",\n        description=\"Reddit marketing agent\",\n        nodes=nodes,\n        links=links,\n    )\n    return test_graph\n",
+            "children": [
+                {
+                    "type": "parameters",
+                    "start_token": 78,
+                    "end_token": 79,
+                    "label": "()",
+                    "children": []
+                },
+                {
+                    "type": "block",
+                    "start_token": 84,
+                    "end_token": 525,
+                    "label": "\n    \"\"\"\n                    subreddit\n                       ||\n                        v\n        GetRedditPostsBlock (post_id, post_title, post_body)\n                  //     ||     \\\\\n              post_id  post_title  post_body\n                 ||       ||        ||\n                 v        v         v\n              FillTextTemplateBlock (format)\n                      ||\n                      v\n            AIStructuredResponseBlock / TextRelevancy\n                 ||       ||       ||\n            post_id  is_relevant  marketing_text\n               ||       ||        ||\n               v        v         v\n                 MatchTextPatternBlock\n                 ||       ||\n              positive  negative\n                ||\n                v\n        PostRedditCommentBlock\n    \"\"\"\n    # Hardcoded inputs\n    reddit_get_post_input = {\n        \"post_limit\": 3,\n    }\n    text_formatter_input = {\n        \"format\": \"\"\"\nBased on the following post, write your marketing comment:\n* Post ID: {id}\n* Post Subreddit: {subreddit}\n* Post Title: {title}\n* Post Body: {body}\"\"\".strip(),\n    }\n    llm_call_input = {\n        \"sys_prompt\": \"\"\"\nYou are an expert at marketing.\nYou have been tasked with picking Reddit posts that are relevant to your product.\nThe product you are marketing is: Auto-GPT an autonomous AI agent utilizing GPT model.\nYou reply the post that you find it relevant to be replied with marketing text.\nMake sure to only comment on a relevant post.\n\"\"\",\n        \"expected_format\": {\n            \"post_id\": \"str, the reddit post id\",\n            \"is_relevant\": \"bool, whether the post is relevant for marketing\",\n            \"marketing_text\": \"str, marketing text, this is empty on irrelevant posts\",\n        },\n    }\n    text_matcher_input = {\"match\": \"true\", \"case_sensitive\": False}\n    reddit_comment_input = {}\n\n    # Nodes\n    reddit_get_post_node = Node(\n        block_id=GetRedditPostsBlock().id,\n        input_default=reddit_get_post_input,\n    )\n    text_formatter_node = Node(\n        block_id=FillTextTemplateBlock().id,\n        input_default=text_formatter_input,\n    )\n    llm_call_node = Node(\n        block_id=AIStructuredResponseGeneratorBlock().id, input_default=llm_call_input\n    )\n    text_matcher_node = Node(\n        block_id=MatchTextPatternBlock().id,\n        input_default=text_matcher_input,\n    )\n    reddit_comment_node = Node(\n        block_id=PostRedditCommentBlock().id,\n        input_default=reddit_comment_input,\n    )\n\n    nodes = [\n        reddit_get_post_node,\n        text_formatter_node,\n        llm_call_node,\n        text_matcher_node,\n        reddit_comment_node,\n    ]\n\n    # Links\n    links = [\n        Link(\n            source_id=reddit_get_post_node.id,\n            sink_id=text_formatter_node.id,\n            source_name=\"post\",\n            sink_name=\"values\",\n        ),\n        Link(\n            source_id=text_formatter_node.id,\n            sink_id=llm_call_node.id,\n            source_name=\"output\",\n            sink_name=\"prompt\",\n        ),\n        Link(\n            source_id=llm_call_node.id,\n            sink_id=text_matcher_node.id,\n            source_name=\"response\",\n            sink_name=\"data\",\n        ),\n        Link(\n            source_id=llm_call_node.id,\n            sink_id=text_matcher_node.id,\n            source_name=\"response_#_is_relevant\",\n            sink_name=\"text\",\n        ),\n        Link(\n            source_id=text_matcher_node.id,\n            sink_id=reddit_comment_node.id,\n            source_name=\"positive_#_post_id\",\n            sink_name=\"data_#_post_id\",\n        ),\n        Link(\n            source_id=text_matcher_node.id,\n            sink_id=reddit_comment_node.id,\n            source_name=\"positive_#_marketing_text\",\n            sink_name=\"data_#_comment\",\n        ),\n    ]\n\n    # Create graph\n    test_graph = Graph(\n        name=\"RedditMarketingAgent\",\n        description=\"Reddit marketing agent\",\n        nodes=nodes,\n        links=links,\n    )\n    return test_graph",
+                    "children": [
+                        {
+                            "type": "string",
+                            "start_token": 85,
+                            "end_token": 87,
+                            "label": "\"\"\"\n                    subreddit\n                       ||\n                        v\n        GetRedditPostsBlock (post_id, post_title, post_body)\n                  //     ||     \\\\\n              post_id  post_title  post_body\n                 ||       ||        ||\n                 v        v         v\n              FillTextTemplateBlock (format)\n                      ||\n                      v\n            AIStructuredResponseBlock / TextRelevancy\n                 ||       ||       ||\n            post_id  is_relevant  marketing_text\n               ||       ||        ||\n               v        v         v\n                 MatchTextPatternBlock\n                 ||       ||\n              positive  negative\n                ||\n                v\n        PostRedditCommentBlock\n    \"\"\"",
+                            "children": []
+                        },
+                        {
+                            "type": "comment",
+                            "start_token": 89,
+                            "end_token": 92,
+                            "label": "# Hardcoded inputs\n",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 93,
+                            "end_token": 102,
+                            "label": "reddit_get_post_input = {\n        \"post_limit\": 3,\n    }",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 104,
+                            "end_token": 119,
+                            "label": "text_formatter_input = {\n        \"format\": \"\"\"\nBased on the following post, write your marketing comment:\n* Post ID: {id}\n* Post Subreddit: {subreddit}\n* Post Title: {title}\n* Post Body: {body}\"\"\".strip(),\n    }",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 121,
+                            "end_token": 154,
+                            "label": "llm_call_input = {\n        \"sys_prompt\": \"\"\"\nYou are an expert at marketing.\nYou have been tasked with picking Reddit posts that are relevant to your product.\nThe product you are marketing is: Auto-GPT an autonomous AI agent utilizing GPT model.\nYou reply the post that you find it relevant to be replied with marketing text.\nMake sure to only comment on a relevant post.\n\"\"\",\n        \"expected_format\": {\n            \"post_id\": \"str, the reddit post id\",\n            \"is_relevant\": \"bool, whether the post is relevant for marketing\",\n            \"marketing_text\": \"str, marketing text, this is empty on irrelevant posts\",\n        },\n    }",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 156,
+                            "end_token": 166,
+                            "label": "text_matcher_input = {\"match\": \"true\", \"case_sensitive\": False}",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 168,
+                            "end_token": 171,
+                            "label": "reddit_comment_input = {}",
+                            "children": []
+                        },
+                        {
+                            "type": "comment",
+                            "start_token": 174,
+                            "end_token": 176,
+                            "label": "# Nodes\n",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 177,
+                            "end_token": 196,
+                            "label": "reddit_get_post_node = Node(\n        block_id=GetRedditPostsBlock().id,\n        input_default=reddit_get_post_input,\n    )",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 198,
+                            "end_token": 217,
+                            "label": "text_formatter_node = Node(\n        block_id=FillTextTemplateBlock().id,\n        input_default=text_formatter_input,\n    )",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 219,
+                            "end_token": 236,
+                            "label": "llm_call_node = Node(\n        block_id=AIStructuredResponseGeneratorBlock().id, input_default=llm_call_input\n    )",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 238,
+                            "end_token": 257,
+                            "label": "text_matcher_node = Node(\n        block_id=MatchTextPatternBlock().id,\n        input_default=text_matcher_input,\n    )",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 259,
+                            "end_token": 278,
+                            "label": "reddit_comment_node = Node(\n        block_id=PostRedditCommentBlock().id,\n        input_default=reddit_comment_input,\n    )",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 281,
+                            "end_token": 300,
+                            "label": "nodes = [\n        reddit_get_post_node,\n        text_formatter_node,\n        llm_call_node,\n        text_matcher_node,\n        reddit_comment_node,\n    ]",
+                            "children": []
+                        },
+                        {
+                            "type": "comment",
+                            "start_token": 303,
+                            "end_token": 305,
+                            "label": "# Links\n",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 306,
+                            "end_token": 490,
+                            "label": "links = [\n        Link(\n            source_id=reddit_get_post_node.id,\n            sink_id=text_formatter_node.id,\n            source_name=\"post\",\n            sink_name=\"values\",\n        ),\n        Link(\n            source_id=text_formatter_node.id,\n            sink_id=llm_call_node.id,\n            source_name=\"output\",\n            sink_name=\"prompt\",\n        ),\n        Link(\n            source_id=llm_call_node.id,\n            sink_id=text_matcher_node.id,\n            source_name=\"response\",\n            sink_name=\"data\",\n        ),\n        Link(\n            source_id=llm_call_node.id,\n            sink_id=text_matcher_node.id,\n            source_name=\"response_#_is_relevant\",\n            sink_name=\"text\",\n        ),\n        Link(\n            source_id=text_matcher_node.id,\n            sink_id=reddit_comment_node.id,\n            source_name=\"positive_#_post_id\",\n            sink_name=\"data_#_post_id\",\n        ),\n        Link(\n            source_id=text_matcher_node.id,\n            sink_id=reddit_comment_node.id,\n            source_name=\"positive_#_marketing_text\",\n            sink_name=\"data_#_comment\",\n        ),\n    ]",
+                            "children": []
+                        },
+                        {
+                            "type": "comment",
+                            "start_token": 493,
+                            "end_token": 495,
+                            "label": "# Create graph",
+                            "children": []
+                        },
+                        {
+                            "type": "return_statement",
+                            "start_token": 524,
+                            "end_token": 525,
+                            "label": "return test_graph",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "start_token": 529,
+            "end_token": 570,
+            "label": "async def create_test_user() -> User:\n    test_user_data = {\n        \"sub\": \"ef3b97d7-1161-4eb4-92b2-10c24fb154c1\",\n        \"email\": \"testuser@example.com\",\n        \"name\": \"Test User\",\n    }\n    user = await get_or_create_user(test_user_data)\n    return user\n",
+            "children": [
+                {
+                    "type": "parameters",
+                    "start_token": 532,
+                    "end_token": 533,
+                    "label": "()",
+                    "children": []
+                },
+                {
+                    "type": "block",
+                    "start_token": 538,
+                    "end_token": 569,
+                    "label": "\n    test_user_data = {\n        \"sub\": \"ef3b97d7-1161-4eb4-92b2-10c24fb154c1\",\n        \"email\": \"testuser@example.com\",\n        \"name\": \"Test User\",\n    }\n    user = await get_or_create_user(test_user_data)\n    return user",
+                    "children": [
+                        {
+                            "type": "assignment",
+                            "start_token": 539,
+                            "end_token": 558,
+                            "label": "test_user_data = {\n        \"sub\": \"ef3b97d7-1161-4eb4-92b2-10c24fb154c1\",\n        \"email\": \"testuser@example.com\",\n        \"name\": \"Test User\",\n    }",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 560,
+                            "end_token": 566,
+                            "label": "user = await get_or_create_user(test_user_data)",
+                            "children": []
+                        },
+                        {
+                            "type": "return_statement",
+                            "start_token": 568,
+                            "end_token": 569,
+                            "label": "return user",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "start_token": 573,
+            "end_token": 671,
+            "label": "async def reddit_marketing_agent():\n    async with SpinTestServer() as server:\n        test_user = await create_test_user()\n        test_graph = await create_graph(create_test_graph(), user_id=test_user.id)\n        input_data = {\"subreddit\": \"AutoGPT\"}\n        response = await server.agent_server.test_execute_graph(\n            test_graph.id, input_data, test_user.id\n        )\n        print(response)\n        result = await wait_execution(test_user.id, test_graph.id, response[\"id\"], 120)\n        print(result)",
+            "children": [
+                {
+                    "type": "parameters",
+                    "start_token": 576,
+                    "end_token": 577,
+                    "label": "()",
+                    "children": []
+                },
+                {
+                    "type": "block",
+                    "start_token": 578,
+                    "end_token": 671,
+                    "label": ":\n    async with SpinTestServer() as server:\n        test_user = await create_test_user()\n        test_graph = await create_graph(create_test_graph(), user_id=test_user.id)\n        input_data = {\"subreddit\": \"AutoGPT\"}\n        response = await server.agent_server.test_execute_graph(\n            test_graph.id, input_data, test_user.id\n        )\n        print(response)\n        result = await wait_execution(test_user.id, test_graph.id, response[\"id\"], 120)\n        print(result)",
+                    "children": [
+                        {
+                            "type": "with_statement",
+                            "start_token": 580,
+                            "end_token": 671,
+                            "label": "async with SpinTestServer() as server:\n        test_user = await create_test_user()\n        test_graph = await create_graph(create_test_graph(), user_id=test_user.id)\n        input_data = {\"subreddit\": \"AutoGPT\"}\n        response = await server.agent_server.test_execute_graph(\n            test_graph.id, input_data, test_user.id\n        )\n        print(response)\n        result = await wait_execution(test_user.id, test_graph.id, response[\"id\"], 120)\n        print(result)",
+                            "children": [
+                                {
+                                    "type": "with_clause",
+                                    "start_token": 582,
+                                    "end_token": 586,
+                                    "label": "SpinTestServer() as server",
+                                    "children": []
+                                },
+                                {
+                                    "type": "block",
+                                    "start_token": 587,
+                                    "end_token": 671,
+                                    "label": ":\n        test_user = await create_test_user()\n        test_graph = await create_graph(create_test_graph(), user_id=test_user.id)\n        input_data = {\"subreddit\": \"AutoGPT\"}\n        response = await server.agent_server.test_execute_graph(\n            test_graph.id, input_data, test_user.id\n        )\n        print(response)\n        result = await wait_execution(test_user.id, test_graph.id, response[\"id\"], 120)\n        print(result)",
+                                    "children": [
+                                        {
+                                            "type": "assignment",
+                                            "start_token": 589,
+                                            "end_token": 594,
+                                            "label": "test_user = await create_test_user()",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "assignment",
+                                            "start_token": 596,
+                                            "end_token": 610,
+                                            "label": "test_graph = await create_graph(create_test_graph(), user_id=test_user.id)",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "assignment",
+                                            "start_token": 612,
+                                            "end_token": 618,
+                                            "label": "input_data = {\"subreddit\": \"AutoGPT\"}",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "assignment",
+                                            "start_token": 620,
+                                            "end_token": 638,
+                                            "label": "response = await server.agent_server.test_execute_graph(\n            test_graph.id, input_data, test_user.id",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "call",
+                                            "start_token": 642,
+                                            "end_token": 645,
+                                            "label": "print(response)",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "assignment",
+                                            "start_token": 647,
+                                            "end_token": 666,
+                                            "label": "result = await wait_execution(test_user.id, test_graph.id, response[\"id\"], 120)",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "call",
+                                            "start_token": 668,
+                                            "end_token": 671,
+                                            "label": "print(result)",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "if_statement",
+            "start_token": 675,
+            "end_token": 693,
+            "label": "if __name__ == \"__main__\":\n    import asyncio\n\n    asyncio.run(reddit_marketing_agent())",
+            "children": [
+                {
+                    "type": "comparison_operator",
+                    "start_token": 676,
+                    "end_token": 679,
+                    "label": "__name__ == \"__main__\"",
+                    "children": []
+                },
+                {
+                    "type": "block",
+                    "start_token": 680,
+                    "end_token": 693,
+                    "label": ":\n    import asyncio\n\n    asyncio.run(reddit_marketing_agent())",
+                    "children": [
+                        {
+                            "type": "import_statement",
+                            "start_token": 682,
+                            "end_token": 683,
+                            "label": "import asyncio",
+                            "children": []
+                        },
+                        {
+                            "type": "call",
+                            "start_token": 686,
+                            "end_token": 693,
+                            "label": "asyncio.run(reddit_marketing_agent())",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

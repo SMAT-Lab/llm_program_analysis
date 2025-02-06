@@ -1,0 +1,874 @@
+{
+    "type": "module",
+    "start_token": 0,
+    "end_token": 539,
+    "label": "import logging\n\nfrom autogpt_libs.utils.cache import thread_cached\n\nfrom backend.data.block import (\n    Block,\n    BlockCategory,\n    BlockInput,\n    BlockOutput,\n    BlockSchema,\n    BlockType,\n    get_block,\n)\nfrom backend.data.execution import ExecutionStatus\nfrom backend.data.model import SchemaField\n\nlogger = logging.getLogger(__name__)\n\n\n@thread_cached\ndef get_executor_manager_client():\n    from backend.executor import ExecutionManager\n    from backend.util.service import get_service_client\n\n    return get_service_client(ExecutionManager)\n\n\n@thread_cached\ndef get_event_bus():\n    from backend.data.execution import RedisExecutionEventBus\n\n    return RedisExecutionEventBus()\n\n\nclass AgentExecutorBlock(Block):\n    class Input(BlockSchema):\n        user_id: str = SchemaField(description=\"User ID\")\n        graph_id: str = SchemaField(description=\"Graph ID\")\n        graph_version: int = SchemaField(description=\"Graph Version\")\n\n        data: BlockInput = SchemaField(description=\"Input data for the graph\")\n        input_schema: dict = SchemaField(description=\"Input schema for the graph\")\n        output_schema: dict = SchemaField(description=\"Output schema for the graph\")\n\n    class Output(BlockSchema):\n        pass\n\n    def __init__(self):\n        super().__init__(\n            id=\"e189baac-8c20-45a1-94a7-55177ea42565\",\n            description=\"Executes an existing agent inside your agent\",\n            input_schema=AgentExecutorBlock.Input,\n            output_schema=AgentExecutorBlock.Output,\n            block_type=BlockType.AGENT,\n            categories={BlockCategory.AGENT},\n        )\n\n    def run(self, input_data: Input, **kwargs) -> BlockOutput:\n        executor_manager = get_executor_manager_client()\n        event_bus = get_event_bus()\n\n        graph_exec = executor_manager.add_execution(\n            graph_id=input_data.graph_id,\n            graph_version=input_data.graph_version,\n            user_id=input_data.user_id,\n            data=input_data.data,\n        )\n        log_id = f\"Graph #{input_data.graph_id}-V{input_data.graph_version}, exec-id: {graph_exec.graph_exec_id}\"\n        logger.info(f\"Starting execution of {log_id}\")\n\n        for event in event_bus.listen(\n            graph_id=graph_exec.graph_id, graph_exec_id=graph_exec.graph_exec_id\n        ):\n            logger.info(\n                f\"Execution {log_id} produced input {event.input_data} output {event.output_data}\"\n            )\n\n            if not event.node_id:\n                if event.status in [ExecutionStatus.COMPLETED, ExecutionStatus.FAILED]:\n                    logger.info(f\"Execution {log_id} ended with status {event.status}\")\n                    break\n                else:\n                    continue\n\n            if not event.block_id:\n                logger.warning(f\"{log_id} received event without block_id {event}\")\n                continue\n\n            block = get_block(event.block_id)\n            if not block or block.block_type != BlockType.OUTPUT:\n                continue\n\n            output_name = event.input_data.get(\"name\")\n            if not output_name:\n                logger.warning(f\"{log_id} produced an output with no name {event}\")\n                continue\n\n            for output_data in event.output_data.get(\"output\", []):\n                logger.info(f\"Execution {log_id} produced {output_name}: {output_data}\")\n                yield output_name, output_data\n",
+    "children": [
+        {
+            "type": "import_statement",
+            "start_token": 0,
+            "end_token": 1,
+            "label": "import logging",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 4,
+            "end_token": 11,
+            "label": "from autogpt_libs.utils.cache import thread_cached",
+            "children": [
+                {
+                    "type": "dotted_name",
+                    "start_token": 5,
+                    "end_token": 9,
+                    "label": "autogpt_libs.utils.cache",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 14,
+            "end_token": 44,
+            "label": "from backend.data.block import (\n    Block,\n    BlockCategory,\n    BlockInput,\n    BlockOutput,\n    BlockSchema,\n    BlockType,\n    get_block,\n)",
+            "children": [
+                {
+                    "type": "dotted_name",
+                    "start_token": 15,
+                    "end_token": 19,
+                    "label": "backend.data.block",
+                    "children": []
+                },
+                {
+                    "type": "import_prefix",
+                    "start_token": 21,
+                    "end_token": 44,
+                    "label": "(\n    Block,\n    BlockCategory,\n    BlockInput,\n    BlockOutput,\n    BlockSchema,\n    BlockType,\n    get_block,\n)",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 46,
+            "end_token": 53,
+            "label": "from backend.data.execution import ExecutionStatus",
+            "children": [
+                {
+                    "type": "dotted_name",
+                    "start_token": 47,
+                    "end_token": 51,
+                    "label": "backend.data.execution",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 55,
+            "end_token": 62,
+            "label": "from backend.data.model import SchemaField",
+            "children": [
+                {
+                    "type": "dotted_name",
+                    "start_token": 56,
+                    "end_token": 60,
+                    "label": "backend.data.model",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "assignment",
+            "start_token": 65,
+            "end_token": 72,
+            "label": "logger = logging.getLogger(__name__)",
+            "children": [
+                {
+                    "type": "attribute",
+                    "start_token": 67,
+                    "end_token": 69,
+                    "label": "logging.getLogger",
+                    "children": []
+                },
+                {
+                    "type": "call",
+                    "start_token": 69,
+                    "end_token": 72,
+                    "label": "getLogger(__name__)",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "decorated_definition",
+            "start_token": 76,
+            "end_token": 107,
+            "label": "@thread_cached\ndef get_executor_manager_client():\n    from backend.executor import ExecutionManager\n    from backend.util.service import get_service_client\n\n    return get_service_client(ExecutionManager)\n",
+            "children": [
+                {
+                    "type": "decorator",
+                    "start_token": 76,
+                    "end_token": 77,
+                    "label": "@thread_cached",
+                    "children": []
+                },
+                {
+                    "type": "function_definition",
+                    "start_token": 79,
+                    "end_token": 107,
+                    "label": "def get_executor_manager_client():\n    from backend.executor import ExecutionManager\n    from backend.util.service import get_service_client\n\n    return get_service_client(ExecutionManager)\n",
+                    "children": [
+                        {
+                            "type": "parameters",
+                            "start_token": 81,
+                            "end_token": 82,
+                            "label": "()",
+                            "children": []
+                        },
+                        {
+                            "type": "block",
+                            "start_token": 83,
+                            "end_token": 107,
+                            "label": ":\n    from backend.executor import ExecutionManager\n    from backend.util.service import get_service_client\n\n    return get_service_client(ExecutionManager)\n",
+                            "children": [
+                                {
+                                    "type": "import_from_statement",
+                                    "start_token": 85,
+                                    "end_token": 90,
+                                    "label": "from backend.executor import ExecutionManager",
+                                    "children": [
+                                        {
+                                            "type": "dotted_name",
+                                            "start_token": 86,
+                                            "end_token": 88,
+                                            "label": "backend.executor",
+                                            "children": []
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "import_from_statement",
+                                    "start_token": 92,
+                                    "end_token": 99,
+                                    "label": "from backend.util.service import get_service_client",
+                                    "children": [
+                                        {
+                                            "type": "dotted_name",
+                                            "start_token": 93,
+                                            "end_token": 97,
+                                            "label": "backend.util.service",
+                                            "children": []
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "return_statement",
+                                    "start_token": 102,
+                                    "end_token": 106,
+                                    "label": "return get_service_client(ExecutionManager)",
+                                    "children": [
+                                        {
+                                            "type": "call",
+                                            "start_token": 103,
+                                            "end_token": 106,
+                                            "label": "get_service_client(ExecutionManager)",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "decorated_definition",
+            "start_token": 110,
+            "end_token": 133,
+            "label": "@thread_cached\ndef get_event_bus():\n    from backend.data.execution import RedisExecutionEventBus\n\n    return RedisExecutionEventBus()\n",
+            "children": [
+                {
+                    "type": "decorator",
+                    "start_token": 110,
+                    "end_token": 111,
+                    "label": "@thread_cached",
+                    "children": []
+                },
+                {
+                    "type": "function_definition",
+                    "start_token": 113,
+                    "end_token": 133,
+                    "label": "def get_event_bus():\n    from backend.data.execution import RedisExecutionEventBus\n\n    return RedisExecutionEventBus()\n",
+                    "children": [
+                        {
+                            "type": "parameters",
+                            "start_token": 115,
+                            "end_token": 116,
+                            "label": "()",
+                            "children": []
+                        },
+                        {
+                            "type": "block",
+                            "start_token": 117,
+                            "end_token": 133,
+                            "label": ":\n    from backend.data.execution import RedisExecutionEventBus\n\n    return RedisExecutionEventBus()\n",
+                            "children": [
+                                {
+                                    "type": "import_from_statement",
+                                    "start_token": 119,
+                                    "end_token": 126,
+                                    "label": "from backend.data.execution import RedisExecutionEventBus",
+                                    "children": [
+                                        {
+                                            "type": "dotted_name",
+                                            "start_token": 120,
+                                            "end_token": 124,
+                                            "label": "backend.data.execution",
+                                            "children": []
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "return_statement",
+                                    "start_token": 129,
+                                    "end_token": 132,
+                                    "label": "return RedisExecutionEventBus()",
+                                    "children": [
+                                        {
+                                            "type": "call",
+                                            "start_token": 130,
+                                            "end_token": 132,
+                                            "label": "RedisExecutionEventBus()",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "class_definition",
+            "start_token": 136,
+            "end_token": 282,
+            "label": "class AgentExecutorBlock(Block):\n    class Input(BlockSchema):\n        user_id: str = SchemaField(description=\"User ID\")\n        graph_id: str = SchemaField(description=\"Graph ID\")\n        graph_version: int = SchemaField(description=\"Graph Version\")\n\n        data: BlockInput = SchemaField(description=\"Input data for the graph\")\n        input_schema: dict = SchemaField(description=\"Input schema for the graph\")\n        output_schema: dict = SchemaField(description=\"Output schema for the graph\")\n\n    class Output(BlockSchema):\n        pass\n\n    def __init__(self):\n        super().__init__(\n            id=\"e189baac-8c20-45a1-94a7-55177ea42565\",\n            description=\"Executes an existing agent inside your agent\",\n            input_schema=AgentExecutorBlock.Input,\n            output_schema=AgentExecutorBlock.Output,\n            block_type=BlockType.AGENT,\n            categories={BlockCategory.AGENT},\n        )",
+            "children": [
+                {
+                    "type": "block",
+                    "start_token": 142,
+                    "end_token": 282,
+                    "label": "\n    class Input(BlockSchema):\n        user_id: str = SchemaField(description=\"User ID\")\n        graph_id: str = SchemaField(description=\"Graph ID\")\n        graph_version: int = SchemaField(description=\"Graph Version\")\n\n        data: BlockInput = SchemaField(description=\"Input data for the graph\")\n        input_schema: dict = SchemaField(description=\"Input schema for the graph\")\n        output_schema: dict = SchemaField(description=\"Output schema for the graph\")\n\n    class Output(BlockSchema):\n        pass\n\n    def __init__(self):\n        super().__init__(\n            id=\"e189baac-8c20-45a1-94a7-55177ea42565\",\n            description=\"Executes an existing agent inside your agent\",\n            input_schema=AgentExecutorBlock.Input,\n            output_schema=AgentExecutorBlock.Output,\n            block_type=BlockType.AGENT,\n            categories={BlockCategory.AGENT},\n        )",
+                    "children": [
+                        {
+                            "type": "class_definition",
+                            "start_token": 143,
+                            "end_token": 215,
+                            "label": "class Input(BlockSchema):\n        user_id: str = SchemaField(description=\"User ID\")\n        graph_id: str = SchemaField(description=\"Graph ID\")\n        graph_version: int = SchemaField(description=\"Graph Version\")\n\n        data: BlockInput = SchemaField(description=\"Input data for the graph\")\n        input_schema: dict = SchemaField(description=\"Input schema for the graph\")\n        output_schema: dict = SchemaField(description=\"Output schema for the graph\")",
+                            "children": [
+                                {
+                                    "type": "block",
+                                    "start_token": 149,
+                                    "end_token": 215,
+                                    "label": "\n        user_id: str = SchemaField(description=\"User ID\")\n        graph_id: str = SchemaField(description=\"Graph ID\")\n        graph_version: int = SchemaField(description=\"Graph Version\")\n\n        data: BlockInput = SchemaField(description=\"Input data for the graph\")\n        input_schema: dict = SchemaField(description=\"Input schema for the graph\")\n        output_schema: dict = SchemaField(description=\"Output schema for the graph\")",
+                                    "children": [
+                                        {
+                                            "type": "assignment",
+                                            "start_token": 150,
+                                            "end_token": 159,
+                                            "label": "user_id: str = SchemaField(description=\"User ID\")",
+                                            "children": [
+                                                {
+                                                    "type": "call",
+                                                    "start_token": 154,
+                                                    "end_token": 159,
+                                                    "label": "SchemaField(description=\"User ID\")",
+                                                    "children": []
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "assignment",
+                                            "start_token": 161,
+                                            "end_token": 170,
+                                            "label": "graph_id: str = SchemaField(description=\"Graph ID\")",
+                                            "children": [
+                                                {
+                                                    "type": "call",
+                                                    "start_token": 165,
+                                                    "end_token": 170,
+                                                    "label": "SchemaField(description=\"Graph ID\")",
+                                                    "children": []
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "assignment",
+                                            "start_token": 172,
+                                            "end_token": 181,
+                                            "label": "graph_version: int = SchemaField(description=\"Graph Version\")",
+                                            "children": [
+                                                {
+                                                    "type": "call",
+                                                    "start_token": 176,
+                                                    "end_token": 181,
+                                                    "label": "SchemaField(description=\"Graph Version\")",
+                                                    "children": []
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "assignment",
+                                            "start_token": 184,
+                                            "end_token": 193,
+                                            "label": "data: BlockInput = SchemaField(description=\"Input data for the graph\")",
+                                            "children": [
+                                                {
+                                                    "type": "call",
+                                                    "start_token": 188,
+                                                    "end_token": 193,
+                                                    "label": "SchemaField(description=\"Input data for the graph\")",
+                                                    "children": []
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "assignment",
+                                            "start_token": 195,
+                                            "end_token": 204,
+                                            "label": "input_schema: dict = SchemaField(description=\"Input schema for the graph\")",
+                                            "children": [
+                                                {
+                                                    "type": "call",
+                                                    "start_token": 199,
+                                                    "end_token": 204,
+                                                    "label": "SchemaField(description=\"Input schema for the graph\")",
+                                                    "children": []
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "assignment",
+                                            "start_token": 206,
+                                            "end_token": 215,
+                                            "label": "output_schema: dict = SchemaField(description=\"Output schema for the graph\")",
+                                            "children": [
+                                                {
+                                                    "type": "call",
+                                                    "start_token": 210,
+                                                    "end_token": 215,
+                                                    "label": "SchemaField(description=\"Output schema for the graph\")",
+                                                    "children": []
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "class_definition",
+                            "start_token": 218,
+                            "end_token": 225,
+                            "label": "class Output(BlockSchema):\n        pass",
+                            "children": [
+                                {
+                                    "type": "block",
+                                    "start_token": 223,
+                                    "end_token": 225,
+                                    "label": ":\n        pass",
+                                    "children": [
+                                        {
+                                            "type": "pass_statement",
+                                            "start_token": 225,
+                                            "end_token": 225,
+                                            "label": "pass",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "function_definition",
+                            "start_token": 228,
+                            "end_token": 282,
+                            "label": "def __init__(self):\n        super().__init__(\n            id=\"e189baac-8c20-45a1-94a7-55177ea42565\",\n            description=\"Executes an existing agent inside your agent\",\n            input_schema=AgentExecutorBlock.Input,\n            output_schema=AgentExecutorBlock.Output,\n            block_type=BlockType.AGENT,\n            categories={BlockCategory.AGENT},\n        )",
+                            "children": [
+                                {
+                                    "type": "parameters",
+                                    "start_token": 230,
+                                    "end_token": 232,
+                                    "label": "(self)",
+                                    "children": []
+                                },
+                                {
+                                    "type": "block",
+                                    "start_token": 233,
+                                    "end_token": 282,
+                                    "label": ":\n        super().__init__(\n            id=\"e189baac-8c20-45a1-94a7-55177ea42565\",\n            description=\"Executes an existing agent inside your agent\",\n            input_schema=AgentExecutorBlock.Input,\n            output_schema=AgentExecutorBlock.Output,\n            block_type=BlockType.AGENT,\n            categories={BlockCategory.AGENT},\n        )",
+                                    "children": [
+                                        {
+                                            "type": "call",
+                                            "start_token": 235,
+                                            "end_token": 282,
+                                            "label": "super().__init__(\n            id=\"e189baac-8c20-45a1-94a7-55177ea42565\",\n            description=\"Executes an existing agent inside your agent\",\n            input_schema=AgentExecutorBlock.Input,\n            output_schema=AgentExecutorBlock.Output,\n            block_type=BlockType.AGENT,\n            categories={BlockCategory.AGENT},\n        )",
+                                            "children": [
+                                                {
+                                                    "type": "argument_list",
+                                                    "start_token": 241,
+                                                    "end_token": 279,
+                                                    "label": "\n            id=\"e189baac-8c20-45a1-94a7-55177ea42565\",\n            description=\"Executes an existing agent inside your agent\",\n            input_schema=AgentExecutorBlock.Input,\n            output_schema=AgentExecutorBlock.Output,\n            block_type=BlockType.AGENT,\n            categories={BlockCategory.AGENT}",
+                                                    "children": [
+                                                        {
+                                                            "type": "keyword_argument",
+                                                            "start_token": 242,
+                                                            "end_token": 245,
+                                                            "label": "id=\"e189baac-8c20-45a1-94a7-55177ea42565\",",
+                                                            "children": []
+                                                        },
+                                                        {
+                                                            "type": "keyword_argument",
+                                                            "start_token": 247,
+                                                            "end_token": 250,
+                                                            "label": "description=\"Executes an existing agent inside your agent\",",
+                                                            "children": []
+                                                        },
+                                                        {
+                                                            "type": "keyword_argument",
+                                                            "start_token": 252,
+                                                            "end_token": 257,
+                                                            "label": "input_schema=AgentExecutorBlock.Input,",
+                                                            "children": []
+                                                        },
+                                                        {
+                                                            "type": "keyword_argument",
+                                                            "start_token": 259,
+                                                            "end_token": 264,
+                                                            "label": "output_schema=AgentExecutorBlock.Output,",
+                                                            "children": []
+                                                        },
+                                                        {
+                                                            "type": "keyword_argument",
+                                                            "start_token": 266,
+                                                            "end_token": 271,
+                                                            "label": "block_type=BlockType.AGENT,",
+                                                            "children": []
+                                                        },
+                                                        {
+                                                            "type": "keyword_argument",
+                                                            "start_token": 273,
+                                                            "end_token": 279,
+                                                            "label": "categories={BlockCategory.AGENT}",
+                                                            "children": []
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "start_token": 285,
+            "end_token": 539,
+            "label": "def run(self, input_data: Input, **kwargs) -> BlockOutput:\n        executor_manager = get_executor_manager_client()\n        event_bus = get_event_bus()\n\n        graph_exec = executor_manager.add_execution(\n            graph_id=input_data.graph_id,\n            graph_version=input_data.graph_version,\n            user_id=input_data.user_id,\n            data=input_data.data,\n        )\n        log_id = f\"Graph #{input_data.graph_id}-V{input_data.graph_version}, exec-id: {graph_exec.graph_exec_id}\"\n        logger.info(f\"Starting execution of {log_id}\")\n\n        for event in event_bus.listen(\n            graph_id=graph_exec.graph_id, graph_exec_id=graph_exec.graph_exec_id\n        ):\n            logger.info(\n                f\"Execution {log_id} produced input {event.input_data} output {event.output_data}\"\n            )\n\n            if not event.node_id:\n                if event.status in [ExecutionStatus.COMPLETED, ExecutionStatus.FAILED]:\n                    logger.info(f\"Execution {log_id} ended with status {event.status}\")\n                    break\n                else:\n                    continue\n\n            if not event.block_id:\n                logger.warning(f\"{log_id} received event without block_id {event}\")\n                continue\n\n            block = get_block(event.block_id)\n            if not block or block.block_type != BlockType.OUTPUT:\n                continue\n\n            output_name = event.input_data.get(\"name\")\n            if not output_name:\n                logger.warning(f\"{log_id} produced an output with no name {event}\")\n                continue\n\n            for output_data in event.output_data.get(\"output\", []):\n                logger.info(f\"Execution {log_id} produced {output_name}: {output_data}\")\n                yield output_name, output_data\n",
+            "children": [
+                {
+                    "type": "parameters",
+                    "start_token": 287,
+                    "end_token": 297,
+                    "label": "(self, input_data: Input, **kwargs)",
+                    "children": []
+                },
+                {
+                    "type": "block",
+                    "start_token": 298,
+                    "end_token": 539,
+                    "label": "-> BlockOutput:\n        executor_manager = get_executor_manager_client()\n        event_bus = get_event_bus()\n\n        graph_exec = executor_manager.add_execution(\n            graph_id=input_data.graph_id,\n            graph_version=input_data.graph_version,\n            user_id=input_data.user_id,\n            data=input_data.data,\n        )\n        log_id = f\"Graph #{input_data.graph_id}-V{input_data.graph_version}, exec-id: {graph_exec.graph_exec_id}\"\n        logger.info(f\"Starting execution of {log_id}\")\n\n        for event in event_bus.listen(\n            graph_id=graph_exec.graph_id, graph_exec_id=graph_exec.graph_exec_id\n        ):\n            logger.info(\n                f\"Execution {log_id} produced input {event.input_data} output {event.output_data}\"\n            )\n\n            if not event.node_id:\n                if event.status in [ExecutionStatus.COMPLETED, ExecutionStatus.FAILED]:\n                    logger.info(f\"Execution {log_id} ended with status {event.status}\")\n                    break\n                else:\n                    continue\n\n            if not event.block_id:\n                logger.warning(f\"{log_id} received event without block_id {event}\")\n                continue\n\n            block = get_block(event.block_id)\n            if not block or block.block_type != BlockType.OUTPUT:\n                continue\n\n            output_name = event.input_data.get(\"name\")\n            if not output_name:\n                logger.warning(f\"{log_id} produced an output with no name {event}\")\n                continue\n\n            for output_data in event.output_data.get(\"output\", []):\n                logger.info(f\"Execution {log_id} produced {output_name}: {output_data}\")\n                yield output_name, output_data\n",
+                    "children": [
+                        {
+                            "type": "assignment",
+                            "start_token": 303,
+                            "end_token": 307,
+                            "label": "executor_manager = get_executor_manager_client()",
+                            "children": [
+                                {
+                                    "type": "call",
+                                    "start_token": 305,
+                                    "end_token": 307,
+                                    "label": "get_executor_manager_client()",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 309,
+                            "end_token": 313,
+                            "label": "event_bus = get_event_bus()",
+                            "children": [
+                                {
+                                    "type": "call",
+                                    "start_token": 311,
+                                    "end_token": 313,
+                                    "label": "get_event_bus()",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 316,
+                            "end_token": 349,
+                            "label": "graph_exec = executor_manager.add_execution(\n            graph_id=input_data.graph_id,\n            graph_version=input_data.graph_version,\n            user_id=input_data.user_id,\n            data=input_data.data,",
+                            "children": [
+                                {
+                                    "type": "call",
+                                    "start_token": 318,
+                                    "end_token": 349,
+                                    "label": "executor_manager.add_execution(\n            graph_id=input_data.graph_id,\n            graph_version=input_data.graph_version,\n            user_id=input_data.user_id,\n            data=input_data.data,",
+                                    "children": [
+                                        {
+                                            "type": "argument_list",
+                                            "start_token": 322,
+                                            "end_token": 349,
+                                            "label": "\n            graph_id=input_data.graph_id,\n            graph_version=input_data.graph_version,\n            user_id=input_data.user_id,\n            data=input_data.data,",
+                                            "children": [
+                                                {
+                                                    "type": "keyword_argument",
+                                                    "start_token": 324,
+                                                    "end_token": 328,
+                                                    "label": "=input_data.graph_id,",
+                                                    "children": []
+                                                },
+                                                {
+                                                    "type": "keyword_argument",
+                                                    "start_token": 330,
+                                                    "end_token": 334,
+                                                    "label": "graph_version=input_data.graph_version",
+                                                    "children": []
+                                                },
+                                                {
+                                                    "type": "keyword_argument",
+                                                    "start_token": 337,
+                                                    "end_token": 341,
+                                                    "label": "user_id=input_data.user_id",
+                                                    "children": []
+                                                },
+                                                {
+                                                    "type": "keyword_argument",
+                                                    "start_token": 344,
+                                                    "end_token": 348,
+                                                    "label": "data=input_data.data",
+                                                    "children": []
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 353,
+                            "end_token": 356,
+                            "label": "log_id = f\"Graph #{input_data.graph_id}-V{input_data.graph_version}, exec-id: {graph_exec.graph_exec_id}\"",
+                            "children": []
+                        },
+                        {
+                            "type": "comment",
+                            "start_token": 357,
+                            "end_token": 364,
+                            "label": "\n        logger.info(f\"Starting execution of {log_id}\")",
+                            "children": []
+                        },
+                        {
+                            "type": "for_statement",
+                            "start_token": 367,
+                            "end_token": 532,
+                            "label": "for event in event_bus.listen(\n            graph_id=graph_exec.graph_id, graph_exec_id=graph_exec.graph_exec_id\n        ):\n            logger.info(\n                f\"Execution {log_id} produced input {event.input_data} output {event.output_data}\"\n            )\n\n            if not event.node_id:\n                if event.status in [ExecutionStatus.COMPLETED, ExecutionStatus.FAILED]:\n                    logger.info(f\"Execution {log_id} ended with status {event.status}\")\n                    break\n                else:\n                    continue\n\n            if not event.block_id:\n                logger.warning(f\"{log_id} received event without block_id {event}\")\n                continue\n\n            block = get_block(event.block_id)\n            if not block or block.block_type != BlockType.OUTPUT:\n                continue\n\n            output_name = event.input_data.get(\"name\")\n            if not output_name:\n                logger.warning(f\"{log_id} produced an output with no name {event}\")\n                continue\n\n            for output_data in event.output_data.get(\"output\", []):\n                logger.info(f\"Execution {log_id} produced {output_name}: {output_data}\"",
+                            "children": [
+                                {
+                                    "type": "for_in_clause",
+                                    "start_token": 368,
+                                    "end_token": 387,
+                                    "label": "event in event_bus.listen(\n            graph_id=graph_exec.graph_id, graph_exec_id=graph_exec.graph_exec_id\n        )",
+                                    "children": []
+                                },
+                                {
+                                    "type": "block",
+                                    "start_token": 388,
+                                    "end_token": 532,
+                                    "label": ":\n            logger.info(\n                f\"Execution {log_id} produced input {event.input_data} output {event.output_data}\"\n            )\n\n            if not event.node_id:\n                if event.status in [ExecutionStatus.COMPLETED, ExecutionStatus.FAILED]:\n                    logger.info(f\"Execution {log_id} ended with status {event.status}\")\n                    break\n                else:\n                    continue\n\n            if not event.block_id:\n                logger.warning(f\"{log_id} received event without block_id {event}\")\n                continue\n\n            block = get_block(event.block_id)\n            if not block or block.block_type != BlockType.OUTPUT:\n                continue\n\n            output_name = event.input_data.get(\"name\")\n            if not output_name:\n                logger.warning(f\"{log_id} produced an output with no name {event}\")\n                continue\n\n            for output_data in event.output_data.get(\"output\", []):\n                logger.info(f\"Execution {log_id} produced {output_name}: {output_data}\"",
+                                    "children": [
+                                        {
+                                            "type": "expression_statement",
+                                            "start_token": 390,
+                                            "end_token": 397,
+                                            "label": "logger.info(\n                f\"Execution {log_id} produced input {event.input_data} output {event.output_data}\"\n",
+                                            "children": [
+                                                {
+                                                    "type": "call",
+                                                    "start_token": 392,
+                                                    "end_token": 397,
+                                                    "label": "info(\n                f\"Execution {log_id} produced input {event.input_data} output {event.output_data}\"\n",
+                                                    "children": []
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "if_statement",
+                                            "start_token": 401,
+                                            "end_token": 432,
+                                            "label": "if not event.node_id:\n                if event.status in [ExecutionStatus.COMPLETED, ExecutionStatus.FAILED]:\n                    logger.info(f\"Execution {log_id} ended with status {event.status}\")\n                    break",
+                                            "children": [
+                                                {
+                                                    "type": "block",
+                                                    "start_token": 408,
+                                                    "end_token": 432,
+                                                    "label": "if event.status in [ExecutionStatus.COMPLETED, ExecutionStatus.FAILED]:\n                    logger.info(f\"Execution {log_id} ended with status {event.status}\")\n                    break",
+                                                    "children": [
+                                                        {
+                                                            "type": "if_clause",
+                                                            "start_token": 408,
+                                                            "end_token": 431,
+                                                            "label": "if event.status in [ExecutionStatus.COMPLETED, ExecutionStatus.FAILED]:\n                    logger.info(f\"Execution {log_id} ended with status {event.status}\")\n",
+                                                            "children": [
+                                                                {
+                                                                    "type": "comparison_operator",
+                                                                    "start_token": 411,
+                                                                    "end_token": 421,
+                                                                    "label": "status in [ExecutionStatus.COMPLETED, ExecutionStatus.FAILED]",
+                                                                    "children": []
+                                                                },
+                                                                {
+                                                                    "type": "block",
+                                                                    "start_token": 422,
+                                                                    "end_token": 431,
+                                                                    "label": ":\n                    logger.info(f\"Execution {log_id} ended with status {event.status}\")\n",
+                                                                    "children": [
+                                                                        {
+                                                                            "type": "expression_statement",
+                                                                            "start_token": 424,
+                                                                            "end_token": 430,
+                                                                            "label": "logger.info(f\"Execution {log_id} ended with status {event.status}\")",
+                                                                            "children": [
+                                                                                {
+                                                                                    "type": "call",
+                                                                                    "start_token": 426,
+                                                                                    "end_token": 430,
+                                                                                    "label": "info(f\"Execution {log_id} ended with status {event.status}\")",
+                                                                                    "children": []
+                                                                                }
+                                                                            ]
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        },
+                                                        {
+                                                            "type": "else_clause",
+                                                            "start_token": 434,
+                                                            "end_token": 437,
+                                                            "label": "else:\n                    continue",
+                                                            "children": []
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "if_statement",
+                                            "start_token": 440,
+                                            "end_token": 455,
+                                            "label": "if not event.block_id:\n                logger.warning(f\"{log_id} received event without block_id {event}\")\n                continue",
+                                            "children": [
+                                                {
+                                                    "type": "if_clause",
+                                                    "start_token": 442,
+                                                    "end_token": 454,
+                                                    "label": "event.block_id:\n                logger.warning(f\"{log_id} received event without block_id {event}\")\n",
+                                                    "children": [
+                                                        {
+                                                            "type": "expression_statement",
+                                                            "start_token": 447,
+                                                            "end_token": 453,
+                                                            "label": "logger.warning(f\"{log_id} received event without block_id {event}\")",
+                                                            "children": [
+                                                                {
+                                                                    "type": "call",
+                                                                    "start_token": 449,
+                                                                    "end_token": 453,
+                                                                    "label": "warning(f\"{log_id} received event without block_id {event}\")",
+                                                                    "children": []
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "assignment",
+                                            "start_token": 458,
+                                            "end_token": 465,
+                                            "label": "block = get_block(event.block_id)",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "if_statement",
+                                            "start_token": 467,
+                                            "end_token": 481,
+                                            "label": "if not block or block.block_type != BlockType.OUTPUT:\n                continue",
+                                            "children": [
+                                                {
+                                                    "type": "if_clause",
+                                                    "start_token": 469,
+                                                    "end_token": 481,
+                                                    "label": "block or block.block_type != BlockType.OUTPUT:\n                continue",
+                                                    "children": [
+                                                        {
+                                                            "type": "comparison_operator",
+                                                            "start_token": 470,
+                                                            "end_token": 472,
+                                                            "label": "or block.",
+                                                            "children": []
+                                                        },
+                                                        {
+                                                            "type": "block",
+                                                            "start_token": 474,
+                                                            "end_token": 481,
+                                                            "label": "!= BlockType.OUTPUT:\n                continue",
+                                                            "children": []
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "if_statement",
+                                            "start_token": 495,
+                                            "end_token": 509,
+                                            "label": "if not output_name:\n                logger.warning(f\"{log_id} produced an output with no name {event}\")\n                continue\n",
+                                            "children": [
+                                                {
+                                                    "type": "if_clause",
+                                                    "start_token": 497,
+                                                    "end_token": 509,
+                                                    "label": "output_name:\n                logger.warning(f\"{log_id} produced an output with no name {event}\")\n                continue\n",
+                                                    "children": [
+                                                        {
+                                                            "type": "block",
+                                                            "start_token": 504,
+                                                            "end_token": 509,
+                                                            "label": "f\"{log_id} produced an output with no name {event}\")\n                continue\n",
+                                                            "children": [
+                                                                {
+                                                                    "type": "expression_statement",
+                                                                    "start_token": 506,
+                                                                    "end_token": 509,
+                                                                    "label": ")\n                continue\n",
+                                                                    "children": []
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "for_statement",
+                                            "start_token": 511,
+                                            "end_token": 533,
+                                            "label": "for output_data in event.output_data.get(\"output\", []):\n                logger.info(f\"Execution {log_id} produced {output_name}: {output_data}\")",
+                                            "children": [
+                                                {
+                                                    "type": "for_in_clause",
+                                                    "start_token": 513,
+                                                    "end_token": 525,
+                                                    "label": "in event.output_data.get(\"output\", []):",
+                                                    "children": [
+                                                        {
+                                                            "type": "expression_statement",
+                                                            "start_token": 520,
+                                                            "end_token": 524,
+                                                            "label": "\"output\", [])",
+                                                            "children": []
+                                                        }
+                                                    ]
+                                                },
+                                                {
+                                                    "type": "block",
+                                                    "start_token": 526,
+                                                    "end_token": 533,
+                                                    "label": "\n                logger.info(f\"Execution {log_id} produced {output_name}: {output_data}\")",
+                                                    "children": [
+                                                        {
+                                                            "type": "expression_statement",
+                                                            "start_token": 528,
+                                                            "end_token": 532,
+                                                            "label": ".info(f\"Execution {log_id} produced {output_name}: {output_data}\"",
+                                                            "children": [
+                                                                {
+                                                                    "type": "call",
+                                                                    "start_token": 530,
+                                                                    "end_token": 532,
+                                                                    "label": "(f\"Execution {log_id} produced {output_name}: {output_data}\"",
+                                                                    "children": []
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "yield",
+                            "start_token": 535,
+                            "end_token": 538,
+                            "label": "yield output_name, output_data",
+                            "children": [
+                                {
+                                    "type": "expression_list",
+                                    "start_token": 536,
+                                    "end_token": 538,
+                                    "label": "output_name, output_data",
+                                    "children": [
+                                        {
+                                            "type": "identifier",
+                                            "start_token": 536,
+                                            "end_token": 536,
+                                            "label": "output_name",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "identifier",
+                                            "start_token": 537,
+                                            "end_token": 538,
+                                            "label": ", output_data",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

@@ -1,0 +1,96 @@
+{
+  "source_file": "7.py",
+  "cfg": {
+    "blocks": [
+      {
+        "id": 1,
+        "start_line": 1,
+        "end_line": 2,
+        "label": "from abc import ABC, abstractmethod\nfrom datetime import datetime, timezone",
+        "successors": [
+          2
+        ]
+      },
+      {
+        "id": 2,
+        "start_line": 3,
+        "end_line": 8,
+        "label": "from prisma import Json\nfrom prisma.enums import CreditTransactionType\nfrom prisma.errors import UniqueViolationError\nfrom prisma.models import CreditTransaction",
+        "successors": [
+          3
+        ]
+      },
+      {
+        "id": 3,
+        "start_line": 9,
+        "end_line": 12,
+        "label": "from backend.data.block import Block, BlockInput, get_block\nfrom backend.data.block_cost_config import BLOCK_COSTS\nfrom backend.data.cost import BlockCost, BlockCostType\nfrom backend.util.settings import Config",
+        "successors": [
+          4
+        ]
+      },
+      {
+        "id": 4,
+        "start_line": 13,
+        "end_line": 14,
+        "label": "config = Config()",
+        "successors": [
+          5
+        ]
+      },
+      {
+        "id": 5,
+        "start_line": 15,
+        "end_line": 16,
+        "label": "",
+        "successors": [
+          6
+        ]
+      },
+      {
+        "id": 6,
+        "start_line": 17,
+        "end_line": 19,
+        "label": "class UserCreditBase(ABC):\n    def __init__(self, num_user_credits_refill: int):\n        self.num_user_credits_refill = num_user_credits_refill",
+        "successors": [
+          7
+        ]
+      },
+      {
+        "id": 7,
+        "start_line": 20,
+        "end_line": 118,
+        "label": "@abstractmethod\n    async def get_or_refill_credit(self, user_id: str) -> int:\n        \"\"\"\n        Get the current credit for the user and refill if no transaction has been made in the current cycle.\n\n        Returns:\n            int: The current credit for the user.\n        \"\"\"\n        pass\n\n    @abstractmethod\n    async def spend_credits(\n        self,\n        user_id: str,\n        user_credit: int,\n        block_id: str,\n        input_data: BlockInput,\n        data_size: float,\n        run_time: float,\n    ) -> int:\n        \"\"\"\n        Spend the credits for the user based on the block usage.\n\n        Args:\n            user_id (str): The user ID.\n            user_credit (int): The current credit for the user.\n            block_id (str): The block ID.\n            input_data (BlockInput): The input data for the block.\n            data_size (float): The size of the data being processed.\n            run_time (float): The time taken to run the block.\n\n        Returns:\n            int: amount of credit spent\n        \"\"\"\n        pass\n\n    @abstractmethod\n    async def top_up_credits(self, user_id: str, amount: int):\n        \"\"\"\n        Top up the credits for the user.\n\n        Args:\n            user_id (str): The user ID.\n            amount (int): The amount to top up.\n        \"\"\"\n        pass",
+        "successors": [
+          8
+        ]
+      },
+      {
+        "id": 8,
+        "start_line": 119,
+        "end_line": 219,
+        "label": "class UserCredit(UserCreditBase):\n    async def get_or_refill_credit(self, user_id: str) -> int:\n        cur_time = self.time_now()\n        cur_month = cur_time.replace(day=1, hour=0, minute=0, second=0, microsecond=0)\n        nxt_month = (\n            cur_month.replace(month=cur_month.month + 1)\n            if cur_month.month < 12\n            else cur_month.replace(year=cur_month.year + 1, month=1)\n        )\n\n        user_credit = await CreditTransaction.prisma().group_by(\n            by=[\"userId\"],\n            sum={\"amount\": True},\n            where={\n                \"userId\": user_id,\n                \"createdAt\": {\"gte\": cur_month, \"lt\": nxt_month},\n                \"isActive\": True,\n            },\n        )\n\n        if user_credit:\n            credit_sum = user_credit[0].get(\"_sum\") or {}\n            return credit_sum.get(\"amount\", 0)\n\n        key = f\"MONTHLY-CREDIT-TOP-UP-{cur_month}\"\n\n        try:\n            await CreditTransaction.prisma().create(\n                data={\n                    \"amount\": self.num_user_credits_refill,\n                    \"type\": CreditTransactionType.TOP_UP,\n                    \"userId\": user_id,\n                    \"transactionKey\": key,\n                    \"createdAt\": self.time_now(),\n                }\n            )\n        except UniqueViolationError:\n            pass  # Already refilled this month\n\n        return self.num_user_credits_refill\n\n    @staticmethod\n    def time_now():\n        return datetime.now(timezone.utc)\n\n    def _block_usage_cost(\n        self,\n        block: Block,\n        input_data: BlockInput,\n        data_size: float,\n        run_time: float,\n    ) -> tuple[int, BlockInput]:\n        block_costs = BLOCK_COSTS.get(type(block))\n        if not block_costs:\n            return 0, {}\n\n        for block_cost in block_costs:\n            if not self._is_cost_filter_match(block_cost.cost_filter, input_data):\n                continue\n\n            if block_cost.cost_type == BlockCostType.RUN:\n                return block_cost.cost_amount, block_cost.cost_filter\n\n            if block_cost.cost_type == BlockCostType.SECOND:\n                return (\n                    int(run_time * block_cost.cost_amount),\n                    block_cost.cost_filter,\n                )\n\n            if block_cost.cost_type == BlockCostType.BYTE:\n                return (\n                    int(data_size * block_cost.cost_amount),\n                    block_cost.cost_filter,\n                )\n\n        return 0, {}\n\n    def _is_cost_filter_match(\n        self, cost_filter: BlockInput, input_data: BlockInput\n    ) -> bool:\n        \"\"\"\n        Filter rules:\n          - If costFilter is an object, then check if costFilter is the subset of inputValues\n          - Otherwise, check if costFilter is equal to inputValues.\n          - Undefined, null, and empty string are considered as equal.\n        \"\"\"\n        if not isinstance(cost_filter, dict) or not isinstance(input_data, dict):\n            return cost_filter == input_data\n\n        return all(\n            (not input_data.get(k) and not v)\n            or (input_data.get(k) and self._is_cost_filter_match(v, input_data[k]))\n            for k, v in cost_filter.items()\n        )\n\n    async def spend_credits(\n        self,\n        user_id: str,\n        user_credit: int,\n        block_id: str,\n        input_data: BlockInput,\n        data_size: float,\n        run_time: float,\n        validate_balance: bool = True,\n    ) -> int:\n        block = get_block(block_id)\n        if not block:\n            raise ValueError(f\"Block not found: {block_id}\")\n\n        cost, matching_filter = self._block_usage_cost(\n            block=block, input_data=input_data, data_size=data_size, run_time=run_time\n        )\n        if cost <= 0:\n            return 0\n\n        if validate_balance and user_credit < cost:\n            raise ValueError(f\"Insufficient credit: {user_credit} < {cost}\")\n\n        await CreditTransaction.prisma().create(\n            data={\n                \"userId\": user_id,\n                \"amount\": -cost,\n                \"type\": CreditTransactionType.USAGE,\n                \"blockId\": block.id,\n                \"metadata\": Json(\n                    {\n                        \"block\": block.name,\n                        \"input\": matching_filter,\n                    }\n                ),\n                \"createdAt\": self.time_now(),\n            }\n        )\n        return cost\n\n    async def top_up_credits(self, user_id: str, amount: int):\n        await CreditTransaction.prisma().create(\n            data={\n                \"userId\": user_id,\n                \"amount\": amount,\n                \"type\": CreditTransactionType.TOP_UP,\n                \"createdAt\": self.time_now(),\n            }\n        )",
+        "successors": [
+          9
+        ]
+      },
+      {
+        "id": 9,
+        "start_line": 220,
+        "end_line": 231,
+        "label": "class DisabledUserCredit(UserCreditBase):\n    async def get_or_refill_credit(self, *args, **kwargs) -> int:\n        return 0\n\n    async def spend_credits(self, *args, **kwargs) -> int:\n        return 0\n\n    async def top_up_credits(self, *args, **kwargs):\n        pass\n\n\n\n\n\ndef get_user_credit_model() -> UserCreditBase:\n    if config.enable_credit.lower() == \"true\":\n        return UserCredit(config.num_user_credits_refill)\n    else:\n        return DisabledUserCredit(0)",
+        "successors": [
+          10
+        ]
+      },
+      {
+        "id": 10,
+        "start_line": 232,
+        "end_line": 234,
+        "label": "def get_block_costs() -> dict[str, list[BlockCost]]:\n    return {block().id: costs for block, costs in BLOCK_COSTS.items()}",
+        "successors": []
+      }
+    ]
+  },
+  "code_length": 234
+}

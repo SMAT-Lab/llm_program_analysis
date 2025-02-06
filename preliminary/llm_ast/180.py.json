@@ -1,0 +1,276 @@
+{
+    "type": "module",
+    "code": "import logging\nfrom typing import Optional, cast\n\nfrom autogpt_libs.auth.models import DEFAULT_USER_ID\nfrom fastapi import HTTPException\nfrom prisma import Json\nfrom prisma.models import User\n\nfrom backend.data.db import prisma\nfrom backend.data.model import UserIntegrations, UserMetadata, UserMetadataRaw\nfrom backend.util.encryption import JSONCryptor\n\nlogger = logging.getLogger(__name__)\n\n\nasync def get_or_create_user(user_data: dict) -> User:\n    user_id = user_data.get(\"sub\")\n    if not user_id:\n        raise HTTPException(status_code=401, detail=\"User ID not found in token\")\n\n    user_email = user_data.get(\"email\")\n    if not user_email:\n        raise HTTPException(status_code=401, detail=\"Email not found in token\")\n\n    user = await prisma.user.find_unique(where={\"id\": user_id})\n    if not user:\n        user = await prisma.user.create(\n            data={\n                \"id\": user_id,\n                \"email\": user_email,\n                \"name\": user_data.get(\"user_metadata\", {}).get(\"name\"),\n            }\n        )\n    return User.model_validate(user)\n\n\nasync def get_user_by_id(user_id: str) -> Optional[User]:\n    user = await prisma.user.find_unique(where={\"id\": user_id})\n    return User.model_validate(user) if user else None\n\n\nasync def create_default_user() -> Optional[User]:\n    user = await prisma.user.find_unique(where={\"id\": DEFAULT_USER_ID})\n    if not user:\n        user = await prisma.user.create(\n            data={\n                \"id\": DEFAULT_USER_ID,\n                \"email\": \"default@example.com\",\n                \"name\": \"Default User\",\n            }\n        )\n    return User.model_validate(user)\n\n\nasync def get_user_metadata(user_id: str) -> UserMetadata:\n    user = await User.prisma().find_unique_or_raise(\n        where={\"id\": user_id},\n    )\n\n    metadata = cast(UserMetadataRaw, user.metadata)\n    return UserMetadata.model_validate(metadata)\n\n\nasync def update_user_metadata(user_id: str, metadata: UserMetadata):\n    await User.prisma().update(\n        where={\"id\": user_id},\n        data={\"metadata\": Json(metadata.model_dump())},\n    )\n\n\nasync def get_user_integrations(user_id: str) -> UserIntegrations:\n    user = await User.prisma().find_unique_or_raise(\n        where={\"id\": user_id},\n    )\n\n    encrypted_integrations = user.integrations\n    if not encrypted_integrations:\n        return UserIntegrations()\n    else:\n        return UserIntegrations.model_validate(\n            JSONCryptor().decrypt(encrypted_integrations)\n        )\n\n\nasync def update_user_integrations(user_id: str, data: UserIntegrations):\n    encrypted_data = JSONCryptor().encrypt(data.model_dump())\n    await User.prisma().update(\n        where={\"id\": user_id},\n        data={\"integrations\": encrypted_data},\n    )\n\n\nasync def migrate_and_encrypt_user_integrations():\n    \"\"\"Migrate integration credentials and OAuth states from metadata to integrations column.\"\"\"\n    users = await User.prisma().find_many(\n        where={\n            \"metadata\": {\n                \"path\": [\"integration_credentials\"],\n                \"not\": Json({\"a\": \"yolo\"}),  # bogus value works to check if key exists\n            }  # type: ignore\n        }\n    )\n    logger.info(f\"Migrating integration credentials for {len(users)} users\")\n\n    for user in users:\n        raw_metadata = cast(UserMetadataRaw, user.metadata)\n        metadata = UserMetadata.model_validate(raw_metadata)\n\n        # Get existing integrations data\n        integrations = await get_user_integrations(user_id=user.id)\n\n        # Copy credentials and oauth states from metadata if they exist\n        if metadata.integration_credentials and not integrations.credentials:\n            integrations.credentials = metadata.integration_credentials\n        if metadata.integration_oauth_states:\n            integrations.oauth_states = metadata.integration_oauth_states\n\n        # Save to integrations column\n        await update_user_integrations(user_id=user.id, data=integrations)\n\n        # Remove from metadata\n        raw_metadata = dict(raw_metadata)\n        raw_metadata.pop(\"integration_credentials\", None)\n        raw_metadata.pop(\"integration_oauth_states\", None)\n\n        # Update metadata without integration data\n        await User.prisma().update(\n            where={\"id\": user.id},\n            data={\"metadata\": Json(raw_metadata)},\n        )\n",
+    "children": [
+        {
+            "type": "aliased_import",
+            "code": "import logging",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "code": "from typing import Optional, cast",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "code": "from autogpt_libs.auth.models import DEFAULT_USER_ID",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "code": "from fastapi import HTTPException",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "code": "from prisma import Json",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "code": "from prisma.models import User",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "code": "from backend.data.db import prisma",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "code": "from backend.data.model import UserIntegrations, UserMetadata, UserMetadataRaw",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "code": "from backend.util.encryption import JSONCryptor",
+            "children": []
+        },
+        {
+            "type": "assignment",
+            "code": "logger = logging.getLogger(__name__)",
+            "children": []
+        },
+        {
+            "type": "function_definition",
+            "code": "async def get_or_create_user(user_data: dict) -> User:",
+            "children": [
+                {
+                    "type": "assignment",
+                    "code": "user_id = user_data.get(\"sub\")",
+                    "children": []
+                },
+                {
+                    "type": "if_statement",
+                    "code": "if not user_id:",
+                    "children": [
+                        {
+                            "type": "block",
+                            "code": "raise HTTPException(status_code=401, detail=\"User ID not found in token\")",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "assignment",
+                    "code": "user_email = user_data.get(\"email\")",
+                    "children": []
+                },
+                {
+                    "type": "if_statement",
+                    "code": "if not user_email:",
+                    "children": [
+                        {
+                            "type": "block",
+                            "code": "raise HTTPException(status_code=401, detail=\"Email not found in token\")",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "assignment",
+                    "code": "user = await prisma.user.find_unique(where={\"id\": user_id})",
+                    "children": []
+                },
+                {
+                    "type": "if_statement",
+                    "code": "if not user:",
+                    "children": [
+                        {
+                            "type": "block",
+                            "code": "user = await prisma.user.create(\n            data={\n                \"id\": user_id,\n                \"email\": user_email,\n                \"name\": user_data.get(\"user_metadata\", {}).get(\"name\"),\n            }\n        )",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "return_statement",
+                    "code": "return User.model_validate(user)",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "code": "async def get_user_by_id(user_id: str) -> Optional[User]:",
+            "children": [
+                {
+                    "type": "assignment",
+                    "code": "user = await prisma.user.find_unique(where={\"id\": user_id})",
+                    "children": []
+                },
+                {
+                    "type": "return_statement",
+                    "code": "return User.model_validate(user) if user else None",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "code": "async def create_default_user() -> Optional[User]:",
+            "children": [
+                {
+                    "type": "assignment",
+                    "code": "user = await prisma.user.find_unique(where={\"id\": DEFAULT_USER_ID})",
+                    "children": []
+                },
+                {
+                    "type": "if_statement",
+                    "code": "if not user:",
+                    "children": [
+                        {
+                            "type": "block",
+                            "code": "user = await prisma.user.create(\n            data={\n                \"id\": DEFAULT_USER_ID,\n                \"email\": \"default@example.com\",\n                \"name\": \"Default User\",\n            }\n        )",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "return_statement",
+                    "code": "return User.model_validate(user)",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "code": "async def get_user_metadata(user_id: str) -> UserMetadata:",
+            "children": [
+                {
+                    "type": "assignment",
+                    "code": "user = await User.prisma().find_unique_or_raise(\n        where={\"id\": user_id},\n    )",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "code": "metadata = cast(UserMetadataRaw, user.metadata)",
+                    "children": []
+                },
+                {
+                    "type": "return_statement",
+                    "code": "return UserMetadata.model_validate(metadata)",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "code": "async def update_user_metadata(user_id: str, metadata: UserMetadata):",
+            "children": [
+                {
+                    "type": "await",
+                    "code": "await User.prisma().update(\n        where={\"id\": user_id},\n        data={\"metadata\": Json(metadata.model_dump())},\n    )",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "code": "async def get_user_integrations(user_id: str) -> UserIntegrations:",
+            "children": [
+                {
+                    "type": "assignment",
+                    "code": "user = await User.prisma().find_unique_or_raise(\n        where={\"id\": user_id},\n    )",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "code": "encrypted_integrations = user.integrations",
+                    "children": []
+                },
+                {
+                    "type": "if_statement",
+                    "code": "if not encrypted_integrations:",
+                    "children": [
+                        {
+                            "type": "block",
+                            "code": "return UserIntegrations()",
+                            "children": []
+                        },
+                        {
+                            "type": "else_clause",
+                            "code": "else:",
+                            "children": [
+                                {
+                                    "type": "block",
+                                    "code": "return UserIntegrations.model_validate(\n            JSONCryptor().decrypt(encrypted_integrations)\n        )",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "code": "async def update_user_integrations(user_id: str, data: UserIntegrations):",
+            "children": [
+                {
+                    "type": "assignment",
+                    "code": "encrypted_data = JSONCryptor().encrypt(data.model_dump())",
+                    "children": []
+                },
+                {
+                    "type": "await",
+                    "code": "await User.prisma().update(\n        where={\"id\": user_id},\n        data={\"integrations\": encrypted_data},\n    )",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "code": "async def migrate_and_encrypt_user_integrations():",
+            "children": [
+                {
+                    "type": "docstring",
+                    "code": "\"\"\"Migrate integration credentials and OAuth states from metadata to integrations column.\"\"\"",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "code": "users = await User.prisma().find_many(\n        where={\n            \"metadata\": {\n                \"path\": [\"integration_credentials\"],\n                \"not\": Json({\"a\": \"yolo\"}),  # bogus value works to check if key exists\n            }  # type: ignore\n        }\n    )",
+                    "children": []
+                },
+                {
+                    "type": "expression_statement",
+                    "code": "logger.info(f\"Migrating integration credentials for {len(users)} users\")",
+                    "children": []
+                },
+                {
+                    "type": "for_statement",
+                    "code": "for user in users:",
+                    "children": [
+                        {
+                            "type": "block",
+                            "code": "raw_metadata = cast(UserMetadataRaw, user.metadata)\n        metadata = UserMetadata.model_validate(raw_metadata)\n        \n        # Get existing integrations data\n        integrations = await get_user_integrations(user_id=user.id)\n        \n        # Copy credentials and oauth states from metadata if they exist\n        if metadata.integration_credentials and not integrations.credentials:\n            integrations.credentials = metadata.integration_credentials\n        if metadata.integration_oauth_states:\n            integrations.oauth_states = metadata.integration_oauth_states\n        \n        # Save to integrations column\n        await update_user_integrations(user_id=user.id, data=integrations)\n        \n        # Remove from metadata\n        raw_metadata = dict(raw_metadata)\n        raw_metadata.pop(\"integration_credentials\", None)\n        raw_metadata.pop(\"integration_oauth_states\", None)\n        \n        # Update metadata without integration data\n        await User.prisma().update(\n            where={\"id\": user.id},\n            data={\"metadata\": Json(raw_metadata)},\n        )",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

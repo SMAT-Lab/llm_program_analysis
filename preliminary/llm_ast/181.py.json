@@ -1,0 +1,324 @@
+{
+    "type": "module",
+    "code": "",
+    "children": [
+        {
+            "type": "import_statement",
+            "code": "import logging"
+        },
+        {
+            "type": "import_statement",
+            "code": "import secrets"
+        },
+        {
+            "type": "import_from_statement",
+            "code": "from abc import ABC, abstractmethod"
+        },
+        {
+            "type": "import_from_statement",
+            "code": "from typing import ClassVar, Generic, Optional, TypeVar"
+        },
+        {
+            "type": "import_from_statement",
+            "code": "from uuid import uuid4"
+        },
+        {
+            "type": "import_from_statement",
+            "code": "from fastapi import Request"
+        },
+        {
+            "type": "import_from_statement",
+            "code": "from strenum import StrEnum"
+        },
+        {
+            "type": "import_from_statement",
+            "code": "from backend.data import integrations"
+        },
+        {
+            "type": "import_from_statement",
+            "code": "from backend.data.model import Credentials"
+        },
+        {
+            "type": "import_from_statement",
+            "code": "from backend.integrations.providers import ProviderName"
+        },
+        {
+            "type": "import_from_statement",
+            "code": "from backend.integrations.webhooks.utils import webhook_ingress_url"
+        },
+        {
+            "type": "import_from_statement",
+            "code": "from backend.util.exceptions import MissingConfigError"
+        },
+        {
+            "type": "import_from_statement",
+            "code": "from backend.util.settings import Config"
+        },
+        {
+            "type": "assignment",
+            "code": "logger = logging.getLogger(__name__)"
+        },
+        {
+            "type": "assignment",
+            "code": "app_config = Config()"
+        },
+        {
+            "type": "class_definition",
+            "code": "class BaseWebhooksManager(ABC, Generic[WT]):",
+            "children": [
+                {
+                    "type": "block",
+                    "code": "",
+                    "children": [
+                        {
+                            "type": "assignment",
+                            "code": "PROVIDER_NAME: ClassVar[ProviderName]"
+                        },
+                        {
+                            "type": "assignment",
+                            "code": "WebhookType: WT"
+                        },
+                        {
+                            "type": "function_definition",
+                            "code": "async def get_suitable_auto_webhook(self, user_id: str, credentials: Credentials, webhook_type: WT, resource: str, events: list[str]) -> integrations.Webhook:",
+                            "children": [
+                                {
+                                    "type": "block",
+                                    "code": "",
+                                    "children": [
+                                        {
+                                            "type": "if_statement",
+                                            "code": "if not app_config.platform_base_url:",
+                                            "children": [
+                                                {
+                                                    "type": "raise_statement",
+                                                    "code": "raise MissingConfigError(\"PLATFORM_BASE_URL must be set to use Webhook functionality\")"
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "if_statement",
+                                            "code": "if webhook := await integrations.find_webhook_by_credentials_and_props(credentials.id, webhook_type, resource, events):",
+                                            "children": [
+                                                {
+                                                    "type": "return_statement",
+                                                    "code": "return webhook"
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "return_statement",
+                                            "code": "return await self._create_webhook(user_id, webhook_type, events, resource, credentials)"
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "function_definition",
+                            "code": "async def get_manual_webhook(self, user_id: str, graph_id: str, webhook_type: WT, events: list[str]):",
+                            "children": [
+                                {
+                                    "type": "block",
+                                    "code": "",
+                                    "children": [
+                                        {
+                                            "type": "if_statement",
+                                            "code": "if current_webhook := await integrations.find_webhook_by_graph_and_props(graph_id, self.PROVIDER_NAME, webhook_type, events):",
+                                            "children": [
+                                                {
+                                                    "type": "return_statement",
+                                                    "code": "return current_webhook"
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "return_statement",
+                                            "code": "return await self._create_webhook(user_id, webhook_type, events, register=False)"
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "function_definition",
+                            "code": "async def prune_webhook_if_dangling(self, webhook_id: str, credentials: Optional[Credentials]) -> bool:",
+                            "children": [
+                                {
+                                    "type": "block",
+                                    "code": "",
+                                    "children": [
+                                        {
+                                            "type": "assignment",
+                                            "code": "webhook = await integrations.get_webhook(webhook_id)"
+                                        },
+                                        {
+                                            "type": "if_statement",
+                                            "code": "if webhook.attached_nodes is None:",
+                                            "children": [
+                                                {
+                                                    "type": "raise_statement",
+                                                    "code": "raise ValueError(\"Error retrieving webhook including attached nodes\")"
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "if_statement",
+                                            "code": "if webhook.attached_nodes:",
+                                            "children": [
+                                                {
+                                                    "type": "return_statement",
+                                                    "code": "return False"
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "if_statement",
+                                            "code": "if credentials:",
+                                            "children": [
+                                                {
+                                                    "type": "expression_statement",
+                                                    "code": "await self._deregister_webhook(webhook, credentials)"
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "expression_statement",
+                                            "code": "await integrations.delete_webhook(webhook.id)"
+                                        },
+                                        {
+                                            "type": "return_statement",
+                                            "code": "return True"
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "function_definition",
+                            "code": "@classmethod\n@abstractmethod\nasync def validate_payload(cls, webhook: integrations.Webhook, request: Request) -> tuple[dict, str]:",
+                            "children": [
+                                {
+                                    "type": "block",
+                                    "code": "",
+                                    "children": [
+                                        {
+                                            "type": "expression_statement",
+                                            "code": "\"\"\"\nValidates an incoming webhook request and returns its payload and type.\n\nParams:\n    webhook: Object representing the configured webhook and its properties in our system.\n    request: Incoming FastAPI `Request`\n\nReturns:\n    dict: The validated payload\n    str: The event type associated with the payload\n\"\"\""
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "function_definition",
+                            "code": "async def trigger_ping(self, webhook: integrations.Webhook, credentials: Credentials | None) -> None:",
+                            "children": [
+                                {
+                                    "type": "block",
+                                    "code": "",
+                                    "children": [
+                                        {
+                                            "type": "expression_statement",
+                                            "code": "\"\"\"\nTriggers a ping to the given webhook.\n\nRaises:\n    NotImplementedError: if the provider doesn't support pinging\n\"\"\""
+                                        },
+                                        {
+                                            "type": "raise_statement",
+                                            "code": "raise NotImplementedError(f\"{self.__class__.__name__} doesn't support pinging\")"
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "function_definition",
+                            "code": "@abstractmethod\nasync def _register_webhook(self, credentials: Credentials, webhook_type: WT, resource: str, events: list[str], ingress_url: str, secret: str) -> tuple[str, dict]:",
+                            "children": [
+                                {
+                                    "type": "block",
+                                    "code": "",
+                                    "children": [
+                                        {
+                                            "type": "expression_statement",
+                                            "code": "\"\"\"\nRegisters a new webhook with the provider.\n\nParams:\n    credentials: The credentials with which to create the webhook\n    webhook_type: The provider-specific webhook type to create\n    resource: The resource to receive events for\n    events: The events to subscribe to\n    ingress_url: The ingress URL for webhook payloads\n    secret: Secret used to verify webhook payloads\n\nReturns:\n    str: Webhook ID assigned by the provider\n    config: Provider-specific configuration for the webhook\n\"\"\""
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "function_definition",
+                            "code": "@abstractmethod\nasync def _deregister_webhook(self, webhook: integrations.Webhook, credentials: Credentials) -> None:",
+                            "children": []
+                        },
+                        {
+                            "type": "function_definition",
+                            "code": "async def _create_webhook(self, user_id: str, webhook_type: WT, events: list[str], resource: str = \"\", credentials: Optional[Credentials] = None, register: bool = True) -> integrations.Webhook:",
+                            "children": [
+                                {
+                                    "type": "block",
+                                    "code": "",
+                                    "children": [
+                                        {
+                                            "type": "if_statement",
+                                            "code": "if not app_config.platform_base_url:",
+                                            "children": [
+                                                {
+                                                    "type": "raise_statement",
+                                                    "code": "raise MissingConfigError(\"PLATFORM_BASE_URL must be set to use Webhook functionality\")"
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "assignment",
+                                            "code": [
+                                                "id = str(uuid4())",
+                                                "secret = secrets.token_hex(32)",
+                                                "provider_name = self.PROVIDER_NAME",
+                                                "ingress_url = webhook_ingress_url(provider_name=provider_name, webhook_id=id)"
+                                            ]
+                                        },
+                                        {
+                                            "type": "if_statement",
+                                            "code": "if register:",
+                                            "children": [
+                                                {
+                                                    "type": "if_statement",
+                                                    "code": "if not credentials:",
+                                                    "children": [
+                                                        {
+                                                            "type": "raise_statement",
+                                                            "code": "raise TypeError(\"credentials are required if register = True\")"
+                                                        }
+                                                    ]
+                                                },
+                                                {
+                                                    "type": "assignment",
+                                                    "code": "provider_webhook_id, config = await self._register_webhook(credentials, webhook_type, resource, events, ingress_url, secret)"
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "else_clause",
+                                            "code": "else:",
+                                            "children": [
+                                                {
+                                                    "type": "assignment",
+                                                    "code": "provider_webhook_id, config = \"\", {}"
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "return_statement",
+                                            "code": "return await integrations.create_webhook(integrations.Webhook(id=id, user_id=user_id, provider=provider_name, credentials_id=credentials.id if credentials else \"\", webhook_type=webhook_type, resource=resource, events=events, provider_webhook_id=provider_webhook_id, config=config, secret=secret))"
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

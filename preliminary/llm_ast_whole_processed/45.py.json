@@ -1,0 +1,1189 @@
+{
+    "type": "module",
+    "start_token": 0,
+    "end_token": 1821,
+    "label": "import logging\nimport uuid\nfrom datetime import datetime, timezone\nfrom typing import List, Optional\n\nfrom autogpt_libs.api_key.key_manager import APIKeyManager\nfrom prisma.enums import APIKeyPermission, APIKeyStatus\nfrom prisma.errors import PrismaError\nfrom prisma.models import APIKey as PrismaAPIKey\nfrom prisma.types import (\n    APIKeyCreateInput,\n    APIKeyUpdateInput,\n    APIKeyWhereInput,\n    APIKeyWhereUniqueInput,\n)\nfrom pydantic import BaseModel\n\nfrom backend.data.db import BaseDbModel\n\nlogger = logging.getLogger(__name__)\n\n\n# Some basic exceptions\nclass APIKeyError(Exception):\n    \"\"\"Base exception for API key operations\"\"\"\n\n    pass\n\n\nclass APIKeyNotFoundError(APIKeyError):\n    \"\"\"Raised when an API key is not found\"\"\"\n\n    pass\n\n\nclass APIKeyPermissionError(APIKeyError):\n    \"\"\"Raised when there are permission issues with API key operations\"\"\"\n\n    pass\n\n\nclass APIKeyValidationError(APIKeyError):\n    \"\"\"Raised when API key validation fails\"\"\"\n\n    pass\n\n\nclass APIKey(BaseDbModel):\n    name: str\n    prefix: str\n    key: str\n    status: APIKeyStatus = APIKeyStatus.ACTIVE\n    permissions: List[APIKeyPermission]\n    postfix: str\n    created_at: datetime\n    last_used_at: Optional[datetime] = None\n    revoked_at: Optional[datetime] = None\n    description: Optional[str] = None\n    user_id: str\n\n    @staticmethod\n    def from_db(api_key: PrismaAPIKey):\n        try:\n            return APIKey(\n                id=api_key.id,\n                name=api_key.name,\n                prefix=api_key.prefix,\n                postfix=api_key.postfix,\n                key=api_key.key,\n                status=APIKeyStatus(api_key.status),\n                permissions=[APIKeyPermission(p) for p in api_key.permissions],\n                created_at=api_key.createdAt,\n                last_used_at=api_key.lastUsedAt,\n                revoked_at=api_key.revokedAt,\n                description=api_key.description,\n                user_id=api_key.userId,\n            )\n        except Exception as e:\n            logger.error(f\"Error creating APIKey from db: {str(e)}\")\n            raise APIKeyError(f\"Failed to create API key object: {str(e)}\")\n\n\nclass APIKeyWithoutHash(BaseModel):\n    id: str\n    name: str\n    prefix: str\n    postfix: str\n    status: APIKeyStatus\n    permissions: List[APIKeyPermission]\n    created_at: datetime\n    last_used_at: Optional[datetime]\n    revoked_at: Optional[datetime]\n    description: Optional[str]\n    user_id: str\n\n    @staticmethod\n    def from_db(api_key: PrismaAPIKey):\n        try:\n            return APIKeyWithoutHash(\n                id=api_key.id,\n                name=api_key.name,\n                prefix=api_key.prefix,\n                postfix=api_key.postfix,\n                status=APIKeyStatus(api_key.status),\n                permissions=[APIKeyPermission(p) for p in api_key.permissions],\n                created_at=api_key.createdAt,\n                last_used_at=api_key.lastUsedAt,\n                revoked_at=api_key.revokedAt,\n                description=api_key.description,\n                user_id=api_key.userId,\n            )\n        except Exception as e:\n            logger.error(f\"Error creating APIKeyWithoutHash from db: {str(e)}\")\n            raise APIKeyError(f\"Failed to create API key object: {str(e)}\")\n\n\nasync def generate_api_key(\n    name: str,\n    user_id: str,\n    permissions: List[APIKeyPermission],\n    description: Optional[str] = None,\n) -> tuple[APIKeyWithoutHash, str]:\n    \"\"\"\n    Generate a new API key and store it in the database.\n    Returns the API key object (without hash) and the plain text key.\n    \"\"\"\n    try:\n        api_manager = APIKeyManager()\n        key = api_manager.generate_api_key()\n\n        api_key = await PrismaAPIKey.prisma().create(\n            data=APIKeyCreateInput(\n                id=str(uuid.uuid4()),\n                name=name,\n                prefix=key.prefix,\n                postfix=key.postfix,\n                key=key.hash,\n                permissions=[p for p in permissions],\n                description=description,\n                userId=user_id,\n            )\n        )\n\n        api_key_without_hash = APIKeyWithoutHash.from_db(api_key)\n        return api_key_without_hash, key.raw\n    except PrismaError as e:\n        logger.error(f\"Database error while generating API key: {str(e)}\")\n        raise APIKeyError(f\"Failed to generate API key: {str(e)}\")\n    except Exception as e:\n        logger.error(f\"Unexpected error while generating API key: {str(e)}\")\n        raise APIKeyError(f\"Failed to generate API key: {str(e)}\")\n\n\nasync def validate_api_key(plain_text_key: str) -> Optional[APIKey]:\n    \"\"\"\n    Validate an API key and return the API key object if valid.\n    \"\"\"\n    try:\n        if not plain_text_key.startswith(APIKeyManager.PREFIX):\n            logger.warning(\"Invalid API key format\")\n            return None\n\n        prefix = plain_text_key[: APIKeyManager.PREFIX_LENGTH]\n        api_manager = APIKeyManager()\n\n        api_key = await PrismaAPIKey.prisma().find_first(\n            where=APIKeyWhereInput(prefix=prefix, status=(APIKeyStatus.ACTIVE))\n        )\n\n        if not api_key:\n            logger.warning(f\"No active API key found with prefix {prefix}\")\n            return None\n\n        is_valid = api_manager.verify_api_key(plain_text_key, api_key.key)\n        if not is_valid:\n            logger.warning(\"API key verification failed\")\n            return None\n\n        return APIKey.from_db(api_key)\n    except Exception as e:\n        logger.error(f\"Error validating API key: {str(e)}\")\n        raise APIKeyValidationError(f\"Failed to validate API key: {str(e)}\")\n\n\nasync def revoke_api_key(key_id: str, user_id: str) -> Optional[APIKeyWithoutHash]:\n    try:\n        api_key = await PrismaAPIKey.prisma().find_unique(where={\"id\": key_id})\n\n        if not api_key:\n            raise APIKeyNotFoundError(f\"API key with id {key_id} not found\")\n\n        if api_key.userId != user_id:\n            raise APIKeyPermissionError(\n                \"You do not have permission to revoke this API key.\"\n            )\n\n        where_clause: APIKeyWhereUniqueInput = {\"id\": key_id}\n        updated_api_key = await PrismaAPIKey.prisma().update(\n            where=where_clause,\n            data=APIKeyUpdateInput(\n                status=APIKeyStatus.REVOKED, revokedAt=datetime.now(timezone.utc)\n            ),\n        )\n\n        if updated_api_key:\n            return APIKeyWithoutHash.from_db(updated_api_key)\n        return None\n    except (APIKeyNotFoundError, APIKeyPermissionError) as e:\n        raise e\n    except PrismaError as e:\n        logger.error(f\"Database error while revoking API key: {str(e)}\")\n        raise APIKeyError(f\"Failed to revoke API key: {str(e)}\")\n    except Exception as e:\n        logger.error(f\"Unexpected error while revoking API key: {str(e)}\")\n        raise APIKeyError(f\"Failed to revoke API key: {str(e)}\")\n\n\nasync def list_user_api_keys(user_id: str) -> List[APIKeyWithoutHash]:\n    try:\n        where_clause: APIKeyWhereInput = {\"userId\": user_id}\n\n        api_keys = await PrismaAPIKey.prisma().find_many(\n            where=where_clause, order={\"createdAt\": \"desc\"}\n        )\n\n        return [APIKeyWithoutHash.from_db(key) for key in api_keys]\n    except PrismaError as e:\n        logger.error(f\"Database error while listing API keys: {str(e)}\")\n        raise APIKeyError(f\"Failed to list API keys: {str(e)}\")\n    except Exception as e:\n        logger.error(f\"Unexpected error while listing API keys: {str(e)}\")\n        raise APIKeyError(f\"Failed to list API keys: {str(e)}\")\n\n\nasync def suspend_api_key(key_id: str, user_id: str) -> Optional[APIKeyWithoutHash]:\n    try:\n        api_key = await PrismaAPIKey.prisma().find_unique(where={\"id\": key_id})\n\n        if not api_key:\n            raise APIKeyNotFoundError(f\"API key with id {key_id} not found\")\n\n        if api_key.userId != user_id:\n            raise APIKeyPermissionError(\n                \"You do not have permission to suspend this API key.\"\n            )\n\n        where_clause: APIKeyWhereUniqueInput = {\"id\": key_id}\n        updated_api_key = await PrismaAPIKey.prisma().update(\n            where=where_clause,\n            data=APIKeyUpdateInput(status=APIKeyStatus.SUSPENDED),\n        )\n\n        if updated_api_key:\n            return APIKeyWithoutHash.from_db(updated_api_key)\n        return None\n    except (APIKeyNotFoundError, APIKeyPermissionError) as e:\n        raise e\n    except PrismaError as e:\n        logger.error(f\"Database error while suspending API key: {str(e)}\")\n        raise APIKeyError(f\"Failed to suspend API key: {str(e)}\")\n    except Exception as e:\n        logger.error(f\"Unexpected error while suspending API key: {str(e)}\")\n        raise APIKeyError(f\"Failed to suspend API key: {str(e)}\")\n\n\ndef has_permission(api_key: APIKey, required_permission: APIKeyPermission) -> bool:\n    try:\n        return required_permission in api_key.permissions\n    except Exception as e:\n        logger.error(f\"Error checking API key permissions: {str(e)}\")\n        return False\n\n\nasync def get_api_key_by_id(key_id: str, user_id: str) -> Optional[APIKeyWithoutHash]:\n    try:\n        api_key = await PrismaAPIKey.prisma().find_first(\n            where=APIKeyWhereInput(id=key_id, userId=user_id)\n        )\n\n        if not api_key:\n            return None\n\n        return APIKeyWithoutHash.from_db(api_key)\n    except PrismaError as e:\n        logger.error(f\"Database error while getting API key: {str(e)}\")\n        raise APIKeyError(f\"Failed to get API key: {str(e)}\")\n    except Exception as e:\n        logger.error(f\"Unexpected error while getting API key: {str(e)}\")\n        raise APIKeyError(f\"Failed to get API key: {str(e)}\")\n\n\nasync def update_api_key_permissions(\n    key_id: str, user_id: str, permissions: List[APIKeyPermission]\n) -> Optional[APIKeyWithoutHash]:\n    \"\"\"\n    Update the permissions of an API key.\n    \"\"\"\n    try:\n        api_key = await PrismaAPIKey.prisma().find_unique(where={\"id\": key_id})\n\n        if api_key is None:\n            raise APIKeyNotFoundError(\"No such API key found.\")\n\n        if api_key.userId != user_id:\n            raise APIKeyPermissionError(\n                \"You do not have permission to update this API key.\"\n            )\n\n        where_clause: APIKeyWhereUniqueInput = {\"id\": key_id}\n        updated_api_key = await PrismaAPIKey.prisma().update(\n            where=where_clause,\n            data=APIKeyUpdateInput(permissions=permissions),\n        )\n\n        if updated_api_key:\n            return APIKeyWithoutHash.from_db(updated_api_key)\n        return None\n    except (APIKeyNotFoundError, APIKeyPermissionError) as e:\n        raise e\n    except PrismaError as e:\n        logger.error(f\"Database error while updating API key permissions: {str(e)}\")\n        raise APIKeyError(f\"Failed to update API key permissions: {str(e)}\")\n    except Exception as e:\n        logger.error(f\"Unexpected error while updating API key permissions: {str(e)}\")\n        raise APIKeyError(f\"Failed to update API key permissions: {str(e)}\")",
+    "children": [
+        {
+            "type": "import_statement",
+            "start_token": 0,
+            "end_token": 1,
+            "label": "import logging",
+            "children": []
+        },
+        {
+            "type": "import_statement",
+            "start_token": 3,
+            "end_token": 4,
+            "label": "import uuid",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 6,
+            "end_token": 11,
+            "label": "from datetime import datetime, timezone",
+            "children": [
+                {
+                    "type": "dotted_name",
+                    "start_token": 6,
+                    "end_token": 8,
+                    "label": "from datetime import",
+                    "children": []
+                },
+                {
+                    "type": "import_prefix",
+                    "start_token": 9,
+                    "end_token": 11,
+                    "label": "datetime, timezone",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 13,
+            "end_token": 18,
+            "label": "from typing import List, Optional",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 13,
+                    "end_token": 14,
+                    "label": "from typing",
+                    "children": []
+                },
+                {
+                    "type": "import_prefix",
+                    "start_token": 15,
+                    "end_token": 18,
+                    "label": "import List, Optional",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 21,
+            "end_token": 28,
+            "label": "from autogpt_libs.api_key.key_manager import APIKeyManager",
+            "children": [
+                {
+                    "type": "dotted_name",
+                    "start_token": 21,
+                    "end_token": 27,
+                    "label": "from autogpt_libs.api_key.key_manager import",
+                    "children": []
+                },
+                {
+                    "type": "identifier",
+                    "start_token": 28,
+                    "end_token": 28,
+                    "label": "APIKeyManager",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 30,
+            "end_token": 37,
+            "label": "from prisma.enums import APIKeyPermission, APIKeyStatus",
+            "children": [
+                {
+                    "type": "dotted_name",
+                    "start_token": 30,
+                    "end_token": 33,
+                    "label": "from prisma.enums",
+                    "children": []
+                },
+                {
+                    "type": "import_prefix",
+                    "start_token": 34,
+                    "end_token": 37,
+                    "label": "import APIKeyPermission, APIKeyStatus",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 39,
+            "end_token": 44,
+            "label": "from prisma.errors import PrismaError",
+            "children": [
+                {
+                    "type": "dotted_name",
+                    "start_token": 39,
+                    "end_token": 42,
+                    "label": "from prisma.errors",
+                    "children": []
+                },
+                {
+                    "type": "identifier",
+                    "start_token": 44,
+                    "end_token": 44,
+                    "label": "PrismaError",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 46,
+            "end_token": 53,
+            "label": "from prisma.models import APIKey as PrismaAPIKey",
+            "children": [
+                {
+                    "type": "dotted_name",
+                    "start_token": 46,
+                    "end_token": 49,
+                    "label": "from prisma.models",
+                    "children": []
+                },
+                {
+                    "type": "aliased_import",
+                    "start_token": 51,
+                    "end_token": 53,
+                    "label": "APIKey as PrismaAPIKey",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 55,
+            "end_token": 74,
+            "label": "from prisma.types import (\n    APIKeyCreateInput,\n    APIKeyUpdateInput,\n    APIKeyWhereInput,\n    APIKeyWhereUniqueInput,\n)",
+            "children": [
+                {
+                    "type": "dotted_name",
+                    "start_token": 55,
+                    "end_token": 58,
+                    "label": "from prisma.types",
+                    "children": []
+                },
+                {
+                    "type": "parameters",
+                    "start_token": 60,
+                    "end_token": 74,
+                    "label": "(\n    APIKeyCreateInput,\n    APIKeyUpdateInput,\n    APIKeyWhereInput,\n    APIKeyWhereUniqueInput,\n)",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 62,
+                            "end_token": 62,
+                            "label": "APIKeyCreateInput",
+                            "children": []
+                        },
+                        {
+                            "type": "identifier",
+                            "start_token": 65,
+                            "end_token": 65,
+                            "label": "APIKeyUpdateInput",
+                            "children": []
+                        },
+                        {
+                            "type": "identifier",
+                            "start_token": 68,
+                            "end_token": 68,
+                            "label": "APIKeyWhereInput",
+                            "children": []
+                        },
+                        {
+                            "type": "identifier",
+                            "start_token": 71,
+                            "end_token": 71,
+                            "label": "APIKeyWhereUniqueInput",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 76,
+            "end_token": 79,
+            "label": "from pydantic import BaseModel",
+            "children": [
+                {
+                    "type": "dotted_name",
+                    "start_token": 76,
+                    "end_token": 77,
+                    "label": "from pydantic",
+                    "children": []
+                },
+                {
+                    "type": "identifier",
+                    "start_token": 79,
+                    "end_token": 79,
+                    "label": "BaseModel",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 82,
+            "end_token": 89,
+            "label": "from backend.data.db import BaseDbModel",
+            "children": [
+                {
+                    "type": "dotted_name",
+                    "start_token": 82,
+                    "end_token": 87,
+                    "label": "from backend.data.db",
+                    "children": []
+                },
+                {
+                    "type": "identifier",
+                    "start_token": 89,
+                    "end_token": 89,
+                    "label": "BaseDbModel",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "assignment",
+            "start_token": 92,
+            "end_token": 99,
+            "label": "logger = logging.getLogger(__name__)",
+            "children": [
+                {
+                    "type": "attribute",
+                    "start_token": 94,
+                    "end_token": 99,
+                    "label": "logging.getLogger(__name__)",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 94,
+                            "end_token": 96,
+                            "label": "logging.getLogger",
+                            "children": []
+                        },
+                        {
+                            "type": "call",
+                            "start_token": 97,
+                            "end_token": 99,
+                            "label": "(__name__)",
+                            "children": [
+                                {
+                                    "type": "identifier",
+                                    "start_token": 98,
+                                    "end_token": 98,
+                                    "label": "__name__",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "class_definition",
+            "start_token": 108,
+            "end_token": 120,
+            "label": "class APIKeyError(Exception):\n    \"\"\"Base exception for API key operations\"\"\"\n\n    pass",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 108,
+                    "end_token": 109,
+                    "label": "class APIKeyError",
+                    "children": []
+                },
+                {
+                    "type": "parameters",
+                    "start_token": 110,
+                    "end_token": 112,
+                    "label": "(Exception)",
+                    "children": []
+                },
+                {
+                    "type": "block",
+                    "start_token": 113,
+                    "end_token": 120,
+                    "label": ":\n    \"\"\"Base exception for API key operations\"\"\"\n\n    pass",
+                    "children": [
+                        {
+                            "type": "string",
+                            "start_token": 115,
+                            "end_token": 117,
+                            "label": "\"\"\"Base exception for API key operations\"\"\"",
+                            "children": []
+                        },
+                        {
+                            "type": "pass_statement",
+                            "start_token": 120,
+                            "end_token": 120,
+                            "label": "pass",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "class_definition",
+            "start_token": 124,
+            "end_token": 137,
+            "label": "class APIKeyNotFoundError(APIKeyError):\n    \"\"\"Raised when an API key is not found\"\"\"\n\n    pass\n",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 124,
+                    "end_token": 125,
+                    "label": "class APIKeyNotFoundError",
+                    "children": []
+                },
+                {
+                    "type": "parameters",
+                    "start_token": 126,
+                    "end_token": 128,
+                    "label": "(APIKeyError)",
+                    "children": []
+                },
+                {
+                    "type": "block",
+                    "start_token": 129,
+                    "end_token": 137,
+                    "label": ":\n    \"\"\"Raised when an API key is not found\"\"\"\n\n    pass\n",
+                    "children": [
+                        {
+                            "type": "string",
+                            "start_token": 131,
+                            "end_token": 133,
+                            "label": "\"\"\"Raised when an API key is not found\"\"\"",
+                            "children": []
+                        },
+                        {
+                            "type": "pass_statement",
+                            "start_token": 136,
+                            "end_token": 136,
+                            "label": "pass",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "class_definition",
+            "start_token": 140,
+            "end_token": 152,
+            "label": "class APIKeyPermissionError(APIKeyError):\n    \"\"\"Raised when there are permission issues with API key operations\"\"\"\n\n    pass",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 140,
+                    "end_token": 141,
+                    "label": "class APIKeyPermissionError",
+                    "children": []
+                },
+                {
+                    "type": "parameters",
+                    "start_token": 142,
+                    "end_token": 144,
+                    "label": "(APIKeyError)",
+                    "children": []
+                },
+                {
+                    "type": "block",
+                    "start_token": 145,
+                    "end_token": 152,
+                    "label": ":\n    \"\"\"Raised when there are permission issues with API key operations\"\"\"\n\n    pass",
+                    "children": [
+                        {
+                            "type": "string",
+                            "start_token": 147,
+                            "end_token": 149,
+                            "label": "\"\"\"Raised when there are permission issues with API key operations\"\"\"",
+                            "children": []
+                        },
+                        {
+                            "type": "pass_statement",
+                            "start_token": 152,
+                            "end_token": 152,
+                            "label": "pass",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "class_definition",
+            "start_token": 156,
+            "end_token": 168,
+            "label": "class APIKeyValidationError(APIKeyError):\n    \"\"\"Raised when API key validation fails\"\"\"\n\n    pass",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 156,
+                    "end_token": 157,
+                    "label": "class APIKeyValidationError",
+                    "children": []
+                },
+                {
+                    "type": "parameters",
+                    "start_token": 158,
+                    "end_token": 160,
+                    "label": "(APIKeyError)",
+                    "children": []
+                },
+                {
+                    "type": "block",
+                    "start_token": 161,
+                    "end_token": 168,
+                    "label": ":\n    \"\"\"Raised when API key validation fails\"\"\"\n\n    pass",
+                    "children": [
+                        {
+                            "type": "string",
+                            "start_token": 163,
+                            "end_token": 165,
+                            "label": "\"\"\"Raised when API key validation fails\"\"\"",
+                            "children": []
+                        },
+                        {
+                            "type": "pass_statement",
+                            "start_token": 168,
+                            "end_token": 168,
+                            "label": "pass",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "class_definition",
+            "start_token": 172,
+            "end_token": 356,
+            "label": "class APIKey(BaseDbModel):\n    name: str\n    prefix: str\n    key: str\n    status: APIKeyStatus = APIKeyStatus.ACTIVE\n    permissions: List[APIKeyPermission]\n    postfix: str\n    created_at: datetime\n    last_used_at: Optional[datetime] = None\n    revoked_at: Optional[datetime] = None\n    description: Optional[str] = None\n    user_id: str\n\n    @staticmethod\n    def from_db(api_key: PrismaAPIKey):\n        try:\n            return APIKey(\n                id=api_key.id,\n                name=api_key.name,\n                prefix=api_key.prefix,\n                postfix=api_key.postfix,\n                key=api_key.key,\n                status=APIKeyStatus(api_key.status),\n                permissions=[APIKeyPermission(p) for p in api_key.permissions],\n                created_at=api_key.createdAt,\n                last_used_at=api_key.lastUsedAt,\n                revoked_at=api_key.revokedAt,\n                description=api_key.description,\n                user_id=api_key",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 172,
+                    "end_token": 173,
+                    "label": "class APIKey",
+                    "children": []
+                },
+                {
+                    "type": "parameters",
+                    "start_token": 174,
+                    "end_token": 176,
+                    "label": "(BaseDbModel)",
+                    "children": []
+                },
+                {
+                    "type": "block",
+                    "start_token": 177,
+                    "end_token": 356,
+                    "label": ":\n    name: str\n    prefix: str\n    key: str\n    status: APIKeyStatus = APIKeyStatus.ACTIVE\n    permissions: List[APIKeyPermission]\n    postfix: str\n    created_at: datetime\n    last_used_at: Optional[datetime] = None\n    revoked_at: Optional[datetime] = None\n    description: Optional[str] = None\n    user_id: str\n\n    @staticmethod\n    def from_db(api_key: PrismaAPIKey):\n        try:\n            return APIKey(\n                id=api_key.id,\n                name=api_key.name,\n                prefix=api_key.prefix,\n                postfix=api_key.postfix,\n                key=api_key.key,\n                status=APIKeyStatus(api_key.status),\n                permissions=[APIKeyPermission(p) for p in api_key.permissions],\n                created_at=api_key.createdAt,\n                last_used_at=api_key.lastUsedAt,\n                revoked_at=api_key.revokedAt,\n                description=api_key.description,\n                user_id=api_key",
+                    "children": [
+                        {
+                            "type": "assignment",
+                            "start_token": 179,
+                            "end_token": 181,
+                            "label": "name: str",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 183,
+                            "end_token": 185,
+                            "label": "prefix: str",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 187,
+                            "end_token": 189,
+                            "label": "key: str",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 191,
+                            "end_token": 197,
+                            "label": "status: APIKeyStatus = APIKeyStatus.ACTIVE",
+                            "children": [
+                                {
+                                    "type": "attribute",
+                                    "start_token": 195,
+                                    "end_token": 197,
+                                    "label": "APIKeyStatus.ACTIVE",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 199,
+                            "end_token": 205,
+                            "label": "permissions: List[APIKeyPermission]\n",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 206,
+                            "end_token": 208,
+                            "label": "postfix: str",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 210,
+                            "end_token": 212,
+                            "label": "created_at: datetime",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 214,
+                            "end_token": 221,
+                            "label": "last_used_at: Optional[datetime] = None",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 223,
+                            "end_token": 230,
+                            "label": "revoked_at: Optional[datetime] = None",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 232,
+                            "end_token": 239,
+                            "label": "description: Optional[str] = None",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 241,
+                            "end_token": 243,
+                            "label": "user_id: str",
+                            "children": []
+                        },
+                        {
+                            "type": "decorated_definition",
+                            "start_token": 246,
+                            "end_token": 363,
+                            "label": "@staticmethod\n    def from_db(api_key: PrismaAPIKey):\n        try:\n            return APIKey(\n                id=api_key.id,\n                name=api_key.name,\n                prefix=api_key.prefix,\n                postfix=api_key.postfix,\n                key=api_key.key,\n                status=APIKeyStatus(api_key.status),\n                permissions=[APIKeyPermission(p) for p in api_key.permissions],\n                created_at=api_key.createdAt,\n                last_used_at=api_key.lastUsedAt,\n                revoked_at=api_key.revokedAt,\n                description=api_key.description,\n                user_id=api_key.userId,\n            )\n        except",
+                            "children": [
+                                {
+                                    "type": "decorator",
+                                    "start_token": 246,
+                                    "end_token": 248,
+                                    "label": "@staticmethod\n",
+                                    "children": []
+                                },
+                                {
+                                    "type": "function_definition",
+                                    "start_token": 249,
+                                    "end_token": 363,
+                                    "label": "def from_db(api_key: PrismaAPIKey):\n        try:\n            return APIKey(\n                id=api_key.id,\n                name=api_key.name,\n                prefix=api_key.prefix,\n                postfix=api_key.postfix,\n                key=api_key.key,\n                status=APIKeyStatus(api_key.status),\n                permissions=[APIKeyPermission(p) for p in api_key.permissions],\n                created_at=api_key.createdAt,\n                last_used_at=api_key.lastUsedAt,\n                revoked_at=api_key.revokedAt,\n                description=api_key.description,\n                user_id=api_key.userId,\n            )\n        except",
+                                    "children": [
+                                        {
+                                            "type": "identifier",
+                                            "start_token": 249,
+                                            "end_token": 250,
+                                            "label": "def from_db",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "parameters",
+                                            "start_token": 251,
+                                            "end_token": 255,
+                                            "label": "(api_key: PrismaAPIKey)",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "block",
+                                            "start_token": 256,
+                                            "end_token": 363,
+                                            "label": ":\n        try:\n            return APIKey(\n                id=api_key.id,\n                name=api_key.name,\n                prefix=api_key.prefix,\n                postfix=api_key.postfix,\n                key=api_key.key,\n                status=APIKeyStatus(api_key.status),\n                permissions=[APIKeyPermission(p) for p in api_key.permissions],\n                created_at=api_key.createdAt,\n                last_used_at=api_key.lastUsedAt,\n                revoked_at=api_key.revokedAt,\n                description=api_key.description,\n                user_id=api_key.userId,\n            )\n        except",
+                                            "children": [
+                                                {
+                                                    "type": "try_statement",
+                                                    "start_token": 258,
+                                                    "end_token": 363,
+                                                    "label": "try:\n            return APIKey(\n                id=api_key.id,\n                name=api_key.name,\n                prefix=api_key.prefix,\n                postfix=api_key.postfix,\n                key=api_key.key,\n                status=APIKeyStatus(api_key.status),\n                permissions=[APIKeyPermission(p) for p in api_key.permissions],\n                created_at=api_key.createdAt,\n                last_used_at=api_key.lastUsedAt,\n                revoked_at=api_key.revokedAt,\n                description=api_key.description,\n                user_id=api_key.userId,\n            )\n        except",
+                                                    "children": [
+                                                        {
+                                                            "type": "block",
+                                                            "start_token": 259,
+                                                            "end_token": 361,
+                                                            "label": ":\n            return APIKey(\n                id=api_key.id,\n                name=api_key.name,\n                prefix=api_key.prefix,\n                postfix=api_key.postfix,\n                key=api_key.key,\n                status=APIKeyStatus(api_key.status),\n                permissions=[APIKeyPermission(p) for p in api_key.permissions],\n                created_at=api_key.createdAt,\n                last_used_at=api_key.lastUsedAt,\n                revoked_at=api_key.revokedAt,\n                description=api_key.description,\n                user_id=api_key.userId,\n            )",
+                                                            "children": [
+                                                                {
+                                                                    "type": "return_statement",
+                                                                    "start_token": 261,
+                                                                    "end_token": 359,
+                                                                    "label": "return APIKey(\n                id=api_key.id,\n                name=api_key.name,\n                prefix=api_key.prefix,\n                postfix=api_key.postfix,\n                key=api_key.key,\n                status=APIKeyStatus(api_key.status),\n                permissions=[APIKeyPermission(p) for p in api_key.permissions],\n                created_at=api_key.createdAt,\n                last_used_at=api_key.lastUsedAt,\n                revoked_at=api_key.revokedAt,\n                description=api_key.description,\n                user_id=api_key.userId,",
+                                                                    "children": []
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "class_definition",
+            "start_token": 386,
+            "end_token": 578,
+            "label": "class APIKeyWithoutHash(BaseModel):\n    id: str\n    name: str\n    prefix: str\n    postfix: str\n    status: APIKeyStatus\n    permissions: List[APIKeyPermission]\n    created_at: datetime\n    last_used_at: Optional[datetime]\n    revoked_at: Optional[datetime]\n    description: Optional[str]\n    user_id: str\n\n    @staticmethod\n    def from_db(api_key: PrismaAPIKey):\n        try:\n            return APIKeyWithoutHash(\n                id=api_key.id,\n                name=api_key.name,\n                prefix=api_key.prefix,\n                postfix=api_key.postfix,\n                status=APIKeyStatus(api_key.status),\n                permissions=[APIKeyPermission(p) for p in api_key.permissions],\n                created_at=api_key.createdAt,\n                last_used_at=api_key.lastUsedAt,\n                revoked_at=api_key.revokedAt,\n                description=api_key.description,\n                user_id=api_key.userId,\n            )\n        except Exception as e:\n            logger.error(f\"Error creating APIKeyWithoutHash from db: {str(e)}\")\n            raise APIKeyError(f\"Failed to create API key object: {str(e)}\"",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 386,
+                    "end_token": 387,
+                    "label": "class APIKeyWithoutHash",
+                    "children": []
+                },
+                {
+                    "type": "parameters",
+                    "start_token": 388,
+                    "end_token": 390,
+                    "label": "(BaseModel)",
+                    "children": []
+                },
+                {
+                    "type": "block",
+                    "start_token": 391,
+                    "end_token": 578,
+                    "label": ":\n    id: str\n    name: str\n    prefix: str\n    postfix: str\n    status: APIKeyStatus\n    permissions: List[APIKeyPermission]\n    created_at: datetime\n    last_used_at: Optional[datetime]\n    revoked_at: Optional[datetime]\n    description: Optional[str]\n    user_id: str\n\n    @staticmethod\n    def from_db(api_key: PrismaAPIKey):\n        try:\n            return APIKeyWithoutHash(\n                id=api_key.id,\n                name=api_key.name,\n                prefix=api_key.prefix,\n                postfix=api_key.postfix,\n                status=APIKeyStatus(api_key.status),\n                permissions=[APIKeyPermission(p) for p in api_key.permissions],\n                created_at=api_key.createdAt,\n                last_used_at=api_key.lastUsedAt,\n                revoked_at=api_key.revokedAt,\n                description=api_key.description,\n                user_id=api_key.userId,\n            )\n        except Exception as e:\n            logger.error(f\"Error creating APIKeyWithoutHash from db: {str(e)}\")\n            raise APIKeyError(f\"Failed to create API key object: {str(e)}\"",
+                    "children": [
+                        {
+                            "type": "assignment",
+                            "start_token": 393,
+                            "end_token": 395,
+                            "label": "id: str",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 397,
+                            "end_token": 399,
+                            "label": "name: str",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 401,
+                            "end_token": 403,
+                            "label": "prefix: str",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 405,
+                            "end_token": 407,
+                            "label": "postfix: str",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 409,
+                            "end_token": 411,
+                            "label": "status: APIKeyStatus",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 413,
+                            "end_token": 419,
+                            "label": "permissions: List[APIKeyPermission]\n",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 420,
+                            "end_token": 422,
+                            "label": "created_at: datetime",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 424,
+                            "end_token": 430,
+                            "label": "last_used_at: Optional[datetime]\n",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 431,
+                            "end_token": 437,
+                            "label": "revoked_at: Optional[datetime]\n",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 438,
+                            "end_token": 444,
+                            "label": "description: Optional[str]\n",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 445,
+                            "end_token": 447,
+                            "label": "user_id: str",
+                            "children": []
+                        },
+                        {
+                            "type": "decorated_definition",
+                            "start_token": 450,
+                            "end_token": 558,
+                            "label": "@staticmethod\n    def from_db(api_key: PrismaAPIKey):\n        try:\n            return APIKeyWithoutHash(\n                id=api_key.id,\n                name=api_key.name,\n                prefix=api_key.prefix,\n                postfix=api_key.postfix,\n                status=APIKeyStatus(api_key.status),\n                permissions=[APIKeyPermission(p) for p in api_key.permissions],\n                created_at=api_key.createdAt,\n                last_used_at=api_key.lastUsedAt,\n                revoked_at=api_key.revokedAt,\n                description=api_key.description,\n                user_id=api_key.userId,\n            )",
+                            "children": [
+                                {
+                                    "type": "decorator",
+                                    "start_token": 450,
+                                    "end_token": 452,
+                                    "label": "@staticmethod\n",
+                                    "children": []
+                                },
+                                {
+                                    "type": "function_definition",
+                                    "start_token": 453,
+                                    "end_token": 558,
+                                    "label": "def from_db(api_key: PrismaAPIKey):\n        try:\n            return APIKeyWithoutHash(\n                id=api_key.id,\n                name=api_key.name,\n                prefix=api_key.prefix,\n                postfix=api_key.postfix,\n                status=APIKeyStatus(api_key.status),\n                permissions=[APIKeyPermission(p) for p in api_key.permissions],\n                created_at=api_key.createdAt,\n                last_used_at=api_key.lastUsedAt,\n                revoked_at=api_key.revokedAt,\n                description=api_key.description,\n                user_id=api_key.userId,\n            )",
+                                    "children": [
+                                        {
+                                            "type": "identifier",
+                                            "start_token": 453,
+                                            "end_token": 454,
+                                            "label": "def from_db",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "parameters",
+                                            "start_token": 455,
+                                            "end_token": 459,
+                                            "label": "(api_key: PrismaAPIKey)",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "block",
+                                            "start_token": 460,
+                                            "end_token": 558,
+                                            "label": ":\n        try:\n            return APIKeyWithoutHash(\n                id=api_key.id,\n                name=api_key.name,\n                prefix=api_key.prefix,\n                postfix=api_key.postfix,\n                status=APIKeyStatus(api_key.status),\n                permissions=[APIKeyPermission(p) for p in api_key.permissions],\n                created_at=api_key.createdAt,\n                last_used_at=api_key.lastUsedAt,\n                revoked_at=api_key.revokedAt,\n                description=api_key.description,\n                user_id=api_key.userId,\n            )",
+                                            "children": [
+                                                {
+                                                    "type": "try_statement",
+                                                    "start_token": 462,
+                                                    "end_token": 558,
+                                                    "label": "try:\n            return APIKeyWithoutHash(\n                id=api_key.id,\n                name=api_key.name,\n                prefix=api_key.prefix,\n                postfix=api_key.postfix,\n                status=APIKeyStatus(api_key.status),\n                permissions=[APIKeyPermission(p) for p in api_key.permissions],\n                created_at=api_key.createdAt,\n                last_used_at=api_key.lastUsedAt,\n                revoked_at=api_key.revokedAt,\n                description=api_key.description,\n                user_id=api_key.userId,\n            )",
+                                                    "children": [
+                                                        {
+                                                            "type": "block",
+                                                            "start_token": 463,
+                                                            "end_token": 556,
+                                                            "label": ":\n            return APIKeyWithoutHash(\n                id=api_key.id,\n                name=api_key.name,\n                prefix=api_key.prefix,\n                postfix=api_key.postfix,\n                status=APIKeyStatus(api_key.status),\n                permissions=[APIKeyPermission(p) for p in api_key.permissions],\n                created_at=api_key.createdAt,\n                last_used_at=api_key.lastUsedAt,\n                revoked_at=api_key.revokedAt,\n                description=api_key.description,\n                user_id=api_key.userId,",
+                                                            "children": [
+                                                                {
+                                                                    "type": "return_statement",
+                                                                    "start_token": 465,
+                                                                    "end_token": 554,
+                                                                    "label": "return APIKeyWithoutHash(\n                id=api_key.id,\n                name=api_key.name,\n                prefix=api_key.prefix,\n                postfix=api_key.postfix,\n                status=APIKeyStatus(api_key.status),\n                permissions=[APIKeyPermission(p) for p in api_key.permissions],\n                created_at=api_key.createdAt,\n                last_used_at=api_key.lastUsedAt,\n                revoked_at=api_key.revokedAt,\n                description=api_key.description,\n                user_id=api_key.",
+                                                                    "children": []
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "start_token": 583,
+            "end_token": 786,
+            "label": "async def generate_api_key(\n    name: str,\n    user_id: str,\n    permissions: List[APIKeyPermission],\n    description: Optional[str] = None,\n) -> tuple[APIKeyWithoutHash, str]:\n    \"\"\"\n    Generate a new API key and store it in the database.\n    Returns the API key object (without hash) and the plain text key.\n    \"\"\"\n    try:\n        api_manager = APIKeyManager()\n        key = api_manager.generate_api_key()\n\n        api_key = await PrismaAPIKey.prisma().create(\n            data=APIKeyCreateInput(\n                id=str(uuid.uuid4()),\n                name=name,\n                prefix=key.prefix,\n                postfix=key.postfix,\n                key=key.hash,\n                permissions=[p for p in permissions],\n                description=description,\n                userId=user_id,\n            )\n        )\n\n        api_key_without_hash = APIKeyWithoutHash.from_db(api_key)\n        return api_key_without_hash, key.raw\n    except PrismaError as e:\n        logger.error(f\"Database error while generating API key: {str(e)}\")\n        raise APIKeyError(f\"Failed to generate API key: {str(e)}\")\n    except Exception as e:\n        logger.error(f\"Unexpected error while generating API key: {str(e)}\")\n        raise APIKeyError(f\"Failed to generate API key: {str(e)}\")",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 583,
+                    "end_token": 585,
+                    "label": "async def generate_api_key",
+                    "children": []
+                },
+                {
+                    "type": "parameters",
+                    "start_token": 586,
+                    "end_token": 624,
+                    "label": "(\n    name: str,\n    user_id: str,\n    permissions: List[APIKeyPermission],\n    description: Optional[str] = None,\n) -> tuple[APIKeyWithoutHash, str]",
+                    "children": []
+                },
+                {
+                    "type": "block",
+                    "start_token": 625,
+                    "end_token": 786,
+                    "label": ":\n    \"\"\"\n    Generate a new API key and store it in the database.\n    Returns the API key object (without hash) and the plain text key.\n    \"\"\"\n    try:\n        api_manager = APIKeyManager()\n        key = api_manager.generate_api_key()\n\n        api_key = await PrismaAPIKey.prisma().create(\n            data=APIKeyCreateInput(\n                id=str(uuid.uuid4()),\n                name=name,\n                prefix=key.prefix,\n                postfix=key.postfix,\n                key=key.hash,\n                permissions=[p for p in permissions],\n                description=description,\n                userId=user_id,\n            )\n        )\n\n        api_key_without_hash = APIKeyWithoutHash.from_db(api_key)\n        return api_key_without_hash, key.raw\n    except PrismaError as e:\n        logger.error(f\"Database error while generating API key: {str(e)}\")\n        raise APIKeyError(f\"Failed to generate API key: {str(e)}\")\n    except Exception as e:\n        logger.error(f\"Unexpected error while generating API key: {str(e)}\")\n        raise APIKeyError(f\"Failed to generate API key: {str(e)}\")",
+                    "children": [
+                        {
+                            "type": "string",
+                            "start_token": 627,
+                            "end_token": 629,
+                            "label": "\"\"\"\n    Generate a new API key and store it in the database.\n    Returns the API key object (without hash) and the plain text key.\n    \"\"\"",
+                            "children": []
+                        },
+                        {
+                            "type": "try_statement",
+                            "start_token": 631,
+                            "end_token": 785,
+                            "label": "try:\n        api_manager = APIKeyManager()\n        key = api_manager.generate_api_key()\n\n        api_key = await PrismaAPIKey.prisma().create(\n            data=APIKeyCreateInput(\n                id=str(uuid.uuid4()),\n                name=name,\n                prefix=key.prefix,\n                postfix=key.postfix,\n                key=key.hash,\n                permissions=[p for p in permissions],\n                description=description,\n                userId=user_id,\n            )\n        )\n\n        api_key_without_hash = APIKeyWithoutHash.from_db(api_key)\n        return api_key_without_hash, key.raw\n    except PrismaError as e:\n        logger.error(f\"Database error while generating API key: {str(e)}\")\n        raise APIKeyError(f\"Failed to generate API key: {str(e)}\")\n    except Exception as e:\n        logger.error(f\"Unexpected error while generating API key: {str(e)}\")\n        raise APIKeyError(f\"Failed to generate API key: {str(e)}\"",
+                            "children": [
+                                {
+                                    "type": "block",
+                                    "start_token": 632,
+                                    "end_token": 783,
+                                    "label": ":\n        api_manager = APIKeyManager()\n        key = api_manager.generate_api_key()\n\n        api_key = await PrismaAPIKey.prisma().create(\n            data=APIKeyCreateInput(\n                id=str(uuid.uuid4()),\n                name=name,\n                prefix=key.prefix,\n                postfix=key.postfix,\n                key=key.hash,\n                permissions=[p for p in permissions],\n                description=description,\n                userId=user_id,\n            )\n        )\n\n        api_key_without_hash = APIKeyWithoutHash.from_db(api_key)\n        return api_key_without_hash, key.raw\n    except PrismaError as e:\n        logger.error(f\"Database error while generating API key: {str(e)}\")\n        raise APIKeyError(f\"Failed to generate API key: {str(e)}\")\n    except Exception as e:\n        logger.error(f\"Unexpected error while generating API key: {str(e)}\")\n        raise APIKeyError(",
+                                    "children": [
+                                        {
+                                            "type": "assignment",
+                                            "start_token": 634,
+                                            "end_token": 638,
+                                            "label": "api_manager = APIKeyManager()",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "assignment",
+                                            "start_token": 640,
+                                            "end_token": 646,
+                                            "label": "key = api_manager.generate_api_key()",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "assignment",
+                                            "start_token": 649,
+                                            "end_token": 727,
+                                            "label": "api_key = await PrismaAPIKey.prisma().create(\n            data=APIKeyCreateInput(\n                id=str(uuid.uuid4()),\n                name=name,\n                prefix=key.prefix,\n                postfix=key.postfix,\n                key=key.hash,\n                permissions=[p for p in permissions],\n                description=description,\n                userId=user_id,\n            )\n        )",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "assignment",
+                                            "start_token": 730,
+                                            "end_token": 738,
+                                            "label": "api_key_without_hash = APIKeyWithoutHash.from_db(api_key)\n",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "return_statement",
+                                            "start_token": 739,
+                                            "end_token": 745,
+                                            "label": "return api_key_without_hash, key.raw\n",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "start_token": 790,
+            "end_token": 958,
+            "label": "async def validate_api_key(plain_text_key: str) -> Optional[APIKey]:\n    \"\"\"\n    Validate an API key and return the API key object if valid.\n    \"\"\"\n    try:\n        if not plain_text_key.startswith(APIKeyManager.PREFIX):\n            logger.warning(\"Invalid API key format\")\n            return None\n\n        prefix = plain_text_key[: APIKeyManager.PREFIX_LENGTH]\n        api_manager = APIKeyManager()\n\n        api_key = await PrismaAPIKey.prisma().find_first(\n            where=APIKeyWhereInput(prefix=prefix, status=(APIKeyStatus.ACTIVE))\n        )\n\n        if not api_key:\n            logger.warning(f\"No active API key found with prefix {prefix}\")\n            return None\n\n        is_valid = api_manager.verify_api_key(plain_text_key, api_key.key)\n        if not is_valid:\n            logger.warning(\"API key verification failed\")\n            return None\n\n        return APIKey.from_db(api_key)\n    except Exception as e:\n        logger.error(f\"Error validating API key: {str(e)}\")\n        raise APIKeyValidationError(f\"Failed to validate API key: {str(e)}\")",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 790,
+                    "end_token": 792,
+                    "label": "async def validate_api_key",
+                    "children": []
+                },
+                {
+                    "type": "parameters",
+                    "start_token": 793,
+                    "end_token": 803,
+                    "label": "(plain_text_key: str) -> Optional[APIKey]",
+                    "children": []
+                },
+                {
+                    "type": "block",
+                    "start_token": 804,
+                    "end_token": 958,
+                    "label": ":\n    \"\"\"\n    Validate an API key and return the API key object if valid.\n    \"\"\"\n    try:\n        if not plain_text_key.startswith(APIKeyManager.PREFIX):\n            logger.warning(\"Invalid API key format\")\n            return None\n\n        prefix = plain_text_key[: APIKeyManager.PREFIX_LENGTH]\n        api_manager = APIKeyManager()\n\n        api_key = await PrismaAPIKey.prisma().find_first(\n            where=APIKeyWhereInput(prefix=prefix, status=(APIKeyStatus.ACTIVE))\n        )\n\n        if not api_key:\n            logger.warning(f\"No active API key found with prefix {prefix}\")\n            return None\n\n        is_valid = api_manager.verify_api_key(plain_text_key, api_key.key)\n        if not is_valid:\n            logger.warning(\"API key verification failed\")\n            return None\n\n        return APIKey.from_db(api_key)\n    except Exception as e:\n        logger.error(f\"Error validating API key: {str(e)}\")\n        raise APIKeyValidationError(f\"Failed to validate API key: {str(e)}\")",
+                    "children": [
+                        {
+                            "type": "string",
+                            "start_token": 806,
+                            "end_token": 808,
+                            "label": "\"\"\"\n    Validate an API key and return the API key object if valid.\n    \"\"\"",
+                            "children": []
+                        },
+                        {
+                            "type": "try_statement",
+                            "start_token": 810,
+                            "end_token": 957,
+                            "label": "try:\n        if not plain_text_key.startswith(APIKeyManager.PREFIX):\n            logger.warning(\"Invalid API key format\")\n            return None\n\n        prefix = plain_text_key[: APIKeyManager.PREFIX_LENGTH]\n        api_manager = APIKeyManager()\n\n        api_key = await PrismaAPIKey.prisma().find_first(\n            where=APIKeyWhereInput(prefix=prefix, status=(APIKeyStatus.ACTIVE))\n        )\n\n        if not api_key:\n            logger.warning(f\"No active API key found with prefix {prefix}\")\n            return None\n\n        is_valid = api_manager.verify_api_key(plain_text_key, api_key.key)\n        if not is_valid:\n            logger.warning(\"API key verification failed\")\n            return None\n\n        return APIKey.from_db(api_key)\n    except Exception as e:\n        logger.error(f\"Error validating API key: {str(e)}\")\n        raise APIKeyValidationError(f\"Failed to validate API key: {str(e)}\"",
+                            "children": [
+                                {
+                                    "type": "block",
+                                    "start_token": 811,
+                                    "end_token": 955,
+                                    "label": ":\n        if not plain_text_key.startswith(APIKeyManager.PREFIX):\n            logger.warning(\"Invalid API key format\")\n            return None\n\n        prefix = plain_text_key[: APIKeyManager.PREFIX_LENGTH]\n        api_manager = APIKeyManager()\n\n        api_key = await PrismaAPIKey.prisma().find_first(\n            where=APIKeyWhereInput(prefix=prefix, status=(APIKeyStatus.ACTIVE))\n        )\n\n        if not api_key:\n            logger.warning(f\"No active API key found with prefix {prefix}\")\n            return None\n\n        is_valid = api_manager.verify_api_key(plain_text_key, api_key.key)\n        if not is_valid:\n            logger.warning(\"API key verification failed\")\n            return None\n\n        return APIKey.from_db(api_key)\n    except Exception as e:\n        logger.error(f\"Error validating API key: {str(e)}\")\n        raise APIKeyValidationError(",
+                                    "children": [
+                                        {
+                                            "type": "if_statement",
+                                            "start_token": 813,
+                                            "end_token": 834,
+                                            "label": "if not plain_text_key.startswith(APIKeyManager.PREFIX):\n            logger.warning(\"Invalid API key format\")\n            return None\n",
+                                            "children": [
+                                                {
+                                                    "type": "condition",
+                                                    "start_token": 813,
+                                                    "end_token": 822,
+                                                    "label": "if not plain_text_key.startswith(APIKeyManager.PREFIX)",
+                                                    "children": []
+                                                },
+                                                {
+                                                    "type": "block",
+                                                    "start_token": 823,
+                                                    "end_token": 833,
+                                                    "label": ":\n            logger.warning(\"Invalid API key format\")\n            return None",
+                                                    "children": [
+                                                        {
+                                                            "type": "expression_statement",
+                                                            "start_token": 825,
+                                                            "end_token": 830,
+                                                            "label": "logger.warning(\"Invalid API key format\")",
+                                                            "children": []
+                                                        },
+                                                        {
+                                                            "type": "return_statement",
+                                                            "start_token": 832,
+                                                            "end_token": 833,
+                                                            "label": "return None",
+                                                            "children": []
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "assignment",
+                                            "start_token": 836,
+                                            "end_token": 844,
+                                            "label": "prefix = plain_text_key[: APIKeyManager.PREFIX_LENGTH]",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "assignment",
+                                            "start_token": 846,
+                                            "end_token": 850,
+                                            "label": "api_manager = APIKeyManager()",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "assignment",
+                                            "start_token": 853,
+                                            "end_token": 881,
+                                            "label": "api_key = await PrismaAPIKey.prisma().find_first(\n            where=APIKeyWhereInput(prefix=prefix, status=(APIKeyStatus.ACTIVE))\n",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "if_statement",
+                                            "start_token": 885,
+                                            "end_token": 900,
+                                            "label": "if not api_key:\n            logger.warning(f\"No active API key found with prefix {prefix}\")\n            return None\n",
+                                            "children": [
+                                                {
+                                                    "type": "condition",
+                                                    "start_token": 885,
+                                                    "end_token": 888,
+                                                    "label": "if not api_key:",
+                                                    "children": []
+                                                },
+                                                {
+                                                    "type": "block",
+                                                    "start_token": 889,
+                                                    "end_token": 899,
+                                                    "label": "\n            logger.warning(f\"No active API key found with prefix {prefix}\")\n            return None",
+                                                    "children": [
+                                                        {
+                                                            "type": "expression_statement",
+                                                            "start_token": 890,
+                                                            "end_token": 895,
+                                                            "label": "logger.warning(f\"No active API key found with prefix {prefix}\"",
+                                                            "children": []
+                                                        },
+                                                        {
+                                                            "type": "return_statement",
+                                                            "start_token": 897,
+                                                            "end_token": 899,
+                                                            "label": "\n            return None",
+                                                            "children": []
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "assignment",
+                                            "start_token": 902,
+                                            "end_token": 914,
+                                            "label": "is_valid = api_manager.verify_api_key(plain_text_key, api_key.key)\n",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "if_statement",
+                                            "start_token": 915,
+                                            "end_token": 929,
+                                            "label": "if not is_valid:\n            logger.warning(\"API key verification failed\")\n            return None\n",
+                                            "children": [
+                                                {
+                                                    "type": "condition",
+                                                    "start_token": 915,
+                                                    "end_token": 918,
+                                                    "label": "if not is_valid:",
+                                                    "children": []
+                                                },
+                                                {
+                                                    "type": "block",
+                                                    "start_token": 919,
+                                                    "end_token": 928,
+                                                    "label": "\n            logger.warning(\"API key verification failed\")\n            return None",
+                                                    "children": [
+                                                        {
+                                                            "type": "expression_statement",
+                                                            "start_token": 920,
+                                                            "end_token": 925,
+                                                            "label": "logger.warning(\"API key verification failed\")",
+                                                            "children": []
+                                                        },
+                                                        {
+                                                            "type": "return_statement",
+                                                            "start_token": 927,
+                                                            "end_token": 928,
+                                                            "label": "return None",
+                                                            "children": []
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "return_statement",
+                                            "start_token": 931,
+                                            "end_token": 937,
+                                            "label": "return APIKey.from_db(api_key)",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "end_token": 1821,
+            "label": "",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 1468,
+                    "end_token": 1469,
+                    "label": "def has_permission",
+                    "children": []
+                },
+                {
+                    "type": "parameters",
+                    "start_token": 1470,
+                    "end_token": 1478,
+                    "label": "(api_key: APIKey, required_permission: APIKeyPermission)",
+                    "children": []
+                },
+                {
+                    "type": "block",
+                    "start_token": 1483,
+                    "end_token": 1821,
+                    "label": "\n    try:\n        return required_permission in api_key.permissions\n    except Exception as e:\n        logger.error(f\"Error checking API key permissions: {str(e)}\")\n        return False\n\n\nasync def get_api_key_by_id(key_id: str, user_id: str) -> Optional[APIKeyWithoutHash]:\n    try:\n        api_key = await PrismaAPIKey.prisma().find_first(\n            where=APIKeyWhereInput(id=key_id, userId=user_id)\n        )\n\n        if not api_key:\n            return None\n\n        return APIKeyWithoutHash.from_db(api_key)\n    except PrismaError as e:\n        logger.error(f\"Database error while getting API key: {str(e)}\")\n        raise APIKeyError(f\"Failed to get API key: {str(e)}\")\n    except Exception as e:\n        logger.error(f\"Unexpected error while getting API key: {str(e)}\")\n        raise APIKeyError(f\"Failed to get API key: {str(e)}\")\n\n\nasync def update_api_key_permissions(\n    key_id: str, user_id: str, permissions: List[APIKeyPermission]\n) -> Optional[APIKeyWithoutHash]:\n    \"\"\"\n    Update the permissions of an API key.\n    \"\"\"\n    try:\n        api_key = await PrismaAPIKey.prisma().find_unique(where={\"id\": key_id})\n\n        if api_key is None:\n            raise APIKeyNotFoundError(\"No such API key found.\")\n\n        if api_key.userId != user_id:\n            raise APIKeyPermissionError(\n                \"You do not have permission to update this API key.\"\n            )\n\n        where_clause: APIKeyWhereUniqueInput = {\"id\": key_id}\n        updated_api_key = await PrismaAPIKey.prisma().update(\n            where=where_clause,\n            data=APIKeyUpdateInput(permissions=permissions),\n        )\n\n        if updated_api_key:\n            return APIKeyWithoutHash.from_db(updated_api_key)\n        return None\n    except (APIKeyNotFoundError, APIKeyPermissionError) as e:\n        raise e\n    except PrismaError as e:\n        logger.error(f\"Database error while updating API key permissions: {str(e)}\")\n        raise APIKeyError(f\"Failed to update API key permissions: {str(e)}\")\n    except Exception as e:\n        logger.error(f\"Unexpected error while updating API key permissions: {str(e)}\")\n        raise APIKeyError(f\"Failed to update API key permissions: {str(e)}\")",
+                    "children": [
+                        {
+                            "type": "try_statement",
+                            "start_token": 1485,
+                            "end_token": 1813,
+                            "label": ":\n        return required_permission in api_key.permissions\n    except Exception as e:\n        logger.error(f\"Error checking API key permissions: {str(e)}\")\n        return False\n\n\nasync def get_api_key_by_id(key_id: str, user_id: str) -> Optional[APIKeyWithoutHash]:\n    try:\n        api_key = await PrismaAPIKey.prisma().find_first(\n            where=APIKeyWhereInput(id=key_id, userId=user_id)\n        )\n\n        if not api_key:\n            return None\n\n        return APIKeyWithoutHash.from_db(api_key)\n    except PrismaError as e:\n        logger.error(f\"Database error while getting API key: {str(e)}\")\n        raise APIKeyError(f\"Failed to get API key: {str(e)}\")\n    except Exception as e:\n        logger.error(f\"Unexpected error while getting API key: {str(e)}\")\n        raise APIKeyError(f\"Failed to get API key: {str(e)}\")\n\n\nasync def update_api_key_permissions(\n    key_id: str, user_id: str, permissions: List[APIKeyPermission]\n) -> Optional[APIKeyWithoutHash]:\n    \"\"\"\n    Update the permissions of an API key.\n    \"\"\"\n    try:\n        api_key = await PrismaAPIKey.prisma().find_unique(where={\"id\": key_id})\n\n        if api_key is None:\n            raise APIKeyNotFoundError(\"No such API key found.\")\n\n        if api_key.userId != user_id:\n            raise APIKeyPermissionError(\n                \"You do not have permission to update this API key.\"\n            )\n\n        where_clause: APIKeyWhereUniqueInput = {\"id\": key_id}\n        updated_api_key = await PrismaAPIKey.prisma().update(\n            where=where_clause,\n            data=APIKeyUpdateInput(permissions=permissions),\n        )\n\n        if updated_api_key:\n            return APIKeyWithoutHash.from_db(updated_api_key)\n        return None\n    except (APIKeyNotFoundError, APIKeyPermissionError) as e:\n        raise e\n    except PrismaError as e:\n        logger.error(f\"Database error while updating API key permissions: {str(e)}\")\n        raise APIKeyError(f\"Failed to update API key permissions: {str(e)}\")\n    except Exception as e:\n        logger.error(f\"Unexpected error while updating API key permissions: {str(e)}\"",
+                            "children": [
+                                {
+                                    "type": "block",
+                                    "start_token": 1486,
+                                    "end_token": 1811,
+                                    "label": "\n        return required_permission in api_key.permissions\n    except Exception as e:\n        logger.error(f\"Error checking API key permissions: {str(e)}\")\n        return False\n\n\nasync def get_api_key_by_id(key_id: str, user_id: str) -> Optional[APIKeyWithoutHash]:\n    try:\n        api_key = await PrismaAPIKey.prisma().find_first(\n            where=APIKeyWhereInput(id=key_id, userId=user_id)\n        )\n\n        if not api_key:\n            return None\n\n        return APIKeyWithoutHash.from_db(api_key)\n    except PrismaError as e:\n        logger.error(f\"Database error while getting API key: {str(e)}\")\n        raise APIKeyError(f\"Failed to get API key: {str(e)}\")\n    except Exception as e:\n        logger.error(f\"Unexpected error while getting API key: {str(e)}\")\n        raise APIKeyError(f\"Failed to get API key: {str(e)}\")\n\n\nasync def update_api_key_permissions(\n    key_id: str, user_id: str, permissions: List[APIKeyPermission]\n) -> Optional[APIKeyWithoutHash]:\n    \"\"\"\n    Update the permissions of an API key.\n    \"\"\"\n    try:\n        api_key = await PrismaAPIKey.prisma().find_unique(where={\"id\": key_id})\n\n        if api_key is None:\n            raise APIKeyNotFoundError(\"No such API key found.\")\n\n        if api_key.userId != user_id:\n            raise APIKeyPermissionError(\n                \"You do not have permission to update this API key.\"\n            )\n\n        where_clause: APIKeyWhereUniqueInput = {\"id\": key_id}\n        updated_api_key = await PrismaAPIKey.prisma().update(\n            where=where_clause,\n            data=APIKeyUpdateInput(permissions=permissions),\n        )\n\n        if updated_api_key:\n            return APIKeyWithoutHash.from_db(updated_api_key)\n        return None\n    except (APIKeyNotFoundError, APIKeyPermissionError) as e:\n        raise e\n    except PrismaError as e:\n        logger.error(f\"Database error while updating API key permissions: {str(e)}\")\n        raise APIKeyError(f\"Failed to update API key permissions: {str(e)}\")\n    except Exception as e:\n        logger.error(",
+                                    "children": [
+                                        {
+                                            "type": "return_statement",
+                                            "start_token": 1488,
+                                            "end_token": 1492,
+                                            "label": "required_permission in api_key.permissions",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "start_token": 962,
+            "end_token": 771,
+            "label": "",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 962,
+                    "end_token": 964,
+                    "label": "async def revoke_api_key",
+                    "children": []
+                },
+                {
+                    "type": "parameters",
+                    "start_token": 965,
+                    "end_token": 973,
+                    "label": "(key_id: str, user_id: str)",
+                    "children": []
+                },
+                {
+                    "type": "block",
+                    "start_token": 974,
+                    "end_token": 1821,
+                    "label": "-> Optional[APIKeyWithoutHash]:\n    try:\n        api_key = await PrismaAPIKey.prisma().find_unique(where={\"id\": key_id})\n\n        if not api_key:\n            raise APIKeyNotFoundError(f\"API key with id {key_id} not found\")\n\n        if api_key.userId != user_id:\n            raise APIKeyPermissionError(\n                \"You do not have permission to revoke this API key.\"\n            )\n\n        where_clause: APIKeyWhereUniqueInput = {\"id\": key_id}\n        updated_api_key = await PrismaAPIKey.prisma().update(\n            where=where_clause,\n            data=APIKeyUpdateInput(\n                status=APIKeyStatus.REVOKED, revokedAt=datetime.now(timezone.utc)\n            ),\n        )\n\n        if updated_api_key:\n            return APIKeyWithoutHash.from_db(updated_api_key)\n        return None\n    except (APIKeyNotFoundError, APIKeyPermissionError) as e:\n        raise e\n    except PrismaError as e:\n        logger.error(f\"Database error while revoking API key: {str(e)}\")\n        raise APIKeyError(f\"Failed to revoke API key: {str(e)}\")\n    except Exception as e:\n        logger.error(f\"Unexpected error while revoking API key: {str(e)}\")\n        raise APIKeyError(f\"Failed to revoke API key: {str(e)}\")\n\n\nasync def list_user_api_keys(user_id: str) -> List[APIKeyWithoutHash]:\n    try:\n        where_clause: APIKeyWhereInput = {\"userId\": user_id}\n\n        api_keys = await PrismaAPIKey.prisma().find_many(\n            where=where_clause, order={\"createdAt\": \"desc\"}\n        )\n\n        return [APIKeyWithoutHash.from_db(key) for key in api_keys]\n    except PrismaError as e:\n        logger.error(f\"Database error while listing API keys: {str(e)}\")\n        raise APIKeyError(f\"Failed to list API keys: {str(e)}\")\n    except Exception as e:\n        logger.error(f\"Unexpected error while listing API keys: {str(e)}\")\n        raise APIKeyError(f\"Failed to list API keys: {str(e)}\")\n\n\nasync def suspend_api_key(key_id: str, user_id: str) -> Optional[APIKeyWithoutHash]:\n    try:\n        api_key = await PrismaAPIKey.prisma().find_unique(where={\"id\": key_id})\n\n        if not api_key:\n            raise APIKeyNotFoundError(f\"API key with id {key_id} not found\")\n\n        if api_key.userId != user_id:\n            raise APIKeyPermissionError(\n                \"You do not have permission to suspend this API key.\"\n            )\n\n        where_clause: APIKeyWhereUniqueInput = {\"id\": key_id}\n        updated_api_key = await PrismaAPIKey.prisma().update(\n            where=where_clause,\n            data=APIKeyUpdateInput(status=APIKeyStatus.SUSPENDED),\n        )\n\n        if updated_api_key:\n            return APIKeyWithoutHash.from_db(updated_api_key)\n        return None\n    except (APIKeyNotFoundError, APIKeyPermissionError) as e:\n        raise e\n    except PrismaError as e:\n        logger.error(f\"Database error while suspending API key: {str(e)}\")\n        raise APIKeyError(f\"Failed to suspend API key: {str(e)}\")\n    except Exception as e:\n        logger.error(f\"Unexpected error while suspending API key: {str(e)}\")\n        raise APIKeyError(f\"Failed to suspend API key: {str(e)}\")\n\n\ndef has_permission(api_key: APIKey, required_permission: APIKeyPermission) -> bool:\n    try:\n        return required_permission in api_key.permissions\n    except Exception as e:\n        logger.error(f\"Error checking API key permissions: {str(e)}\")\n        return False\n\n\nasync def get_api_key_by_id(key_id: str, user_id: str) -> Optional[APIKeyWithoutHash]:\n    try:\n        api_key = await PrismaAPIKey.prisma().find_first(\n            where=APIKeyWhereInput(id=key_id, userId=user_id)\n        )\n\n        if not api_key:\n            return None\n\n        return APIKeyWithoutHash.from_db(api_key)\n    except PrismaError as e:\n        logger.error(f\"Database error while getting API key: {str(e)}\")\n        raise APIKeyError(f\"Failed to get API key: {str(e)}\")\n    except Exception as e:\n        logger.error(f\"Unexpected error while getting API key: {str(e)}\")\n        raise APIKeyError(f\"Failed to get API key: {str(e)}\")\n\n\nasync def update_api_key_permissions(\n    key_id: str, user_id: str, permissions: List[APIKeyPermission]\n) -> Optional[APIKeyWithoutHash]:\n    \"\"\"\n    Update the permissions of an API key.\n    \"\"\"\n    try:\n        api_key = await PrismaAPIKey.prisma().find_unique(where={\"id\": key_id})\n\n        if api_key is None:\n            raise APIKeyNotFoundError(\"No such API key found.\")\n\n        if api_key.userId != user_id:\n            raise APIKeyPermissionError(\n                \"You do not have permission to update this API key.\"\n            )\n\n        where_clause: APIKeyWhereUniqueInput = {\"id\": key_id}\n        updated_api_key = await PrismaAPIKey.prisma().update(\n            where=where_clause,\n            data=APIKeyUpdateInput(permissions=permissions),\n        )\n\n        if updated_api_key:\n            return APIKeyWithoutHash.from_db(updated_api_key)\n        return None\n    except (APIKeyNotFoundError, APIKeyPermissionError) as e:\n        raise e\n    except PrismaError as e:\n        logger.error(f\"Database error while updating API key permissions: {str(e)}\")\n        raise APIKeyError(f\"Failed to update API key permissions: {str(e)}\")\n    except Exception as e:\n        logger.error(f\"Unexpected error while updating API key permissions: {str(e)}\")\n        raise APIKeyError(f\"Failed to update API key permissions: {str(e)}\")",
+                    "children": []
+                }
+            ]
+        }
+    ]
+}

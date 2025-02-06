@@ -1,0 +1,534 @@
+{
+    "type": "module",
+    "start_token": 0,
+    "end_token": 1010,
+    "label": "import time\nfrom typing import Literal\n\nfrom pydantic import SecretStr\n\nfrom backend.data.block import Block, BlockCategory, BlockOutput, BlockSchema\nfrom backend.data.model import (\n    APIKeyCredentials,\n    CredentialsField,\n    CredentialsMetaInput,\n    SchemaField,\n)\nfrom backend.integrations.providers import ProviderName\nfrom backend.util.request import requests\n\nTEST_CREDENTIALS = APIKeyCredentials(\n    id=\"01234567-89ab-cdef-0123-456789abcdef\",\n    provider=\"d_id\",\n    api_key=SecretStr(\"mock-d-id-api-key\"),\n    title=\"Mock D-ID API key\",\n    expires_at=None,\n)\nTEST_CREDENTIALS_INPUT = {\n    \"provider\": TEST_CREDENTIALS.provider,\n    \"id\": TEST_CREDENTIALS.id,\n    \"type\": TEST_CREDENTIALS.type,\n    \"title\": TEST_CREDENTIALS.type,\n}\n\n\nclass CreateTalkingAvatarVideoBlock(Block):\n    class Input(BlockSchema):\n        credentials: CredentialsMetaInput[\n            Literal[ProviderName.D_ID], Literal[\"api_key\"]\n        ] = CredentialsField(\n            description=\"The D-ID integration can be used with \"\n            \"any API key with sufficient permissions for the blocks it is used on.\",\n        )\n        script_input: str = SchemaField(\n            description=\"The text input for the script\",\n            placeholder=\"Welcome to AutoGPT\",\n        )\n        provider: Literal[\"microsoft\", \"elevenlabs\", \"amazon\"] = SchemaField(\n            description=\"The voice provider to use\", default=\"microsoft\"\n        )\n        voice_id: str = SchemaField(\n            description=\"The voice ID to use, get list of voices [here](https://docs.agpt.co/server/d_id)\",\n            default=\"en-US-JennyNeural\",\n        )\n        presenter_id: str = SchemaField(\n            description=\"The presenter ID to use\", default=\"amy-Aq6OmGZnMt\"\n        )\n        driver_id: str = SchemaField(\n            description=\"The driver ID to use\", default=\"Vcq0R4a8F0\"\n        )\n        result_format: Literal[\"mp4\", \"gif\", \"wav\"] = SchemaField(\n            description=\"The desired result format\", default=\"mp4\"\n        )\n        crop_type: Literal[\"wide\", \"square\", \"vertical\"] = SchemaField(\n            description=\"The crop type for the presenter\", default=\"wide\"\n        )\n        subtitles: bool = SchemaField(\n            description=\"Whether to include subtitles\", default=False\n        )\n        ssml: bool = SchemaField(description=\"Whether the input is SSML\", default=False)\n        max_polling_attempts: int = SchemaField(\n            description=\"Maximum number of polling attempts\", default=30, ge=5\n        )\n        polling_interval: int = SchemaField(\n            description=\"Interval between polling attempts in seconds\", default=10, ge=5\n        )\n\n    class Output(BlockSchema):\n        video_url: str = SchemaField(description=\"The URL of the created video\")\n        error: str = SchemaField(description=\"Error message if the request failed\")\n\n    def __init__(self):\n        super().__init__(\n            id=\"98c6f503-8c47-4b1c-a96d-351fc7c87dab\",\n            description=\"This block integrates with D-ID to create video clips and retrieve their URLs.\",\n            categories={BlockCategory.AI},\n            input_schema=CreateTalkingAvatarVideoBlock.Input,\n            output_schema=CreateTalkingAvatarVideoBlock.Output,\n            test_input={\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n                \"script_input\": \"Welcome to AutoGPT\",\n                \"voice_id\": \"en-US-JennyNeural\",\n                \"presenter_id\": \"amy-Aq6OmGZnMt\",\n                \"driver_id\": \"Vcq0R4a8F0\",\n                \"result_format\": \"mp4\",\n                \"crop_type\": \"wide\",\n                \"subtitles\": False,\n                \"ssml\": False,\n                \"max_polling_attempts\": 5,\n                \"polling_interval\": 5,\n            },\n            test_output=[\n                (\n                    \"video_url\",\n                    \"https://d-id.com/api/clips/abcd1234-5678-efgh-ijkl-mnopqrstuvwx/video\",\n                ),\n            ],\n            test_mock={\n                \"create_clip\": lambda *args, **kwargs: {\n                    \"id\": \"abcd1234-5678-efgh-ijkl-mnopqrstuvwx\",\n                    \"status\": \"created\",\n                },\n                \"get_clip_status\": lambda *args, **kwargs: {\n                    \"status\": \"done\",\n                    \"result_url\": \"https://d-id.com/api/clips/abcd1234-5678-efgh-ijkl-mnopqrstuvwx/video\",\n                },\n            },\n            test_credentials=TEST_CREDENTIALS,\n        )\n\n    def create_clip(self, api_key: SecretStr, payload: dict) -> dict:\n        url = \"https://api.d-id.com/clips\"\n        headers = {\n            \"accept\": \"application/json\",\n            \"content-type\": \"application/json\",\n            \"authorization\": f\"Basic {api_key.get_secret_value()}\",\n        }\n        response = requests.post(url, json=payload, headers=headers)\n        return response.json()\n\n    def get_clip_status(self, api_key: SecretStr, clip_id: str) -> dict:\n        url = f\"https://api.d-id.com/clips/{clip_id}\"\n        headers = {\n            \"accept\": \"application/json\",\n            \"authorization\": f\"Basic {api_key.get_secret_value()}\",\n        }\n        response = requests.get(url, headers=headers)\n        return response.json()\n\n    def run(\n        self, input_data: Input, *, credentials: APIKeyCredentials, **kwargs\n    ) -> BlockOutput:\n        # Create the clip\n        payload = {\n            \"script\": {\n                \"type\": \"text\",\n                \"subtitles\": str(input_data.subtitles).lower(),\n                \"provider\": {\n                    \"type\": input_data.provider,\n                    \"voice_id\": input_data.voice_id,\n                },\n                \"ssml\": str(input_data.ssml).lower(),\n                \"input\": input_data.script_input,\n            },\n            \"config\": {\"result_format\": input_data.result_format},\n            \"presenter_config\": {\"crop\": {\"type\": input_data.crop_type}},\n            \"presenter_id\": input_data.presenter_id,\n            \"driver_id\": input_data.driver_id,\n        }\n\n        response = self.create_clip(credentials.api_key, payload)\n        clip_id = response[\"id\"]\n\n        # Poll for clip status\n        for _ in range(input_data.max_polling_attempts):\n            status_response = self.get_clip_status(credentials.api_key, clip_id)\n            if status_response[\"status\"] == \"done\":\n                yield \"video_url\", status_response[\"result_url\"]\n                return\n            elif status_response[\"status\"] == \"error\":\n                raise RuntimeError(\n                    f\"Clip creation failed: {status_response.get('error', 'Unknown error')}\"\n                )\n\n            time.sleep(input_data.polling_interval)\n\n        raise TimeoutError(\"Clip creation timed out\")",
+    "children": [
+        {
+            "type": "import_statement",
+            "start_token": 0,
+            "end_token": 1,
+            "label": "import time",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 3,
+            "end_token": 6,
+            "label": "from typing import Literal",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 9,
+            "end_token": 12,
+            "label": "from pydantic import SecretStr",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 15,
+            "end_token": 28,
+            "label": "from backend.data.block import Block, BlockCategory, BlockOutput, BlockSchema",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 30,
+            "end_token": 51,
+            "label": "from backend.data.model import (\n    APIKeyCredentials,\n    CredentialsField,\n    CredentialsMetaInput,\n    SchemaField,\n)",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 53,
+            "end_token": 61,
+            "label": "from backend.integrations.providers import ProviderName\n",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 62,
+            "end_token": 69,
+            "label": "from backend.util.request import requests",
+            "children": []
+        },
+        {
+            "type": "assignment",
+            "start_token": 72,
+            "end_token": 105,
+            "label": "TEST_CREDENTIALS = APIKeyCredentials(\n    id=\"01234567-89ab-cdef-0123-456789abcdef\",\n    provider=\"d_id\",\n    api_key=SecretStr(\"mock-d-id-api-key\"),\n    title=\"Mock D-ID API key\",\n    expires_at=None,\n)",
+            "children": []
+        },
+        {
+            "type": "assignment",
+            "start_token": 107,
+            "end_token": 139,
+            "label": "TEST_CREDENTIALS_INPUT = {\n    \"provider\": TEST_CREDENTIALS.provider,\n    \"id\": TEST_CREDENTIALS.id,\n    \"type\": TEST_CREDENTIALS.type,\n    \"title\": TEST_CREDENTIALS.type,\n}",
+            "children": []
+        },
+        {
+            "type": "class_definition",
+            "start_token": 143,
+            "end_token": 626,
+            "label": "class CreateTalkingAvatarVideoBlock(Block):\n    class Input(BlockSchema):\n        credentials: CredentialsMetaInput[\n            Literal[ProviderName.D_ID], Literal[\"api_key\"]\n        ] = CredentialsField(\n            description=\"The D-ID integration can be used with \"\n            \"any API key with sufficient permissions for the blocks it is used on.\",\n        )\n        script_input: str = SchemaField(\n            description=\"The text input for the script\",\n            placeholder=\"Welcome to AutoGPT\",\n        )\n        provider: Literal[\"microsoft\", \"elevenlabs\", \"amazon\"] = SchemaField(\n            description=\"The voice provider to use\", default=\"microsoft\"\n        )\n        voice_id: str = SchemaField(\n            description=\"The voice ID to use, get list of voices [here](https://docs.agpt.co/server/d_id)\",\n            default=\"en-US-JennyNeural\",\n        )\n        presenter_id: str = SchemaField(\n            description=\"The presenter ID to use\", default=\"amy-Aq6OmGZnMt\"\n        )\n        driver_id: str = SchemaField(\n            description=\"The driver ID to use\", default=\"Vcq0R4a8F0\"\n        )\n        result_format: Literal[\"mp4\", \"gif\", \"wav\"] = SchemaField(\n            description=\"The desired result format\", default=\"mp4\"\n        )\n        crop_type: Literal[\"wide\", \"square\", \"vertical\"] = SchemaField(\n            description=\"The crop type for the presenter\", default=\"wide\"\n        )\n        subtitles: bool = SchemaField(\n            description=\"Whether to include subtitles\", default=False\n        )\n        ssml: bool = SchemaField(description=\"Whether the input is SSML\", default=False)\n        max_polling_attempts: int = SchemaField(\n            description=\"Maximum number of polling attempts\", default=30, ge=5\n        )\n        polling_interval: int = SchemaField(\n            description=\"Interval between polling attempts in seconds\", default=10, ge=5\n        )\n\n    class Output(BlockSchema):\n        video_url: str = SchemaField(description=\"The URL of the created video\")\n        error: str = SchemaField(description=\"Error message if the request failed\")\n\n    def __init__(self):\n        super().__init__(\n            id=\"98c6f503-8c47-4b1c-a96d-351fc7c87dab\",\n            description=\"This block integrates with D-ID to create video clips and retrieve their URLs.\",\n            categories={BlockCategory.AI},\n            input_schema=CreateTalkingAvatarVideoBlock.Input,\n            output_schema=CreateTalkingAvatarVideoBlock.Output,\n            test_input={\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n                \"script_input\": \"Welcome to AutoGPT\",\n                \"voice_id\": \"en-US-JennyNeural\",\n                \"presenter_id\": \"amy-Aq6OmGZnMt\",\n                \"driver_id\": \"Vcq0R4a8F0\",\n                \"result_format\": \"mp4\",\n                \"crop_type\": \"wide\",\n                \"subtitles\": False,\n                \"ssml\": False,\n                \"max_polling_attempts\": 5,\n                \"polling_interval\": 5,\n            },\n            test_output=[\n                (\n                    \"video_url\",\n                    \"https://d-id.com/api/clips/abcd1234-5678-efgh-ijkl-mnopqrstuvwx/video\",\n                ),\n            ],\n            test_mock={\n                \"create_clip\": lambda *args, **kwargs: {\n                    \"id\": \"abcd1234-5678-efgh-ijkl-mnopqrstuvwx\",\n                    \"status\": \"created\",\n                },\n                \"get_clip_status\": lambda *args, **kwargs: {\n                    \"status\": \"done\",\n                    \"result_url\": \"https://d-id.com/api/clips/abcd1234-5678-efgh-ijkl-mnopqrstuvwx/video\",\n                },\n            },\n            test_credentials=TEST_CREDENTIALS,\n        )",
+            "children": [
+                {
+                    "type": "class_definition",
+                    "start_token": 150,
+                    "end_token": 404,
+                    "label": "class Input(BlockSchema):\n        credentials: CredentialsMetaInput[\n            Literal[ProviderName.D_ID], Literal[\"api_key\"]\n        ] = CredentialsField(\n            description=\"The D-ID integration can be used with \"\n            \"any API key with sufficient permissions for the blocks it is used on.\",\n        )\n        script_input: str = SchemaField(\n            description=\"The text input for the script\",\n            placeholder=\"Welcome to AutoGPT\",\n        )\n        provider: Literal[\"microsoft\", \"elevenlabs\", \"amazon\"] = SchemaField(\n            description=\"The voice provider to use\", default=\"microsoft\"\n        )\n        voice_id: str = SchemaField(\n            description=\"The voice ID to use, get list of voices [here](https://docs.agpt.co/server/d_id)\",\n            default=\"en-US-JennyNeural\",\n        )\n        presenter_id: str = SchemaField(\n            description=\"The presenter ID to use\", default=\"amy-Aq6OmGZnMt\"\n        )\n        driver_id: str = SchemaField(\n            description=\"The driver ID to use\", default=\"Vcq0R4a8F0\"\n        )\n        result_format: Literal[\"mp4\", \"gif\", \"wav\"] = SchemaField(\n            description=\"The desired result format\", default=\"mp4\"\n        )\n        crop_type: Literal[\"wide\", \"square\", \"vertical\"] = SchemaField(\n            description=\"The crop type for the presenter\", default=\"wide\"\n        )\n        subtitles: bool = SchemaField(\n            description=\"Whether to include subtitles\", default=False\n        )\n        ssml: bool = SchemaField(description=\"Whether the input is SSML\", default=False)\n        max_polling_attempts: int = SchemaField(\n            description=\"Maximum number of polling attempts\", default=30, ge=5\n        )\n        polling_interval: int = SchemaField(\n            description=\"Interval between polling attempts in seconds\", default=10, ge=5\n        )",
+                    "children": [
+                        {
+                            "type": "assignment",
+                            "start_token": 157,
+                            "end_token": 186,
+                            "label": "credentials: CredentialsMetaInput[\n            Literal[ProviderName.D_ID], Literal[\"api_key\"]\n        ] = CredentialsField(\n            description=\"The D-ID integration can be used with \"\n            \"any API key with sufficient permissions for the blocks it is used on.\",\n        )",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 188,
+                            "end_token": 205,
+                            "label": "script_input: str = SchemaField(\n            description=\"The text input for the script\",\n            placeholder=\"Welcome to AutoGPT\",\n        )",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 207,
+                            "end_token": 229,
+                            "label": "provider: Literal[\"microsoft\", \"elevenlabs\", \"amazon\"] = SchemaField(\n            description=\"The voice provider to use\", default=\"microsoft\"\n        )",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 231,
+                            "end_token": 248,
+                            "label": "voice_id: str = SchemaField(\n            description=\"The voice ID to use, get list of voices [here](https://docs.agpt.co/server/d_id)\",\n            default=\"en-US-JennyNeural\",\n        )",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 250,
+                            "end_token": 265,
+                            "label": "presenter_id: str = SchemaField(\n            description=\"The presenter ID to use\", default=\"amy-Aq6OmGZnMt\"\n        )",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 267,
+                            "end_token": 282,
+                            "label": "driver_id: str = SchemaField(\n            description=\"The driver ID to use\", default=\"Vcq0R4a8F0\"\n        )",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 284,
+                            "end_token": 306,
+                            "label": "result_format: Literal[\"mp4\", \"gif\", \"wav\"] = SchemaField(\n            description=\"The desired result format\", default=\"mp4\"\n        )",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 308,
+                            "end_token": 330,
+                            "label": "crop_type: Literal[\"wide\", \"square\", \"vertical\"] = SchemaField(\n            description=\"The crop type for the presenter\", default=\"wide\"\n        )",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 332,
+                            "end_token": 347,
+                            "label": "subtitles: bool = SchemaField(\n            description=\"Whether to include subtitles\", default=False\n        )",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 349,
+                            "end_token": 362,
+                            "label": "ssml: bool = SchemaField(description=\"Whether the input is SSML\", default=False)",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 364,
+                            "end_token": 383,
+                            "label": "max_polling_attempts: int = SchemaField(\n            description=\"Maximum number of polling attempts\", default=30, ge=5\n        )",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 385,
+                            "end_token": 404,
+                            "label": "polling_interval: int = SchemaField(\n            description=\"Interval between polling attempts in seconds\", default=10, ge=5\n        )",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "class_definition",
+                    "start_token": 407,
+                    "end_token": 434,
+                    "label": "class Output(BlockSchema):\n        video_url: str = SchemaField(description=\"The URL of the created video\")\n        error: str = SchemaField(description=\"Error message if the request failed\")",
+                    "children": [
+                        {
+                            "type": "assignment",
+                            "start_token": 414,
+                            "end_token": 423,
+                            "label": "video_url: str = SchemaField(description=\"The URL of the created video\")",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 425,
+                            "end_token": 434,
+                            "label": "error: str = SchemaField(description=\"Error message if the request failed\")",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "function_definition",
+                    "start_token": 437,
+                    "end_token": 626,
+                    "label": "def __init__(self):\n        super().__init__(\n            id=\"98c6f503-8c47-4b1c-a96d-351fc7c87dab\",\n            description=\"This block integrates with D-ID to create video clips and retrieve their URLs.\",\n            categories={BlockCategory.AI},\n            input_schema=CreateTalkingAvatarVideoBlock.Input,\n            output_schema=CreateTalkingAvatarVideoBlock.Output,\n            test_input={\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n                \"script_input\": \"Welcome to AutoGPT\",\n                \"voice_id\": \"en-US-JennyNeural\",\n                \"presenter_id\": \"amy-Aq6OmGZnMt\",\n                \"driver_id\": \"Vcq0R4a8F0\",\n                \"result_format\": \"mp4\",\n                \"crop_type\": \"wide\",\n                \"subtitles\": False,\n                \"ssml\": False,\n                \"max_polling_attempts\": 5,\n                \"polling_interval\": 5,\n            },\n            test_output=[\n                (\n                    \"video_url\",\n                    \"https://d-id.com/api/clips/abcd1234-5678-efgh-ijkl-mnopqrstuvwx/video\",\n                ),\n            ],\n            test_mock={\n                \"create_clip\": lambda *args, **kwargs: {\n                    \"id\": \"abcd1234-5678-efgh-ijkl-mnopqrstuvwx\",\n                    \"status\": \"created\",\n                },\n                \"get_clip_status\": lambda *args, **kwargs: {\n                    \"status\": \"done\",\n                    \"result_url\": \"https://d-id.com/api/clips/abcd1234-5678-efgh-ijkl-mnopqrstuvwx/video\",\n                },\n            },\n            test_credentials=TEST_CREDENTIALS,\n        )",
+                    "children": [
+                        {
+                            "type": "block",
+                            "start_token": 443,
+                            "end_token": 626,
+                            "label": "\n        super().__init__(\n            id=\"98c6f503-8c47-4b1c-a96d-351fc7c87dab\",\n            description=\"This block integrates with D-ID to create video clips and retrieve their URLs.\",\n            categories={BlockCategory.AI},\n            input_schema=CreateTalkingAvatarVideoBlock.Input,\n            output_schema=CreateTalkingAvatarVideoBlock.Output,\n            test_input={\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n                \"script_input\": \"Welcome to AutoGPT\",\n                \"voice_id\": \"en-US-JennyNeural\",\n                \"presenter_id\": \"amy-Aq6OmGZnMt\",\n                \"driver_id\": \"Vcq0R4a8F0\",\n                \"result_format\": \"mp4\",\n                \"crop_type\": \"wide\",\n                \"subtitles\": False,\n                \"ssml\": False,\n                \"max_polling_attempts\": 5,\n                \"polling_interval\": 5,\n            },\n            test_output=[\n                (\n                    \"video_url\",\n                    \"https://d-id.com/api/clips/abcd1234-5678-efgh-ijkl-mnopqrstuvwx/video\",\n                ),\n            ],\n            test_mock={\n                \"create_clip\": lambda *args, **kwargs: {\n                    \"id\": \"abcd1234-5678-efgh-ijkl-mnopqrstuvwx\",\n                    \"status\": \"created\",\n                },\n                \"get_clip_status\": lambda *args, **kwargs: {\n                    \"status\": \"done\",\n                    \"result_url\": \"https://d-id.com/api/clips/abcd1234-5678-efgh-ijkl-mnopqrstuvwx/video\",\n                },\n            },\n            test_credentials=TEST_CREDENTIALS,\n        )",
+                            "children": [
+                                {
+                                    "type": "call",
+                                    "start_token": 444,
+                                    "end_token": 625,
+                                    "label": "super().__init__(\n            id=\"98c6f503-8c47-4b1c-a96d-351fc7c87dab\",\n            description=\"This block integrates with D-ID to create video clips and retrieve their URLs.\",\n            categories={BlockCategory.AI},\n            input_schema=CreateTalkingAvatarVideoBlock.Input,\n            output_schema=CreateTalkingAvatarVideoBlock.Output,\n            test_input={\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n                \"script_input\": \"Welcome to AutoGPT\",\n                \"voice_id\": \"en-US-JennyNeural\",\n                \"presenter_id\": \"amy-Aq6OmGZnMt\",\n                \"driver_id\": \"Vcq0R4a8F0\",\n                \"result_format\": \"mp4\",\n                \"crop_type\": \"wide\",\n                \"subtitles\": False,\n                \"ssml\": False,\n                \"max_polling_attempts\": 5,\n                \"polling_interval\": 5,\n            },\n            test_output=[\n                (\n                    \"video_url\",\n                    \"https://d-id.com/api/clips/abcd1234-5678-efgh-ijkl-mnopqrstuvwx/video\",\n                ),\n            ],\n            test_mock={\n                \"create_clip\": lambda *args, **kwargs: {\n                    \"id\": \"abcd1234-5678-efgh-ijkl-mnopqrstuvwx\",\n                    \"status\": \"created\",\n                },\n                \"get_clip_status\": lambda *args, **kwargs: {\n                    \"status\": \"done\",\n                    \"result_url\": \"https://d-id.com/api/clips/abcd1234-5678-efgh-ijkl-mnopqrstuvwx/video\",\n                },\n            },\n            test_credentials=TEST_CREDENTIALS,\n",
+                                    "children": [
+                                        {
+                                            "type": "argument_list",
+                                            "start_token": 450,
+                                            "end_token": 624,
+                                            "label": "\n            id=\"98c6f503-8c47-4b1c-a96d-351fc7c87dab\",\n            description=\"This block integrates with D-ID to create video clips and retrieve their URLs.\",\n            categories={BlockCategory.AI},\n            input_schema=CreateTalkingAvatarVideoBlock.Input,\n            output_schema=CreateTalkingAvatarVideoBlock.Output,\n            test_input={\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n                \"script_input\": \"Welcome to AutoGPT\",\n                \"voice_id\": \"en-US-JennyNeural\",\n                \"presenter_id\": \"amy-Aq6OmGZnMt\",\n                \"driver_id\": \"Vcq0R4a8F0\",\n                \"result_format\": \"mp4\",\n                \"crop_type\": \"wide\",\n                \"subtitles\": False,\n                \"ssml\": False,\n                \"max_polling_attempts\": 5,\n                \"polling_interval\": 5,\n            },\n            test_output=[\n                (\n                    \"video_url\",\n                    \"https://d-id.com/api/clips/abcd1234-5678-efgh-ijkl-mnopqrstuvwx/video\",\n                ),\n            ],\n            test_mock={\n                \"create_clip\": lambda *args, **kwargs: {\n                    \"id\": \"abcd1234-5678-efgh-ijkl-mnopqrstuvwx\",\n                    \"status\": \"created\",\n                },\n                \"get_clip_status\": lambda *args, **kwargs: {\n                    \"status\": \"done\",\n                    \"result_url\": \"https://d-id.com/api/clips/abcd1234-5678-efgh-ijkl-mnopqrstuvwx/video\",\n                },\n            },\n            test_credentials=TEST_CREDENTIALS,",
+                                            "children": [
+                                                {
+                                                    "type": "pair",
+                                                    "start_token": 451,
+                                                    "end_token": 454,
+                                                    "label": "id=\"98c6f503-8c47-4b1c-a96d-351fc7c87dab\",",
+                                                    "children": []
+                                                },
+                                                {
+                                                    "type": "pair",
+                                                    "start_token": 456,
+                                                    "end_token": 459,
+                                                    "label": "description=\"This block integrates with D-ID to create video clips and retrieve their URLs.\",",
+                                                    "children": []
+                                                },
+                                                {
+                                                    "type": "pair",
+                                                    "start_token": 461,
+                                                    "end_token": 468,
+                                                    "label": "categories={BlockCategory.AI},",
+                                                    "children": []
+                                                },
+                                                {
+                                                    "type": "pair",
+                                                    "start_token": 470,
+                                                    "end_token": 475,
+                                                    "label": "input_schema=CreateTalkingAvatarVideoBlock.Input,",
+                                                    "children": []
+                                                },
+                                                {
+                                                    "type": "pair",
+                                                    "start_token": 477,
+                                                    "end_token": 482,
+                                                    "label": "output_schema=CreateTalkingAvatarVideoBlock.Output,",
+                                                    "children": []
+                                                },
+                                                {
+                                                    "type": "pair",
+                                                    "start_token": 484,
+                                                    "end_token": 541,
+                                                    "label": "test_input={\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n                \"script_input\": \"Welcome to AutoGPT\",\n                \"voice_id\": \"en-US-JennyNeural\",\n                \"presenter_id\": \"amy-Aq6OmGZnMt\",\n                \"driver_id\": \"Vcq0R4a8F0\",\n                \"result_format\": \"mp4\",\n                \"crop_type\": \"wide\",\n                \"subtitles\": False,\n                \"ssml\": False,\n                \"max_polling_attempts\": 5,\n                \"polling_interval\": 5,",
+                                                    "children": []
+                                                },
+                                                {
+                                                    "type": "pair",
+                                                    "start_token": 543,
+                                                    "end_token": 566,
+                                                    "label": "},\n            test_output=[\n                (\n                    \"video_url\",\n                    \"https://d-id.com/api/clips/abcd1234-5678-efgh-ijkl-mnopqrstuvwx/video\",\n                ),\n            ],\n            test_mock={",
+                                                    "children": []
+                                                },
+                                                {
+                                                    "type": "pair",
+                                                    "start_token": 568,
+                                                    "end_token": 618,
+                                                    "label": "\"create_clip\": lambda *args, **kwargs: {\n                    \"id\": \"abcd1234-5678-efgh-ijkl-mnopqrstuvwx\",\n                    \"status\": \"created\",\n                },\n                \"get_clip_status\": lambda *args, **kwargs: {\n                    \"status\": \"done\",\n                    \"result_url\": \"https://d-id.com/api/clips/abcd1234-5678-efgh-ijkl-mnopqrstuvwx/video\",\n                },\n            }",
+                                                    "children": []
+                                                },
+                                                {
+                                                    "type": "pair",
+                                                    "start_token": 621,
+                                                    "end_token": 623,
+                                                    "label": "test_credentials=TEST_CREDENTIALS",
+                                                    "children": []
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "start_token": 629,
+            "end_token": 916,
+            "label": "def create_clip(self, api_key: SecretStr, payload: dict) -> dict:\n        url = \"https://api.d-id.com/clips\"\n        headers = {\n            \"accept\": \"application/json\",\n            \"content-type\": \"application/json\",\n            \"authorization\": f\"Basic {api_key.get_secret_value()}\",\n        }\n        response = requests.post(url, json=payload, headers=headers)\n        return response.json()\n\n    def get_clip_status(self, api_key: SecretStr, clip_id: str) -> dict:\n        url = f\"https://api.d-id.com/clips/{clip_id}\"\n        headers = {\n            \"accept\": \"application/json\",\n            \"authorization\": f\"Basic {api_key.get_secret_value()}\",\n        }\n        response = requests.get(url, headers=headers)\n        return response.json()\n\n    def run(\n        self, input_data: Input, *, credentials: APIKeyCredentials, **kwargs\n    ) -> BlockOutput:\n        # Create the clip\n        payload = {\n            \"script\": {\n                \"type\": \"text\",\n                \"subtitles\": str(input_data.subtitles).lower(),\n                \"provider\": {\n                    \"type\": input_data.provider,\n                    \"voice_id\": input_data.voice_id,\n                },\n                \"ssml\": str(input_data.ssml).lower(),\n                \"input\": input_data.script_input,\n            },\n            \"config\": {\"result_format\": input_data.result_format},\n            \"presenter_config\": {\"crop\": {\"type\": input_data.crop_type}},\n            \"presenter_id\": input_data.presenter_id,\n            \"driver_id\": input_data.driver_id,\n        }\n\n        response = self.create_clip(credentials.api_key, payload)",
+            "children": [
+                {
+                    "type": "parameters",
+                    "start_token": 631,
+                    "end_token": 641,
+                    "label": "(self, api_key: SecretStr, payload: dict)",
+                    "children": []
+                },
+                {
+                    "type": "block",
+                    "start_token": 646,
+                    "end_token": 916,
+                    "label": "\n        url = \"https://api.d-id.com/clips\"\n        headers = {\n            \"accept\": \"application/json\",\n            \"content-type\": \"application/json\",\n            \"authorization\": f\"Basic {api_key.get_secret_value()}\",\n        }\n        response = requests.post(url, json=payload, headers=headers)\n        return response.json()\n\n    def get_clip_status(self, api_key: SecretStr, clip_id: str) -> dict:\n        url = f\"https://api.d-id.com/clips/{clip_id}\"\n        headers = {\n            \"accept\": \"application/json\",\n            \"authorization\": f\"Basic {api_key.get_secret_value()}\",\n        }\n        response = requests.get(url, headers=headers)\n        return response.json()\n\n    def run(\n        self, input_data: Input, *, credentials: APIKeyCredentials, **kwargs\n    ) -> BlockOutput:\n        # Create the clip\n        payload = {\n            \"script\": {\n                \"type\": \"text\",\n                \"subtitles\": str(input_data.subtitles).lower(),\n                \"provider\": {\n                    \"type\": input_data.provider,\n                    \"voice_id\": input_data.voice_id,\n                },\n                \"ssml\": str(input_data.ssml).lower(),\n                \"input\": input_data.script_input,\n            },\n            \"config\": {\"result_format\": input_data.result_format},\n            \"presenter_config\": {\"crop\": {\"type\": input_data.crop_type}},\n            \"presenter_id\": input_data.presenter_id,\n            \"driver_id\": input_data.driver_id,\n        }\n\n        response = self.create_clip(credentials.api_key, payload)",
+                    "children": [
+                        {
+                            "type": "assignment",
+                            "start_token": 647,
+                            "end_token": 649,
+                            "label": "url = \"https://api.d-id.com/clips\"",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 651,
+                            "end_token": 671,
+                            "label": "headers = {\n            \"accept\": \"application/json\",\n            \"content-type\": \"application/json\",\n            \"authorization\": f\"Basic {api_key.get_secret_value()}\",\n        }",
+                            "children": []
+                        },
+                        {
+                            "type": "call",
+                            "start_token": 673,
+                            "end_token": 688,
+                            "label": "response = requests.post(url, json=payload, headers=headers)",
+                            "children": [
+                                {
+                                    "type": "argument_list",
+                                    "start_token": 679,
+                                    "end_token": 687,
+                                    "label": "url, json=payload, headers=headers",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "return_statement",
+                            "start_token": 690,
+                            "end_token": 695,
+                            "label": "return response.json()",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "start_token": 698,
+            "end_token": 756,
+            "label": "def get_clip_status(self, api_key: SecretStr, clip_id: str) -> dict:\n        url = f\"https://api.d-id.com/clips/{clip_id}\"\n        headers = {\n            \"accept\": \"application/json\",\n            \"authorization\": f\"Basic {api_key.get_secret_value()}\",\n        }\n        response = requests.get(url, headers=headers)\n        return response.json()",
+            "children": [
+                {
+                    "type": "parameters",
+                    "start_token": 700,
+                    "end_token": 710,
+                    "label": "(self, api_key: SecretStr, clip_id: str)",
+                    "children": []
+                },
+                {
+                    "type": "block",
+                    "start_token": 714,
+                    "end_token": 756,
+                    "label": ":\n        url = f\"https://api.d-id.com/clips/{clip_id}\"\n        headers = {\n            \"accept\": \"application/json\",\n            \"authorization\": f\"Basic {api_key.get_secret_value()}\",\n        }\n        response = requests.get(url, headers=headers)\n        return response.json()",
+                    "children": [
+                        {
+                            "type": "assignment",
+                            "start_token": 716,
+                            "end_token": 720,
+                            "label": "url = f\"https://api.d-id.com/clips/{clip_id}\"\n",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 722,
+                            "end_token": 736,
+                            "label": "= {\n            \"accept\": \"application/json\",\n            \"authorization\": f\"Basic {api_key.get_secret_value()}\",\n        }",
+                            "children": []
+                        },
+                        {
+                            "type": "call",
+                            "start_token": 738,
+                            "end_token": 749,
+                            "label": "response = requests.get(url, headers=headers)",
+                            "children": [
+                                {
+                                    "type": "argument_list",
+                                    "start_token": 744,
+                                    "end_token": 748,
+                                    "label": "url, headers=headers",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "return_statement",
+                            "start_token": 751,
+                            "end_token": 756,
+                            "label": "return response.json()",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "start_token": 759,
+            "end_token": 1010,
+            "label": "def run(\n        self, input_data: Input, *, credentials: APIKeyCredentials, **kwargs\n    ) -> BlockOutput:\n        # Create the clip\n        payload = {\n            \"script\": {\n                \"type\": \"text\",\n                \"subtitles\": str(input_data.subtitles).lower(),\n                \"provider\": {\n                    \"type\": input_data.provider,\n                    \"voice_id\": input_data.voice_id,\n                },\n                \"ssml\": str(input_data.ssml).lower(),\n                \"input\": input_data.script_input,\n            },\n            \"config\": {\"result_format\": input_data.result_format},\n            \"presenter_config\": {\"crop\": {\"type\": input_data.crop_type}},\n            \"presenter_id\": input_data.presenter_id,\n            \"driver_id\": input_data.driver_id,\n        }\n\n        response = self.create_clip(credentials.api_key, payload)\n        clip_id = response[\"id\"]\n\n        # Poll for clip status\n        for _ in range(input_data.max_polling_attempts):\n            status_response = self.get_clip_status(credentials.api_key, clip_id)\n            if status_response[\"status\"] == \"done\":\n                yield \"video_url\", status_response[\"result_url\"]\n                return\n            elif status_response[\"status\"] == \"error\":\n                raise RuntimeError(\n                    f\"Clip creation failed: {status_response.get('error', 'Unknown error')}\"\n                )\n\n            time.sleep(input_data.polling_interval)\n\n        raise TimeoutError(\"Clip creation timed out\")",
+            "children": [
+                {
+                    "type": "parameters",
+                    "start_token": 761,
+                    "end_token": 778,
+                    "label": "(\n        self, input_data: Input, *, credentials: APIKeyCredentials, **kwargs\n",
+                    "children": []
+                },
+                {
+                    "type": "block",
+                    "start_token": 783,
+                    "end_token": 1010,
+                    "label": ":\n        # Create the clip\n        payload = {\n            \"script\": {\n                \"type\": \"text\",\n                \"subtitles\": str(input_data.subtitles).lower(),\n                \"provider\": {\n                    \"type\": input_data.provider,\n                    \"voice_id\": input_data.voice_id,\n                },\n                \"ssml\": str(input_data.ssml).lower(),\n                \"input\": input_data.script_input,\n            },\n            \"config\": {\"result_format\": input_data.result_format},\n            \"presenter_config\": {\"crop\": {\"type\": input_data.crop_type}},\n            \"presenter_id\": input_data.presenter_id,\n            \"driver_id\": input_data.driver_id,\n        }\n\n        response = self.create_clip(credentials.api_key, payload)\n        clip_id = response[\"id\"]\n\n        # Poll for clip status\n        for _ in range(input_data.max_polling_attempts):\n            status_response = self.get_clip_status(credentials.api_key, clip_id)\n            if status_response[\"status\"] == \"done\":\n                yield \"video_url\", status_response[\"result_url\"]\n                return\n            elif status_response[\"status\"] == \"error\":\n                raise RuntimeError(\n                    f\"Clip creation failed: {status_response.get('error', 'Unknown error')}\"\n                )\n\n            time.sleep(input_data.polling_interval)\n\n        raise TimeoutError(\"Clip creation timed out\")",
+                    "children": [
+                        {
+                            "type": "assignment",
+                            "start_token": 790,
+                            "end_token": 923,
+                            "label": "payload = {\n            \"script\": {\n                \"type\": \"text\",\n                \"subtitles\": str(input_data.subtitles).lower(),\n                \"provider\": {\n                    \"type\": input_data.provider,\n                    \"voice_id\": input_data.voice_id,\n                },\n                \"ssml\": str(input_data.ssml).lower(),\n                \"input\": input_data.script_input,\n            },\n            \"config\": {\"result_format\": input_data.result_format},\n            \"presenter_config\": {\"crop\": {\"type\": input_data.crop_type}},\n            \"presenter_id\": input_data.presenter_id,\n            \"driver_id\": input_data.driver_id,\n        }\n\n        response = self.create_clip(credentials.api_key, payload)\n        clip_id = response[\"id\"]",
+                            "children": []
+                        },
+                        {
+                            "type": "for_statement",
+                            "start_token": 932,
+                            "end_token": 973,
+                            "label": "for _ in range(input_data.max_polling_attempts):\n            status_response = self.get_clip_status(credentials.api_key, clip_id)\n            if status_response[\"status\"] == \"done\":\n                yield \"video_url\", status_response[\"result_url\"]\n",
+                            "children": [
+                                {
+                                    "type": "block",
+                                    "start_token": 941,
+                                    "end_token": 973,
+                                    "label": ":\n            status_response = self.get_clip_status(credentials.api_key, clip_id)\n            if status_response[\"status\"] == \"done\":\n                yield \"video_url\", status_response[\"result_url\"]\n",
+                                    "children": [
+                                        {
+                                            "type": "assignment",
+                                            "start_token": 943,
+                                            "end_token": 954,
+                                            "label": "status_response = self.get_clip_status(credentials.api_key, clip_id)",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "if_statement",
+                                            "start_token": 956,
+                                            "end_token": 973,
+                                            "label": "if status_response[\"status\"] == \"done\":\n                yield \"video_url\", status_response[\"result_url\"]\n",
+                                            "children": [
+                                                {
+                                                    "type": "block",
+                                                    "start_token": 964,
+                                                    "end_token": 973,
+                                                    "label": ":\n                yield \"video_url\", status_response[\"result_url\"]\n",
+                                                    "children": [
+                                                        {
+                                                            "type": "yield",
+                                                            "start_token": 966,
+                                                            "end_token": 973,
+                                                            "label": "yield \"video_url\", status_response[\"result_url\"]\n",
+                                                            "children": []
+                                                        },
+                                                        {
+                                                            "type": "return_statement",
+                                                            "start_token": 975,
+                                                            "end_token": 975,
+                                                            "label": "\n",
+                                                            "children": []
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "elif_clause",
+                                            "start_token": 976,
+                                            "end_token": 993,
+                                            "label": "elif status_response[\"status\"] == \"error\":\n                raise RuntimeError(\n                    f\"Clip creation failed: {status_response.get('error', 'Unknown error')}\"\n                )",
+                                            "children": [
+                                                {
+                                                    "type": "block",
+                                                    "start_token": 984,
+                                                    "end_token": 993,
+                                                    "label": ":\n                raise RuntimeError(\n                    f\"Clip creation failed: {status_response.get('error', 'Unknown error')}\"\n                )",
+                                                    "children": [
+                                                        {
+                                                            "type": "raise_statement",
+                                                            "start_token": 986,
+                                                            "end_token": 993,
+                                                            "label": "raise RuntimeError(\n                    f\"Clip creation failed: {status_response.get('error', 'Unknown error')}\"\n                )",
+                                                            "children": []
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "call",
+                            "start_token": 996,
+                            "end_token": 1003,
+                            "label": "time.sleep(input_data.polling_interval)",
+                            "children": [
+                                {
+                                    "type": "argument_list",
+                                    "start_token": 1000,
+                                    "end_token": 1002,
+                                    "label": "input_data.polling_interval",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "raise_statement",
+                            "start_token": 1006,
+                            "end_token": 1010,
+                            "label": "raise TimeoutError(\"Clip creation timed out\")",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

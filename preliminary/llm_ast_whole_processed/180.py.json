@@ -1,0 +1,868 @@
+{
+    "type": "module",
+    "start_token": 0,
+    "end_token": 864,
+    "label": "import logging\nfrom typing import Optional, cast\n\nfrom autogpt_libs.auth.models import DEFAULT_USER_ID\nfrom fastapi import HTTPException\nfrom prisma import Json\nfrom prisma.models import User\n\nfrom backend.data.db import prisma\nfrom backend.data.model import UserIntegrations, UserMetadata, UserMetadataRaw\nfrom backend.util.encryption import JSONCryptor\n\nlogger = logging.getLogger(__name__)\n\n\nasync def get_or_create_user(user_data: dict) -> User:\n    user_id = user_data.get(\"sub\")\n    if not user_id:\n        raise HTTPException(status_code=401, detail=\"User ID not found in token\")\n\n    user_email = user_data.get(\"email\")\n    if not user_email:\n        raise HTTPException(status_code=401, detail=\"Email not found in token\")\n\n    user = await prisma.user.find_unique(where={\"id\": user_id})\n    if not user:\n        user = await prisma.user.create(\n            data={\n                \"id\": user_id,\n                \"email\": user_email,\n                \"name\": user_data.get(\"user_metadata\", {}).get(\"name\"),\n            }\n        )\n    return User.model_validate(user)\n\n\nasync def get_user_by_id(user_id: str) -> Optional[User]:\n    user = await prisma.user.find_unique(where={\"id\": user_id})\n    return User.model_validate(user) if user else None\n\n\nasync def create_default_user() -> Optional[User]:\n    user = await prisma.user.find_unique(where={\"id\": DEFAULT_USER_ID})\n    if not user:\n        user = await prisma.user.create(\n            data={\n                \"id\": DEFAULT_USER_ID,\n                \"email\": \"default@example.com\",\n                \"name\": \"Default User\",\n            }\n        )\n    return User.model_validate(user)\n\n\nasync def get_user_metadata(user_id: str) -> UserMetadata:\n    user = await User.prisma().find_unique_or_raise(\n        where={\"id\": user_id},\n    )\n\n    metadata = cast(UserMetadataRaw, user.metadata)\n    return UserMetadata.model_validate(metadata)\n\n\nasync def update_user_metadata(user_id: str, metadata: UserMetadata):\n    await User.prisma().update(\n        where={\"id\": user_id},\n        data={\"metadata\": Json(metadata.model_dump())},\n    )\n\n\nasync def get_user_integrations(user_id: str) -> UserIntegrations:\n    user = await User.prisma().find_unique_or_raise(\n        where={\"id\": user_id},\n    )\n\n    encrypted_integrations = user.integrations\n    if not encrypted_integrations:\n        return UserIntegrations()\n    else:\n        return UserIntegrations.model_validate(\n            JSONCryptor().decrypt(encrypted_integrations)\n        )\n\n\nasync def update_user_integrations(user_id: str, data: UserIntegrations):\n    encrypted_data = JSONCryptor().encrypt(data.model_dump())\n    await User.prisma().update(\n        where={\"id\": user_id},\n        data={\"integrations\": encrypted_data},\n    )\n\n\nasync def migrate_and_encrypt_user_integrations():\n    \"\"\"Migrate integration credentials and OAuth states from metadata to integrations column.\"\"\"\n    users = await User.prisma().find_many(\n        where={\n            \"metadata\": {\n                \"path\": [\"integration_credentials\"],\n                \"not\": Json({\"a\": \"yolo\"}),  # bogus value works to check if key exists\n            }  # type: ignore\n        }\n    )\n    logger.info(f\"Migrating integration credentials for {len(users)} users\")\n\n    for user in users:\n        raw_metadata = cast(UserMetadataRaw, user.metadata)\n        metadata = UserMetadata.model_validate(raw_metadata)\n\n        # Get existing integrations data\n        integrations = await get_user_integrations(user_id=user.id)\n\n        # Copy credentials and oauth states from metadata if they exist\n        if metadata.integration_credentials and not integrations.credentials:\n            integrations.credentials = metadata.integration_credentials\n        if metadata.integration_oauth_states:\n            integrations.oauth_states = metadata.integration_oauth_states\n\n        # Save to integrations column\n        await update_user_integrations(user_id=user.id, data=integrations)\n\n        # Remove from metadata\n        raw_metadata = dict(raw_metadata)\n        raw_metadata.pop(\"integration_credentials\", None)\n        raw_metadata.pop(\"integration_oauth_states\", None)\n\n        # Update metadata without integration data\n        await User.prisma().update(\n            where={\"id\": user.id},\n            data={\"metadata\": Json(raw_metadata)},\n        )\n",
+    "children": [
+        {
+            "type": "block",
+            "start_token": 0,
+            "end_token": 59,
+            "label": "import logging\nfrom typing import Optional, cast\n\nfrom autogpt_libs.auth.models import DEFAULT_USER_ID\nfrom fastapi import HTTPException\nfrom prisma import Json\nfrom prisma.models import User\n\nfrom backend.data.db import prisma\nfrom backend.data.model import UserIntegrations, UserMetadata, UserMetadataRaw\n",
+            "children": [
+                {
+                    "type": "import_statement",
+                    "start_token": 0,
+                    "end_token": 1,
+                    "label": "import logging",
+                    "children": []
+                },
+                {
+                    "type": "import_from_statement",
+                    "start_token": 3,
+                    "end_token": 8,
+                    "label": "from typing import Optional, cast",
+                    "children": []
+                },
+                {
+                    "type": "import_from_statement",
+                    "start_token": 11,
+                    "end_token": 18,
+                    "label": "from autogpt_libs.auth.models import DEFAULT_USER_ID",
+                    "children": []
+                },
+                {
+                    "type": "import_from_statement",
+                    "start_token": 20,
+                    "end_token": 23,
+                    "label": "from fastapi import HTTPException",
+                    "children": []
+                },
+                {
+                    "type": "import_from_statement",
+                    "start_token": 25,
+                    "end_token": 28,
+                    "label": "from prisma import Json",
+                    "children": []
+                },
+                {
+                    "type": "import_from_statement",
+                    "start_token": 30,
+                    "end_token": 35,
+                    "label": "from prisma.models import User",
+                    "children": []
+                },
+                {
+                    "type": "import_from_statement",
+                    "start_token": 38,
+                    "end_token": 45,
+                    "label": "from backend.data.db import prisma",
+                    "children": []
+                },
+                {
+                    "type": "import_from_statement",
+                    "start_token": 47,
+                    "end_token": 58,
+                    "label": "from backend.data.model import UserIntegrations, UserMetadata, UserMetadataRaw",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "assignment",
+            "start_token": 70,
+            "end_token": 77,
+            "label": "logger = logging.getLogger(__name__)",
+            "children": []
+        },
+        {
+            "type": "function_definition",
+            "start_token": 81,
+            "end_token": 224,
+            "label": "async def get_or_create_user(user_data: dict) -> User:\n    user_id = user_data.get(\"sub\")\n    if not user_id:\n        raise HTTPException(status_code=401, detail=\"User ID not found in token\")\n\n    user_email = user_data.get(\"email\")\n    if not user_email:\n        raise HTTPException(status_code=401, detail=\"Email not found in token\")\n\n    user = await prisma.user.find_unique(where={\"id\": user_id})\n    if not user:\n        user = await prisma.user.create(\n            data={\n                \"id\": user_id,\n                \"email\": user_email,\n                \"name\": user_data.get(\"user_metadata\", {}).get(\"name\"),\n            }\n        )\n    return User.model_validate(user)\n",
+            "children": [
+                {
+                    "type": "parameters",
+                    "start_token": 83,
+                    "end_token": 88,
+                    "label": "get_or_create_user(user_data: dict)",
+                    "children": [
+                        {
+                            "type": "typed_parameter",
+                            "start_token": 85,
+                            "end_token": 87,
+                            "label": "user_data: dict",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "block",
+                    "start_token": 93,
+                    "end_token": 224,
+                    "label": "\n    user_id = user_data.get(\"sub\")\n    if not user_id:\n        raise HTTPException(status_code=401, detail=\"User ID not found in token\")\n\n    user_email = user_data.get(\"email\")\n    if not user_email:\n        raise HTTPException(status_code=401, detail=\"Email not found in token\")\n\n    user = await prisma.user.find_unique(where={\"id\": user_id})\n    if not user:\n        user = await prisma.user.create(\n            data={\n                \"id\": user_id,\n                \"email\": user_email,\n                \"name\": user_data.get(\"user_metadata\", {}).get(\"name\"),\n            }\n        )\n    return User.model_validate(user)\n",
+                    "children": [
+                        {
+                            "type": "assignment",
+                            "start_token": 94,
+                            "end_token": 101,
+                            "label": "user_id = user_data.get(\"sub\")",
+                            "children": []
+                        },
+                        {
+                            "type": "if_statement",
+                            "start_token": 103,
+                            "end_token": 118,
+                            "label": "if not user_id:\n        raise HTTPException(status_code=401, detail=\"User ID not found in token\")",
+                            "children": [
+                                {
+                                    "type": "raise_statement",
+                                    "start_token": 108,
+                                    "end_token": 118,
+                                    "label": "raise HTTPException(status_code=401, detail=\"User ID not found in token\")",
+                                    "children": [
+                                        {
+                                            "type": "call",
+                                            "start_token": 109,
+                                            "end_token": 118,
+                                            "label": "HTTPException(status_code=401, detail=\"User ID not found in token\")",
+                                            "children": [
+                                                {
+                                                    "type": "keyword_argument",
+                                                    "start_token": 111,
+                                                    "end_token": 113,
+                                                    "label": "status_code=401",
+                                                    "children": []
+                                                },
+                                                {
+                                                    "type": "keyword_argument",
+                                                    "start_token": 115,
+                                                    "end_token": 117,
+                                                    "label": "detail=\"User ID not found in token\"",
+                                                    "children": []
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 121,
+                            "end_token": 128,
+                            "label": "user_email = user_data.get(\"email\")",
+                            "children": []
+                        },
+                        {
+                            "type": "if_statement",
+                            "start_token": 130,
+                            "end_token": 145,
+                            "label": "if not user_email:\n        raise HTTPException(status_code=401, detail=\"Email not found in token\")",
+                            "children": [
+                                {
+                                    "type": "raise_statement",
+                                    "start_token": 135,
+                                    "end_token": 145,
+                                    "label": "raise HTTPException(status_code=401, detail=\"Email not found in token\")",
+                                    "children": [
+                                        {
+                                            "type": "call",
+                                            "start_token": 136,
+                                            "end_token": 145,
+                                            "label": "HTTPException(status_code=401, detail=\"Email not found in token\")",
+                                            "children": [
+                                                {
+                                                    "type": "keyword_argument",
+                                                    "start_token": 138,
+                                                    "end_token": 140,
+                                                    "label": "status_code=401",
+                                                    "children": []
+                                                },
+                                                {
+                                                    "type": "keyword_argument",
+                                                    "start_token": 142,
+                                                    "end_token": 144,
+                                                    "label": "detail=\"Email not found in token\"",
+                                                    "children": []
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 148,
+                            "end_token": 164,
+                            "label": "user = await prisma.user.find_unique(where={\"id\": user_id})",
+                            "children": [
+                                {
+                                    "type": "await",
+                                    "start_token": 150,
+                                    "end_token": 164,
+                                    "label": "await prisma.user.find_unique(where={\"id\": user_id})",
+                                    "children": [
+                                        {
+                                            "type": "call",
+                                            "start_token": 151,
+                                            "end_token": 164,
+                                            "label": "prisma.user.find_unique(where={\"id\": user_id})",
+                                            "children": [
+                                                {
+                                                    "type": "keyword_argument",
+                                                    "start_token": 157,
+                                                    "end_token": 163,
+                                                    "label": "where={\"id\": user_id}",
+                                                    "children": []
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "if_statement",
+                            "start_token": 166,
+                            "end_token": 215,
+                            "label": "if not user:\n        user = await prisma.user.create(\n            data={\n                \"id\": user_id,\n                \"email\": user_email,\n                \"name\": user_data.get(\"user_metadata\", {}).get(\"name\"),\n            }\n        )",
+                            "children": [
+                                {
+                                    "type": "assignment",
+                                    "start_token": 171,
+                                    "end_token": 213,
+                                    "label": "user = await prisma.user.create(\n            data={\n                \"id\": user_id,\n                \"email\": user_email,\n                \"name\": user_data.get(\"user_metadata\", {}).get(\"name\"),\n            }",
+                                    "children": [
+                                        {
+                                            "type": "await",
+                                            "start_token": 173,
+                                            "end_token": 213,
+                                            "label": "await prisma.user.create(\n            data={\n                \"id\": user_id,\n                \"email\": user_email,\n                \"name\": user_data.get(\"user_metadata\", {}).get(\"name\"),\n            }",
+                                            "children": [
+                                                {
+                                                    "type": "call",
+                                                    "start_token": 174,
+                                                    "end_token": 213,
+                                                    "label": "prisma.user.create(\n            data={\n                \"id\": user_id,\n                \"email\": user_email,\n                \"name\": user_data.get(\"user_metadata\", {}).get(\"name\"),\n            }",
+                                                    "children": [
+                                                        {
+                                                            "type": "keyword_argument",
+                                                            "start_token": 181,
+                                                            "end_token": 211,
+                                                            "label": "data={\n                \"id\": user_id,\n                \"email\": user_email,\n                \"name\": user_data.get(\"user_metadata\", {}).get(\"name\"),",
+                                                            "children": []
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "return_statement",
+                            "start_token": 217,
+                            "end_token": 223,
+                            "label": "return User.model_validate(user)",
+                            "children": [
+                                {
+                                    "type": "call",
+                                    "start_token": 218,
+                                    "end_token": 223,
+                                    "label": "User.model_validate(user)",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "start_token": 227,
+            "end_token": 271,
+            "label": "async def get_user_by_id(user_id: str) -> Optional[User]:\n    user = await prisma.user.find_unique(where={\"id\": user_id})\n    return User.model_validate(user) if user else None",
+            "children": [
+                {
+                    "type": "parameters",
+                    "start_token": 229,
+                    "end_token": 234,
+                    "label": "get_user_by_id(user_id: str)",
+                    "children": [
+                        {
+                            "type": "typed_parameter",
+                            "start_token": 231,
+                            "end_token": 233,
+                            "label": "user_id: str",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "block",
+                    "start_token": 242,
+                    "end_token": 271,
+                    "label": "\n    user = await prisma.user.find_unique(where={\"id\": user_id})\n    return User.model_validate(user) if user else None",
+                    "children": [
+                        {
+                            "type": "assignment",
+                            "start_token": 243,
+                            "end_token": 259,
+                            "label": "user = await prisma.user.find_unique(where={\"id\": user_id})",
+                            "children": [
+                                {
+                                    "type": "await",
+                                    "start_token": 245,
+                                    "end_token": 259,
+                                    "label": "await prisma.user.find_unique(where={\"id\": user_id})",
+                                    "children": [
+                                        {
+                                            "type": "call",
+                                            "start_token": 246,
+                                            "end_token": 259,
+                                            "label": "prisma.user.find_unique(where={\"id\": user_id})",
+                                            "children": [
+                                                {
+                                                    "type": "keyword_argument",
+                                                    "start_token": 252,
+                                                    "end_token": 258,
+                                                    "label": "where={\"id\": user_id}",
+                                                    "children": []
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "return_statement",
+                            "start_token": 261,
+                            "end_token": 271,
+                            "label": "return User.model_validate(user) if user else None",
+                            "children": [
+                                {
+                                    "type": "conditional_expression",
+                                    "start_token": 262,
+                                    "end_token": 270,
+                                    "label": "User.model_validate(user) if user else",
+                                    "children": [
+                                        {
+                                            "type": "call",
+                                            "start_token": 263,
+                                            "end_token": 268,
+                                            "label": ".model_validate(user) if",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "start_token": 275,
+            "end_token": 351,
+            "label": "async def create_default_user() -> Optional[User]:\n    user = await prisma.user.find_unique(where={\"id\": DEFAULT_USER_ID})\n    if not user:\n        user = await prisma.user.create(\n            data={\n                \"id\": DEFAULT_USER_ID,\n                \"email\": \"default@example.com\",\n                \"name\": \"Default User\",\n            }\n        )\n    return User.model_validate(user)\n",
+            "children": [
+                {
+                    "type": "parameters",
+                    "start_token": 277,
+                    "end_token": 279,
+                    "label": "create_default_user()",
+                    "children": []
+                },
+                {
+                    "type": "block",
+                    "start_token": 286,
+                    "end_token": 351,
+                    "label": ":\n    user = await prisma.user.find_unique(where={\"id\": DEFAULT_USER_ID})\n    if not user:\n        user = await prisma.user.create(\n            data={\n                \"id\": DEFAULT_USER_ID,\n                \"email\": \"default@example.com\",\n                \"name\": \"Default User\",\n            }\n        )\n    return User.model_validate(user)\n",
+                    "children": [
+                        {
+                            "type": "assignment",
+                            "start_token": 288,
+                            "end_token": 304,
+                            "label": "user = await prisma.user.find_unique(where={\"id\": DEFAULT_USER_ID})",
+                            "children": [
+                                {
+                                    "type": "await",
+                                    "start_token": 290,
+                                    "end_token": 304,
+                                    "label": "await prisma.user.find_unique(where={\"id\": DEFAULT_USER_ID})",
+                                    "children": [
+                                        {
+                                            "type": "call",
+                                            "start_token": 291,
+                                            "end_token": 304,
+                                            "label": "prisma.user.find_unique(where={\"id\": DEFAULT_USER_ID})",
+                                            "children": [
+                                                {
+                                                    "type": "keyword_argument",
+                                                    "start_token": 297,
+                                                    "end_token": 303,
+                                                    "label": "where={\"id\": DEFAULT_USER_ID}",
+                                                    "children": []
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "if_statement",
+                            "start_token": 306,
+                            "end_token": 342,
+                            "label": "if not user:\n        user = await prisma.user.create(\n            data={\n                \"id\": DEFAULT_USER_ID,\n                \"email\": \"default@example.com\",\n                \"name\": \"Default User\",\n            }\n        )",
+                            "children": [
+                                {
+                                    "type": "assignment",
+                                    "start_token": 311,
+                                    "end_token": 340,
+                                    "label": "user = await prisma.user.create(\n            data={\n                \"id\": DEFAULT_USER_ID,\n                \"email\": \"default@example.com\",\n                \"name\": \"Default User\",\n            }",
+                                    "children": [
+                                        {
+                                            "type": "await",
+                                            "start_token": 313,
+                                            "end_token": 340,
+                                            "label": "await prisma.user.create(\n            data={\n                \"id\": DEFAULT_USER_ID,\n                \"email\": \"default@example.com\",\n                \"name\": \"Default User\",\n            }",
+                                            "children": [
+                                                {
+                                                    "type": "call",
+                                                    "start_token": 314,
+                                                    "end_token": 340,
+                                                    "label": "prisma.user.create(\n            data={\n                \"id\": DEFAULT_USER_ID,\n                \"email\": \"default@example.com\",\n                \"name\": \"Default User\",\n            }",
+                                                    "children": [
+                                                        {
+                                                            "type": "keyword_argument",
+                                                            "start_token": 321,
+                                                            "end_token": 338,
+                                                            "label": "data={\n                \"id\": DEFAULT_USER_ID,\n                \"email\": \"default@example.com\",\n                \"name\": \"Default User\",",
+                                                            "children": []
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "return_statement",
+                            "start_token": 344,
+                            "end_token": 350,
+                            "label": "return User.model_validate(user)",
+                            "children": [
+                                {
+                                    "type": "call",
+                                    "start_token": 345,
+                                    "end_token": 350,
+                                    "label": "User.model_validate(user)",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "start_token": 354,
+            "end_token": 408,
+            "label": "async def get_user_metadata(user_id: str) -> UserMetadata:\n    user = await User.prisma().find_unique_or_raise(\n        where={\"id\": user_id},\n    )\n\n    metadata = cast(UserMetadataRaw, user.metadata)\n    return UserMetadata.model_validate(metadata)",
+            "children": [
+                {
+                    "type": "parameters",
+                    "start_token": 356,
+                    "end_token": 361,
+                    "label": "get_user_metadata(user_id: str)",
+                    "children": [
+                        {
+                            "type": "typed_parameter",
+                            "start_token": 358,
+                            "end_token": 360,
+                            "label": "user_id: str",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "block",
+                    "start_token": 365,
+                    "end_token": 408,
+                    "label": ":\n    user = await User.prisma().find_unique_or_raise(\n        where={\"id\": user_id},\n    )\n\n    metadata = cast(UserMetadataRaw, user.metadata)\n    return UserMetadata.model_validate(metadata)",
+                    "children": [
+                        {
+                            "type": "assignment",
+                            "start_token": 367,
+                            "end_token": 387,
+                            "label": "user = await User.prisma().find_unique_or_raise(\n        where={\"id\": user_id},\n",
+                            "children": [
+                                {
+                                    "type": "await",
+                                    "start_token": 369,
+                                    "end_token": 387,
+                                    "label": "await User.prisma().find_unique_or_raise(\n        where={\"id\": user_id},\n",
+                                    "children": [
+                                        {
+                                            "type": "call",
+                                            "start_token": 370,
+                                            "end_token": 387,
+                                            "label": "User.prisma().find_unique_or_raise(\n        where={\"id\": user_id},\n",
+                                            "children": [
+                                                {
+                                                    "type": "keyword_argument",
+                                                    "start_token": 379,
+                                                    "end_token": 385,
+                                                    "label": "where={\"id\": user_id}",
+                                                    "children": []
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 391,
+                            "end_token": 400,
+                            "label": "metadata = cast(UserMetadataRaw, user.metadata)",
+                            "children": [
+                                {
+                                    "type": "call",
+                                    "start_token": 393,
+                                    "end_token": 400,
+                                    "label": "cast(UserMetadataRaw, user.metadata)",
+                                    "children": [
+                                        {
+                                            "type": "keyword_argument",
+                                            "start_token": 395,
+                                            "end_token": 397,
+                                            "label": "UserMetadataRaw, user",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "return_statement",
+                            "start_token": 402,
+                            "end_token": 408,
+                            "label": "return UserMetadata.model_validate(metadata)",
+                            "children": [
+                                {
+                                    "type": "call",
+                                    "start_token": 403,
+                                    "end_token": 408,
+                                    "label": "UserMetadata.model_validate(metadata)",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "start_token": 412,
+            "end_token": 596,
+            "label": "async def update_user_metadata(user_id: str, metadata: UserMetadata):\n    await User.prisma().update(\n        where={\"id\": user_id},\n        data={\"metadata\": Json(metadata.model_dump())},\n    )\n\n\nasync def get_user_integrations(user_id: str) -> UserIntegrations:\n    user = await User.prisma().find_unique_or_raise(\n        where={\"id\": user_id},\n    )\n\n    encrypted_integrations = user.integrations\n    if not encrypted_integrations:\n        return UserIntegrations()\n    else:\n        return UserIntegrations.model_validate(\n            JSONCryptor().decrypt(encrypted_integrations)\n        )\n\n\nasync def update_user_integrations(user_id: str, data: UserIntegrations):\n    encrypted_data = JSONCryptor().encrypt(data.model_dump())\n    await User.prisma().update(\n        where={\"id\": user_id},\n        data={\"integrations\": encrypted_data},\n",
+            "children": [
+                {
+                    "type": "parameters",
+                    "start_token": 414,
+                    "end_token": 423,
+                    "label": "update_user_metadata(user_id: str, metadata: UserMetadata)",
+                    "children": [
+                        {
+                            "type": "typed_parameter",
+                            "start_token": 416,
+                            "end_token": 418,
+                            "label": "user_id: str",
+                            "children": []
+                        },
+                        {
+                            "type": "typed_parameter",
+                            "start_token": 420,
+                            "end_token": 422,
+                            "label": "metadata: UserMetadata",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "block",
+                    "start_token": 424,
+                    "end_token": 596,
+                    "label": ":\n    await User.prisma().update(\n        where={\"id\": user_id},\n        data={\"metadata\": Json(metadata.model_dump())},\n    )\n\n\nasync def get_user_integrations(user_id: str) -> UserIntegrations:\n    user = await User.prisma().find_unique_or_raise(\n        where={\"id\": user_id},\n    )\n\n    encrypted_integrations = user.integrations\n    if not encrypted_integrations:\n        return UserIntegrations()\n    else:\n        return UserIntegrations.model_validate(\n            JSONCryptor().decrypt(encrypted_integrations)\n        )\n\n\nasync def update_user_integrations(user_id: str, data: UserIntegrations):\n    encrypted_data = JSONCryptor().encrypt(data.model_dump())\n    await User.prisma().update(\n        where={\"id\": user_id},\n        data={\"integrations\": encrypted_data},\n",
+                    "children": [
+                        {
+                            "type": "assignment",
+                            "start_token": 426,
+                            "end_token": 566,
+                            "label": "await User.prisma().update(\n        where={\"id\": user_id},\n        data={\"metadata\": Json(metadata.model_dump())},\n    )\n\n\nasync def get_user_integrations(user_id: str) -> UserIntegrations:\n    user = await User.prisma().find_unique_or_raise(\n        where={\"id\": user_id},\n    )\n\n    encrypted_integrations = user.integrations\n    if not encrypted_integrations:\n        return UserIntegrations()\n    else:\n        return UserIntegrations.model_validate(\n            JSONCryptor().decrypt(encrypted_integrations)\n        )\n\n\nasync def update_user_integrations(user_id: str, data: UserIntegrations):\n    encrypted_data = JSONCryptor().encrypt(data.model_dump()",
+                            "children": [
+                                {
+                                    "type": "await",
+                                    "start_token": 427,
+                                    "end_token": 566,
+                                    "label": "User.prisma().update(\n        where={\"id\": user_id},\n        data={\"metadata\": Json(metadata.model_dump())},\n    )\n\n\nasync def get_user_integrations(user_id: str) -> UserIntegrations:\n    user = await User.prisma().find_unique_or_raise(\n        where={\"id\": user_id},\n    )\n\n    encrypted_integrations = user.integrations\n    if not encrypted_integrations:\n        return UserIntegrations()\n    else:\n        return UserIntegrations.model_validate(\n            JSONCryptor().decrypt(encrypted_integrations)\n        )\n\n\nasync def update_user_integrations(user_id: str, data: UserIntegrations):\n    encrypted_data = JSONCryptor().encrypt(data.model_dump()",
+                                    "children": [
+                                        {
+                                            "type": "call",
+                                            "start_token": 428,
+                                            "end_token": 566,
+                                            "label": ".prisma().update(\n        where={\"id\": user_id},\n        data={\"metadata\": Json(metadata.model_dump())},\n    )\n\n\nasync def get_user_integrations(user_id: str) -> UserIntegrations:\n    user = await User.prisma().find_unique_or_raise(\n        where={\"id\": user_id},\n    )\n\n    encrypted_integrations = user.integrations\n    if not encrypted_integrations:\n        return UserIntegrations()\n    else:\n        return UserIntegrations.model_validate(\n            JSONCryptor().decrypt(encrypted_integrations)\n        )\n\n\nasync def update_user_integrations(user_id: str, data: UserIntegrations):\n    encrypted_data = JSONCryptor().encrypt(data.model_dump()",
+                                            "children": [
+                                                {
+                                                    "type": "keyword_argument",
+                                                    "start_token": 436,
+                                                    "end_token": 568,
+                                                    "label": "where={\"id\": user_id},\n        data={\"metadata\": Json(metadata.model_dump())},\n    )\n\n\nasync def get_user_integrations(user_id: str) -> UserIntegrations:\n    user = await User.prisma().find_unique_or_raise(\n        where={\"id\": user_id},\n    )\n\n    encrypted_integrations = user.integrations\n    if not encrypted_integrations:\n        return UserIntegrations()\n    else:\n        return UserIntegrations.model_validate(\n            JSONCryptor().decrypt(encrypted_integrations)\n        )\n\n\nasync def update_user_integrations(user_id: str, data: UserIntegrations):\n    encrypted_data = JSONCryptor().encrypt(data.model_dump())\n",
+                                                    "children": [
+                                                        {
+                                                            "type": "call",
+                                                            "start_token": 450,
+                                                            "end_token": 458,
+                                                            "label": "Json(metadata.model_dump())}",
+                                                            "children": []
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "start_token": 602,
+            "end_token": 864,
+            "label": "def migrate_and_encrypt_user_integrations():\n    \"\"\"Migrate integration credentials and OAuth states from metadata to integrations column.\"\"\"\n    users = await User.prisma().find_many(\n        where={\n            \"metadata\": {\n                \"path\": [\"integration_credentials\"],\n                \"not\": Json({\"a\": \"yolo\"}),  # bogus value works to check if key exists\n            }  # type: ignore\n        }\n    )\n    logger.info(f\"Migrating integration credentials for {len(users)} users\")\n\n    for user in users:\n        raw_metadata = cast(UserMetadataRaw, user.metadata)\n        metadata = UserMetadata.model_validate(raw_metadata)\n\n        # Get existing integrations data\n        integrations = await get_user_integrations(user_id=user.id)\n\n        # Copy credentials and oauth states from metadata if they exist\n        if metadata.integration_credentials and not integrations.credentials:\n            integrations.credentials = metadata.integration_credentials\n        if metadata.integration_oauth_states:\n            integrations.oauth_states = metadata.integration_oauth_states\n\n        # Save to integrations column\n        await update_user_integrations(user_id=user.id, data=integrations)\n\n        # Remove from metadata\n        raw_metadata = dict(raw_metadata)\n        raw_metadata.pop(\"integration_credentials\", None)\n        raw_metadata.pop(\"integration_oauth_states\", None)\n\n        # Update metadata without integration data\n        await User.prisma().update(\n            where={\"id\": user.id},\n            data={\"metadata\": Json(raw_metadata)},\n        )\n",
+            "children": [
+                {
+                    "type": "block",
+                    "start_token": 606,
+                    "end_token": 864,
+                    "label": ":\n    \"\"\"Migrate integration credentials and OAuth states from metadata to integrations column.\"\"\"\n    users = await User.prisma().find_many(\n        where={\n            \"metadata\": {\n                \"path\": [\"integration_credentials\"],\n                \"not\": Json({\"a\": \"yolo\"}),  # bogus value works to check if key exists\n            }  # type: ignore\n        }\n    )\n    logger.info(f\"Migrating integration credentials for {len(users)} users\")\n\n    for user in users:\n        raw_metadata = cast(UserMetadataRaw, user.metadata)\n        metadata = UserMetadata.model_validate(raw_metadata)\n\n        # Get existing integrations data\n        integrations = await get_user_integrations(user_id=user.id)\n\n        # Copy credentials and oauth states from metadata if they exist\n        if metadata.integration_credentials and not integrations.credentials:\n            integrations.credentials = metadata.integration_credentials\n        if metadata.integration_oauth_states:\n            integrations.oauth_states = metadata.integration_oauth_states\n\n        # Save to integrations column\n        await update_user_integrations(user_id=user.id, data=integrations)\n\n        # Remove from metadata\n        raw_metadata = dict(raw_metadata)\n        raw_metadata.pop(\"integration_credentials\", None)\n        raw_metadata.pop(\"integration_oauth_states\", None)\n\n        # Update metadata without integration data\n        await User.prisma().update(\n            where={\"id\": user.id},\n            data={\"metadata\": Json(raw_metadata)},\n        )\n",
+                    "children": [
+                        {
+                            "type": "assignment",
+                            "start_token": 612,
+                            "end_token": 621,
+                            "label": "users = await User.prisma().find_many",
+                            "children": [
+                                {
+                                    "type": "await",
+                                    "start_token": 614,
+                                    "end_token": 621,
+                                    "label": "await User.prisma().find_many",
+                                    "children": [
+                                        {
+                                            "type": "call",
+                                            "start_token": 615,
+                                            "end_token": 621,
+                                            "label": "User.prisma().find_many",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "call",
+                            "start_token": 670,
+                            "end_token": 676,
+                            "label": "logger.info(f\"Migrating integration credentials for {len(users)} users\")",
+                            "children": [
+                                {
+                                    "type": "keyword_argument",
+                                    "start_token": 674,
+                                    "end_token": 675,
+                                    "label": "f\"Migrating integration credentials for {len(users)} users\"",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "for_statement",
+                            "start_token": 679,
+                            "end_token": 789,
+                            "label": "for user in users:\n        raw_metadata = cast(UserMetadataRaw, user.metadata)\n        metadata = UserMetadata.model_validate(raw_metadata)\n\n        # Get existing integrations data\n        integrations = await get_user_integrations(user_id=user.id)\n\n        # Copy credentials and oauth states from metadata if they exist\n        if metadata.integration_credentials and not integrations.credentials:\n            integrations.credentials = metadata.integration_credentials\n        if metadata.integration_oauth_states:\n            integrations.oauth_states = metadata.integration_oauth_states\n\n        # Save to integrations column\n        await update_user_integrations(user_id=user.id, data=integrations)",
+                            "children": [
+                                {
+                                    "type": "assignment",
+                                    "start_token": 685,
+                                    "end_token": 693,
+                                    "label": "raw_metadata = cast(UserMetadataRaw, user.metadata",
+                                    "children": [
+                                        {
+                                            "type": "call",
+                                            "start_token": 687,
+                                            "end_token": 693,
+                                            "label": "cast(UserMetadataRaw, user.metadata",
+                                            "children": [
+                                                {
+                                                    "type": "keyword_argument",
+                                                    "start_token": 689,
+                                                    "end_token": 691,
+                                                    "label": "UserMetadataRaw, user",
+                                                    "children": []
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "assignment",
+                                    "start_token": 696,
+                                    "end_token": 703,
+                                    "label": "metadata = UserMetadata.model_validate(raw_metadata)",
+                                    "children": [
+                                        {
+                                            "type": "call",
+                                            "start_token": 698,
+                                            "end_token": 703,
+                                            "label": "UserMetadata.model_validate(raw_metadata)",
+                                            "children": []
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "call",
+                                    "start_token": 714,
+                                    "end_token": 722,
+                                    "label": "await get_user_integrations(user_id=user.id)",
+                                    "children": [
+                                        {
+                                            "type": "keyword_argument",
+                                            "start_token": 716,
+                                            "end_token": 718,
+                                            "label": "(user_id=",
+                                            "children": []
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "if_statement",
+                                    "start_token": 737,
+                                    "end_token": 755,
+                                    "label": "if metadata.integration_credentials and not integrations.credentials:\n            integrations.credentials = metadata.integration_credentials\n",
+                                    "children": [
+                                        {
+                                            "type": "call",
+                                            "start_token": 748,
+                                            "end_token": 755,
+                                            "label": "integrations.credentials = metadata.integration_credentials\n",
+                                            "children": []
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "if_statement",
+                                    "start_token": 757,
+                                    "end_token": 769,
+                                    "label": "metadata.integration_oauth_states:\n            integrations.oauth_states = metadata.integration_oauth_states\n",
+                                    "children": [
+                                        {
+                                            "type": "assignment",
+                                            "start_token": 762,
+                                            "end_token": 769,
+                                            "label": "integrations.oauth_states = metadata.integration_oauth_states\n",
+                                            "children": []
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "await",
+                                    "start_token": 777,
+                                    "end_token": 788,
+                                    "label": "await update_user_integrations(user_id=user.id, data=integrations",
+                                    "children": [
+                                        {
+                                            "type": "call",
+                                            "start_token": 778,
+                                            "end_token": 789,
+                                            "label": "update_user_integrations(user_id=user.id, data=integrations)",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 797,
+                            "end_token": 802,
+                            "label": "raw_metadata = dict(raw_metadata)",
+                            "children": [
+                                {
+                                    "type": "call",
+                                    "start_token": 799,
+                                    "end_token": 802,
+                                    "label": "dict(raw_metadata)",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "call",
+                            "start_token": 807,
+                            "end_token": 820,
+                            "label": "(\"integration_credentials\", None)\n        raw_metadata.pop(\"integration_oauth_states\", None)",
+                            "children": []
+                        },
+                        {
+                            "type": "await",
+                            "start_token": 830,
+                            "end_token": 863,
+                            "label": "await User.prisma().update(\n            where={\"id\": user.id},\n            data={\"metadata\": Json(raw_metadata)},\n        )",
+                            "children": [
+                                {
+                                    "type": "call",
+                                    "start_token": 831,
+                                    "end_token": 862,
+                                    "label": "User.prisma().update(\n            where={\"id\": user.id},\n            data={\"metadata\": Json(raw_metadata)},\n",
+                                    "children": [
+                                        {
+                                            "type": "keyword_argument",
+                                            "start_token": 840,
+                                            "end_token": 860,
+                                            "label": "where={\"id\": user.id},\n            data={\"metadata\": Json(raw_metadata)}",
+                                            "children": [
+                                                {
+                                                    "type": "call",
+                                                    "start_token": 856,
+                                                    "end_token": 860,
+                                                    "label": "Json(raw_metadata)}",
+                                                    "children": []
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

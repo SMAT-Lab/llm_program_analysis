@@ -1,0 +1,941 @@
+{
+    "type": "module",
+    "start_token": 0,
+    "end_token": 887,
+    "label": "import logging\nfrom typing import TYPE_CHECKING, Callable, Optional, cast\n\nfrom backend.data.block import BlockWebhookConfig, get_block\nfrom backend.data.graph import set_node_webhook\nfrom backend.data.model import CREDENTIALS_FIELD_NAME\nfrom backend.integrations.webhooks import WEBHOOK_MANAGERS_BY_NAME\n\nif TYPE_CHECKING:\n    from backend.data.graph import GraphModel, NodeModel\n    from backend.data.model import Credentials\n\n    from ._base import BaseWebhooksManager\n\nlogger = logging.getLogger(__name__)\n\n\nasync def on_graph_activate(\n    graph: \"GraphModel\", get_credentials: Callable[[str], \"Credentials | None\"]\n):\n    \"\"\"\n    Hook to be called when a graph is activated/created.\n\n    ⚠️ Assuming node entities are not re-used between graph versions, ⚠️\n    this hook calls `on_node_activate` on all nodes in this graph.\n\n    Params:\n        get_credentials: `credentials_id` -> Credentials\n    \"\"\"\n    # Compare nodes in new_graph_version with previous_graph_version\n    updated_nodes = []\n    for new_node in graph.nodes:\n        node_credentials = None\n        if creds_meta := new_node.input_default.get(CREDENTIALS_FIELD_NAME):\n            node_credentials = get_credentials(creds_meta[\"id\"])\n            if not node_credentials:\n                raise ValueError(\n                    f\"Node #{new_node.id} updated with non-existent \"\n                    f\"credentials #{node_credentials}\"\n                )\n\n        updated_node = await on_node_activate(\n            graph.user_id, new_node, credentials=node_credentials\n        )\n        updated_nodes.append(updated_node)\n\n    graph.nodes = updated_nodes\n    return graph\n\n\nasync def on_graph_deactivate(\n    graph: \"GraphModel\", get_credentials: Callable[[str], \"Credentials | None\"]\n):\n    \"\"\"\n    Hook to be called when a graph is deactivated/deleted.\n\n    ⚠️ Assuming node entities are not re-used between graph versions, ⚠️\n    this hook calls `on_node_deactivate` on all nodes in `graph`.\n\n    Params:\n        get_credentials: `credentials_id` -> Credentials\n    \"\"\"\n    updated_nodes = []\n    for node in graph.nodes:\n        node_credentials = None\n        if creds_meta := node.input_default.get(CREDENTIALS_FIELD_NAME):\n            node_credentials = get_credentials(creds_meta[\"id\"])\n            if not node_credentials:\n                logger.error(\n                    f\"Node #{node.id} referenced non-existent \"\n                    f\"credentials #{creds_meta['id']}\"\n                )\n\n        updated_node = await on_node_deactivate(node, credentials=node_credentials)\n        updated_nodes.append(updated_node)\n\n    graph.nodes = updated_nodes\n    return graph\n\n\nasync def on_node_activate(\n    user_id: str,\n    node: \"NodeModel\",\n    *,\n    credentials: Optional[\"Credentials\"] = None,\n) -> \"NodeModel\":\n    \"\"\"Hook to be called when the node is activated/created\"\"\"\n\n    block = get_block(node.block_id)\n    if not block:\n        raise ValueError(\n            f\"Node #{node.id} is instance of unknown block #{node.block_id}\"\n        )\n\n    if not block.webhook_config:\n        return node\n\n    provider = block.webhook_config.provider\n    if provider not in WEBHOOK_MANAGERS_BY_NAME:\n        raise ValueError(\n            f\"Block #{block.id} has webhook_config for provider {provider} \"\n            \"which does not support webhooks\"\n        )\n\n    logger.debug(\n        f\"Activating webhook node #{node.id} with config {block.webhook_config}\"\n    )\n\n    webhooks_manager = WEBHOOK_MANAGERS_BY_NAME[provider]()\n\n    if auto_setup_webhook := isinstance(block.webhook_config, BlockWebhookConfig):\n        try:\n            resource = block.webhook_config.resource_format.format(**node.input_default)\n        except KeyError:\n            resource = None\n        logger.debug(\n            f\"Constructed resource string {resource} from input {node.input_default}\"\n        )\n    else:\n        resource = \"\"  # not relevant for manual webhooks\n\n    needs_credentials = CREDENTIALS_FIELD_NAME in block.input_schema.model_fields\n    credentials_meta = (\n        node.input_default.get(CREDENTIALS_FIELD_NAME) if needs_credentials else None\n    )\n    event_filter_input_name = block.webhook_config.event_filter_input\n    has_everything_for_webhook = (\n        resource is not None\n        and (credentials_meta or not needs_credentials)\n        and (\n            not event_filter_input_name\n            or (\n                event_filter_input_name in node.input_default\n                and any(\n                    is_on\n                    for is_on in node.input_default[event_filter_input_name].values()\n                )\n            )\n        )\n    )\n\n    if has_everything_for_webhook and resource is not None:\n        logger.debug(f\"Node #{node} has everything for a webhook!\")\n        if credentials_meta and not credentials:\n            raise ValueError(\n                f\"Cannot set up webhook for node #{node.id}: \"\n                f\"credentials #{credentials_meta['id']} not available\"\n            )\n\n        if event_filter_input_name:\n            # Shape of the event filter is enforced in Block.__init__\n            event_filter = cast(dict, node.input_default[event_filter_input_name])\n            events = [\n                block.webhook_config.event_format.format(event=event)\n                for event, enabled in event_filter.items()\n                if enabled is True\n            ]\n            logger.debug(f\"Webhook events to subscribe to: {', '.join(events)}\")\n        else:\n            events = []\n\n        # Find/make and attach a suitable webhook to the node\n        if auto_setup_webhook:\n            assert credentials is not None\n            new_webhook = await webhooks_manager.get_suitable_auto_webhook(\n                user_id,\n                credentials,\n                block.webhook_config.webhook_type,\n                resource,\n                events,\n            )\n        else:\n            # Manual webhook -> no credentials -> don't register but do create\n            new_webhook = await webhooks_manager.get_manual_webhook(\n                user_id,\n                node.graph_id,\n                block.webhook_config.webhook_type,\n                events,\n            )\n        logger.debug(f\"Acquired webhook: {new_webhook}\")\n        return await set_node_webhook(node.id, new_webhook.id)\n    else:\n        logger.debug(f\"Node #{node.id} does not have everything for a webhook\")\n\n    return node\n\n\nasync def on_node_deactivate(\n    node: \"NodeModel\",\n    *,\n    credentials: Optional[\"Credentials\"] = None,\n    webhooks_manager: Optional[\"BaseWebhooksManager\"] = None,\n) -> \"NodeModel\":\n    \"\"\"Hook to be called when node is deactivated/deleted\"\"\"\n\n    logger.debug(f\"Deactivating node #{node.id}\")\n    block = get_block(node.block_id)\n    if not block:\n        raise ValueError(\n            f\"Node #{node.id} is instance of unknown block #{node.block_id}\"\n        )\n\n    if not block.webhook_config:\n        return node\n\n    provider = block.webhook_config.provider\n    if provider not in WEBHOOK_MANAGERS_BY_NAME:\n        raise ValueError(\n            f\"Block #{block.id} has webhook_config for provider {provider} \"\n            \"which does not support webhooks\"\n        )\n\n    webhooks_manager = WEBHOOK_MANAGERS_BY_NAME[provider]()\n\n    if node.webhook_id:\n        logger.debug(f\"Node #{node.id} has webhook_id {node.webhook_id}\")\n        if not node.webhook:\n            logger.error(f\"Node #{node.id} has webhook_id but no webhook object\")\n            raise ValueError(\"node.webhook not included\")\n\n        # Detach webhook from node\n        logger.debug(f\"Detaching webhook from node #{node.id}\")\n        updated_node = await set_node_webhook(node.id, None)\n\n        # Prune and deregister the webhook if it is no longer used anywhere\n        webhook = node.webhook\n        logger.debug(\n            f\"Pruning{' and deregistering' if credentials else ''} \"\n            f\"webhook #{webhook.id}\"\n        )\n        await webhooks_manager.prune_webhook_if_dangling(webhook.id, credentials)\n        if (\n            CREDENTIALS_FIELD_NAME in block.input_schema.model_fields\n            and not credentials\n        ):\n            logger.warning(\n                f\"Cannot deregister webhook #{webhook.id}: credentials \"\n                f\"#{webhook.credentials_id} not available \"\n                f\"({webhook.provider.value} webhook ID: {webhook.provider_webhook_id})\"\n            )\n        return updated_node\n\n    logger.debug(f\"Node #{node.id} has no webhook_id, returning\")\n    return node",
+    "children": [
+        {
+            "type": "import_statement",
+            "start_token": 0,
+            "end_token": 1,
+            "label": "import logging",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 3,
+            "end_token": 12,
+            "label": "from typing import TYPE_CHECKING, Callable, Optional, cast",
+            "children": [
+                {
+                    "type": "dotted_name",
+                    "start_token": 4,
+                    "end_token": 6,
+                    "label": "typing import TYPE_CHECKING",
+                    "children": []
+                },
+                {
+                    "type": "identifier",
+                    "start_token": 8,
+                    "end_token": 10,
+                    "label": "Callable, Optional",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 15,
+            "end_token": 24,
+            "label": "from backend.data.block import BlockWebhookConfig, get_block",
+            "children": [
+                {
+                    "type": "dotted_name",
+                    "start_token": 16,
+                    "end_token": 20,
+                    "label": "backend.data.block",
+                    "children": []
+                },
+                {
+                    "type": "identifier",
+                    "start_token": 22,
+                    "end_token": 24,
+                    "label": "BlockWebhookConfig, get_block",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 26,
+            "end_token": 33,
+            "label": "from backend.data.graph import set_node_webhook",
+            "children": [
+                {
+                    "type": "dotted_name",
+                    "start_token": 27,
+                    "end_token": 31,
+                    "label": "backend.data.graph",
+                    "children": []
+                },
+                {
+                    "type": "identifier",
+                    "start_token": 33,
+                    "end_token": 33,
+                    "label": "set_node_webhook",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 35,
+            "end_token": 42,
+            "label": "from backend.data.model import CREDENTIALS_FIELD_NAME",
+            "children": [
+                {
+                    "type": "dotted_name",
+                    "start_token": 36,
+                    "end_token": 40,
+                    "label": "backend.data.model",
+                    "children": []
+                },
+                {
+                    "type": "identifier",
+                    "start_token": 42,
+                    "end_token": 42,
+                    "label": "CREDENTIALS_FIELD_NAME",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 44,
+            "end_token": 51,
+            "label": "from backend.integrations.webhooks import WEBHOOK_MANAGERS_BY_NAME",
+            "children": [
+                {
+                    "type": "dotted_name",
+                    "start_token": 45,
+                    "end_token": 49,
+                    "label": "backend.integrations.webhooks",
+                    "children": []
+                },
+                {
+                    "type": "identifier",
+                    "start_token": 51,
+                    "end_token": 51,
+                    "label": "WEBHOOK_MANAGERS_BY_NAME",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "if_statement",
+            "start_token": 54,
+            "end_token": 76,
+            "label": "if TYPE_CHECKING:\n    from backend.data.graph import GraphModel, NodeModel\n    from backend.data.model import Credentials",
+            "children": [
+                {
+                    "type": "if_clause",
+                    "start_token": 54,
+                    "end_token": 56,
+                    "label": "if TYPE_CHECKING:",
+                    "children": []
+                },
+                {
+                    "type": "block",
+                    "start_token": 57,
+                    "end_token": 76,
+                    "label": "\n    from backend.data.graph import GraphModel, NodeModel\n    from backend.data.model import Credentials",
+                    "children": [
+                        {
+                            "type": "import_from_statement",
+                            "start_token": 58,
+                            "end_token": 67,
+                            "label": "from backend.data.graph import GraphModel, NodeModel",
+                            "children": [
+                                {
+                                    "type": "dotted_name",
+                                    "start_token": 59,
+                                    "end_token": 63,
+                                    "label": "backend.data.graph",
+                                    "children": []
+                                },
+                                {
+                                    "type": "identifier",
+                                    "start_token": 65,
+                                    "end_token": 67,
+                                    "label": "GraphModel, NodeModel",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "import_from_statement",
+                            "start_token": 69,
+                            "end_token": 76,
+                            "label": "from backend.data.model import Credentials",
+                            "children": [
+                                {
+                                    "type": "dotted_name",
+                                    "start_token": 70,
+                                    "end_token": 74,
+                                    "label": "backend.data.model",
+                                    "children": []
+                                },
+                                {
+                                    "type": "identifier",
+                                    "start_token": 76,
+                                    "end_token": 76,
+                                    "label": "Credentials",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 79,
+            "end_token": 83,
+            "label": "from ._base import BaseWebhooksManager",
+            "children": [
+                {
+                    "type": "relative_import",
+                    "start_token": 80,
+                    "end_token": 80,
+                    "label": ".",
+                    "children": []
+                },
+                {
+                    "type": "identifier",
+                    "start_token": 83,
+                    "end_token": 83,
+                    "label": "BaseWebhooksManager",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "assignment",
+            "start_token": 86,
+            "end_token": 93,
+            "label": "logger = logging.getLogger(__name__)",
+            "children": [
+                {
+                    "type": "attribute",
+                    "start_token": 88,
+                    "end_token": 90,
+                    "label": "logging.getLogger",
+                    "children": []
+                },
+                {
+                    "type": "call",
+                    "start_token": 91,
+                    "end_token": 93,
+                    "label": "(__name__)",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "start_token": 97,
+            "end_token": 225,
+            "label": "async def on_graph_activate(\n    graph: \"GraphModel\", get_credentials: Callable[[str], \"Credentials | None\"]\n):\n    \"\"\"\n    Hook to be called when a graph is activated/created.\n\n    ⚠️ Assuming node entities are not re-used between graph versions, ⚠️\n    this hook calls `on_node_activate` on all nodes in this graph.\n\n    Params:\n        get_credentials: `credentials_id` -> Credentials\n    \"\"\"\n    # Compare nodes in new_graph_version with previous_graph_version\n    updated_nodes = []\n    for new_node in graph.nodes:\n        node_credentials = None\n        if creds_meta := new_node.input_default.get(CREDENTIALS_FIELD_NAME):\n            node_credentials = get_credentials(creds_meta[\"id\"])\n            if not node_credentials:\n                raise ValueError(\n                    f\"Node #{new_node.id} updated with non-existent \"\n                    f\"credentials #{node_credentials}\"\n                )\n\n        updated_node = await on_node_activate(\n            graph.user_id, new_node, credentials=node_credentials\n        )\n        updated_nodes.append(updated_node)\n\n    graph.nodes = updated_nodes\n    return graph\n",
+            "children": [
+                {
+                    "type": "parameters",
+                    "start_token": 100,
+                    "end_token": 118,
+                    "label": "(\n    graph: \"GraphModel\", get_credentials: Callable[[str], \"Credentials | None\"]\n):",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 101,
+                            "end_token": 103,
+                            "label": "\n    graph:",
+                            "children": []
+                        },
+                        {
+                            "type": "typed_parameter",
+                            "start_token": 106,
+                            "end_token": 116,
+                            "label": "get_credentials: Callable[[str], \"Credentials | None\"]\n",
+                            "children": [
+                                {
+                                    "type": "generic_type",
+                                    "start_token": 108,
+                                    "end_token": 114,
+                                    "label": "Callable[[str], \"Credentials | None\"",
+                                    "children": [
+                                        {
+                                            "type": "identifier",
+                                            "start_token": 109,
+                                            "end_token": 111,
+                                            "label": "[[str",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "union_type",
+                                            "start_token": 113,
+                                            "end_token": 114,
+                                            "label": ", \"Credentials | None\"",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "type": "block",
+                    "start_token": 118,
+                    "end_token": 225,
+                    "label": ":\n    \"\"\"\n    Hook to be called when a graph is activated/created.\n\n    ⚠️ Assuming node entities are not re-used between graph versions, ⚠️\n    this hook calls `on_node_activate` on all nodes in this graph.\n\n    Params:\n        get_credentials: `credentials_id` -> Credentials\n    \"\"\"\n    # Compare nodes in new_graph_version with previous_graph_version\n    updated_nodes = []\n    for new_node in graph.nodes:\n        node_credentials = None\n        if creds_meta := new_node.input_default.get(CREDENTIALS_FIELD_NAME):\n            node_credentials = get_credentials(creds_meta[\"id\"])\n            if not node_credentials:\n                raise ValueError(\n                    f\"Node #{new_node.id} updated with non-existent \"\n                    f\"credentials #{node_credentials}\"\n                )\n\n        updated_node = await on_node_activate(\n            graph.user_id, new_node, credentials=node_credentials\n        )\n        updated_nodes.append(updated_node)\n\n    graph.nodes = updated_nodes\n    return graph\n",
+                    "children": [
+                        {
+                            "type": "comment",
+                            "start_token": 120,
+                            "end_token": 123,
+                            "label": "\"\"\"\n    Hook to be called when a graph is activated/created.\n\n    ⚠️ Assuming node entities are not re-used between graph versions, ⚠️\n    this hook calls `on_node_activate` on all nodes in this graph.\n\n    Params:\n        get_credentials: `credentials_id` -> Credentials\n    \"\"\"\n",
+                            "children": []
+                        },
+                        {
+                            "type": "expression_statement",
+                            "start_token": 125,
+                            "end_token": 130,
+                            "label": "Compare nodes in new_graph_version with previous_graph_version",
+                            "children": [
+                                {
+                                    "type": "binary_operator",
+                                    "start_token": 124,
+                                    "end_token": 130,
+                                    "label": "# Compare nodes in new_graph_version with previous_graph_version",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "for_statement",
+                            "start_token": 137,
+                            "end_token": 215,
+                            "label": "for new_node in graph.nodes:\n        node_credentials = None\n        if creds_meta := new_node.input_default.get(CREDENTIALS_FIELD_NAME):\n            node_credentials = get_credentials(creds_meta[\"id\"])\n            if not node_credentials:\n                raise ValueError(\n                    f\"Node #{new_node.id} updated with non-existent \"\n                    f\"credentials #{node_credentials}\"\n                )\n\n        updated_node = await on_node_activate(\n            graph.user_id, new_node, credentials=node_credentials\n        )\n        updated_nodes.append(updated_node)\n",
+                            "children": [
+                                {
+                                    "type": "for_in_clause",
+                                    "start_token": 137,
+                                    "end_token": 142,
+                                    "label": "for new_node in graph.nodes",
+                                    "children": []
+                                },
+                                {
+                                    "type": "block",
+                                    "start_token": 143,
+                                    "end_token": 215,
+                                    "label": ":\n        node_credentials = None\n        if creds_meta := new_node.input_default.get(CREDENTIALS_FIELD_NAME):\n            node_credentials = get_credentials(creds_meta[\"id\"])\n            if not node_credentials:\n                raise ValueError(\n                    f\"Node #{new_node.id} updated with non-existent \"\n                    f\"credentials #{node_credentials}\"\n                )\n\n        updated_node = await on_node_activate(\n            graph.user_id, new_node, credentials=node_credentials\n        )\n        updated_nodes.append(updated_node)\n",
+                                    "children": [
+                                        {
+                                            "type": "if_statement",
+                                            "start_token": 149,
+                                            "end_token": 205,
+                                            "label": "if creds_meta := new_node.input_default.get(CREDENTIALS_FIELD_NAME):\n            node_credentials = get_credentials(creds_meta[\"id\"])\n            if not node_credentials:\n                raise ValueError(\n                    f\"Node #{new_node.id} updated with non-existent \"\n                    f\"credentials #{node_credentials}\"\n                )\n\n        updated_node = await on_node_activate(\n            graph.user_id, new_node, credentials=node_credentials",
+                                            "children": [
+                                                {
+                                                    "type": "if_clause",
+                                                    "start_token": 149,
+                                                    "end_token": 160,
+                                                    "label": "if creds_meta := new_node.input_default.get(CREDENTIALS_FIELD_NAME)",
+                                                    "children": [
+                                                        {
+                                                            "type": "binary_operator",
+                                                            "start_token": 149,
+                                                            "end_token": 160,
+                                                            "label": "if creds_meta := new_node.input_default.get(CREDENTIALS_FIELD_NAME)",
+                                                            "children": []
+                                                        }
+                                                    ]
+                                                },
+                                                {
+                                                    "type": "block",
+                                                    "start_token": 161,
+                                                    "end_token": 205,
+                                                    "label": ":\n            node_credentials = get_credentials(creds_meta[\"id\"])\n            if not node_credentials:\n                raise ValueError(\n                    f\"Node #{new_node.id} updated with non-existent \"\n                    f\"credentials #{node_credentials}\"\n                )\n\n        updated_node = await on_node_activate(\n            graph.user_id, new_node, credentials=node_credentials",
+                                                    "children": [
+                                                        {
+                                                            "type": "raise_statement",
+                                                            "start_token": 178,
+                                                            "end_token": 188,
+                                                            "label": "raise ValueError(\n                    f\"Node #{new_node.id} updated with non-existent \"\n                    f\"credentials #{node_credentials}\"\n                )",
+                                                            "children": []
+                                                        },
+                                                        {
+                                                            "type": "await",
+                                                            "start_token": 193,
+                                                            "end_token": 207,
+                                                            "label": "await on_node_activate(\n            graph.user_id, new_node, credentials=node_credentials\n        )",
+                                                            "children": [
+                                                                {
+                                                                    "type": "call",
+                                                                    "start_token": 194,
+                                                                    "end_token": 207,
+                                                                    "label": "on_node_activate(\n            graph.user_id, new_node, credentials=node_credentials\n        )",
+                                                                    "children": []
+                                                                }
+                                                            ]
+                                                        },
+                                                        {
+                                                            "type": "expression_statement",
+                                                            "start_token": 209,
+                                                            "end_token": 213,
+                                                            "label": "updated_nodes.append(updated_node",
+                                                            "children": [
+                                                                {
+                                                                    "type": "call",
+                                                                    "start_token": 210,
+                                                                    "end_token": 213,
+                                                                    "label": ".append(updated_node",
+                                                                    "children": []
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 217,
+                            "end_token": 221,
+                            "label": "graph.nodes = updated_nodes",
+                            "children": [
+                                {
+                                    "type": "attribute",
+                                    "start_token": 218,
+                                    "end_token": 220,
+                                    "label": ".nodes =",
+                                    "children": []
+                                },
+                                {
+                                    "type": "identifier",
+                                    "start_token": 221,
+                                    "end_token": 221,
+                                    "label": "updated_nodes",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "return_statement",
+                            "start_token": 223,
+                            "end_token": 224,
+                            "label": "return graph",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "start_token": 228,
+            "end_token": 343,
+            "label": "async def on_graph_deactivate(\n    graph: \"GraphModel\", get_credentials: Callable[[str], \"Credentials | None\"]\n):\n    \"\"\"\n    Hook to be called when a graph is deactivated/deleted.\n\n    ⚠️ Assuming node entities are not re-used between graph versions, ⚠️\n    this hook calls `on_node_deactivate` on all nodes in `graph`.\n\n    Params:\n        get_credentials: `credentials_id` -> Credentials\n    \"\"\"\n    updated_nodes = []\n    for node in graph.nodes:\n        node_credentials = None\n        if creds_meta := node.input_default.get(CREDENTIALS_FIELD_NAME):\n            node_credentials = get_credentials(creds_meta[\"id\"])\n            if not node_credentials:\n                logger.error(\n                    f\"Node #{node.id} referenced non-existent \"\n                    f\"credentials #{creds_meta['id']}\"\n                )\n\n        updated_node = await on_node_deactivate(node, credentials=node_credentials)\n        updated_nodes.append(updated_node)\n\n    graph.nodes = updated_nodes\n    return graph\n",
+            "children": [
+                {
+                    "type": "parameters",
+                    "start_token": 231,
+                    "end_token": 248,
+                    "label": "(\n    graph: \"GraphModel\", get_credentials: Callable[[str], \"Credentials | None\"]\n)",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 233,
+                            "end_token": 235,
+                            "label": "graph: \"GraphModel\"",
+                            "children": []
+                        },
+                        {
+                            "type": "typed_parameter",
+                            "start_token": 237,
+                            "end_token": 246,
+                            "label": "get_credentials: Callable[[str], \"Credentials | None\"]",
+                            "children": [
+                                {
+                                    "type": "generic_type",
+                                    "start_token": 239,
+                                    "end_token": 244,
+                                    "label": "Callable[[str],",
+                                    "children": [
+                                        {
+                                            "type": "identifier",
+                                            "start_token": 241,
+                                            "end_token": 243,
+                                            "label": "[str]",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "union_type",
+                                            "start_token": 245,
+                                            "end_token": 246,
+                                            "label": "\"Credentials | None\"]",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "type": "block",
+                    "start_token": 249,
+                    "end_token": 343,
+                    "label": ":\n    \"\"\"\n    Hook to be called when a graph is deactivated/deleted.\n\n    ⚠️ Assuming node entities are not re-used between graph versions, ⚠️\n    this hook calls `on_node_deactivate` on all nodes in `graph`.\n\n    Params:\n        get_credentials: `credentials_id` -> Credentials\n    \"\"\"\n    updated_nodes = []\n    for node in graph.nodes:\n        node_credentials = None\n        if creds_meta := node.input_default.get(CREDENTIALS_FIELD_NAME):\n            node_credentials = get_credentials(creds_meta[\"id\"])\n            if not node_credentials:\n                logger.error(\n                    f\"Node #{node.id} referenced non-existent \"\n                    f\"credentials #{creds_meta['id']}\"\n                )\n\n        updated_node = await on_node_deactivate(node, credentials=node_credentials)\n        updated_nodes.append(updated_node)\n\n    graph.nodes = updated_nodes\n    return graph\n",
+                    "children": [
+                        {
+                            "type": "comment",
+                            "start_token": 251,
+                            "end_token": 253,
+                            "label": "\"\"\"\n    Hook to be called when a graph is deactivated/deleted.\n\n    ⚠️ Assuming node entities are not re-used between graph versions, ⚠️\n    this hook calls `on_node_deactivate` on all nodes in `graph`.\n\n    Params:\n        get_credentials: `credentials_id` -> Credentials\n    \"\"\"",
+                            "children": []
+                        },
+                        {
+                            "type": "expression_statement",
+                            "start_token": 255,
+                            "end_token": 259,
+                            "label": "updated_nodes = []\n",
+                            "children": []
+                        },
+                        {
+                            "type": "for_statement",
+                            "start_token": 260,
+                            "end_token": 333,
+                            "label": "for node in graph.nodes:\n        node_credentials = None\n        if creds_meta := node.input_default.get(CREDENTIALS_FIELD_NAME):\n            node_credentials = get_credentials(creds_meta[\"id\"])\n            if not node_credentials:\n                logger.error(\n                    f\"Node #{node.id} referenced non-existent \"\n                    f\"credentials #{creds_meta['id']}\"\n                )\n\n        updated_node = await on_node_deactivate(node, credentials=node_credentials)\n        updated_nodes.append(updated_node)\n",
+                            "children": [
+                                {
+                                    "type": "for_in_clause",
+                                    "start_token": 260,
+                                    "end_token": 265,
+                                    "label": "for node in graph.nodes",
+                                    "children": []
+                                },
+                                {
+                                    "type": "block",
+                                    "start_token": 266,
+                                    "end_token": 333,
+                                    "label": ":\n        node_credentials = None\n        if creds_meta := node.input_default.get(CREDENTIALS_FIELD_NAME):\n            node_credentials = get_credentials(creds_meta[\"id\"])\n            if not node_credentials:\n                logger.error(\n                    f\"Node #{node.id} referenced non-existent \"\n                    f\"credentials #{creds_meta['id']}\"\n                )\n\n        updated_node = await on_node_deactivate(node, credentials=node_credentials)\n        updated_nodes.append(updated_node)\n",
+                                    "children": [
+                                        {
+                                            "type": "if_statement",
+                                            "start_token": 272,
+                                            "end_token": 313,
+                                            "label": "if creds_meta := node.input_default.get(CREDENTIALS_FIELD_NAME):\n            node_credentials = get_credentials(creds_meta[\"id\"])\n            if not node_credentials:\n                logger.error(\n                    f\"Node #{node.id} referenced non-existent \"\n                    f\"credentials #{creds_meta['id']}\"\n                )\n",
+                                            "children": [
+                                                {
+                                                    "type": "if_clause",
+                                                    "start_token": 272,
+                                                    "end_token": 283,
+                                                    "label": "if creds_meta := node.input_default.get(CREDENTIALS_FIELD_NAME)",
+                                                    "children": [
+                                                        {
+                                                            "type": "binary_operator",
+                                                            "start_token": 272,
+                                                            "end_token": 283,
+                                                            "label": "if creds_meta := node.input_default.get(CREDENTIALS_FIELD_NAME)",
+                                                            "children": []
+                                                        }
+                                                    ]
+                                                },
+                                                {
+                                                    "type": "block",
+                                                    "start_token": 284,
+                                                    "end_token": 313,
+                                                    "label": ":\n            node_credentials = get_credentials(creds_meta[\"id\"])\n            if not node_credentials:\n                logger.error(\n                    f\"Node #{node.id} referenced non-existent \"\n                    f\"credentials #{creds_meta['id']}\"\n                )\n",
+                                                    "children": [
+                                                        {
+                                                            "type": "await",
+                                                            "start_token": 316,
+                                                            "end_token": 324,
+                                                            "label": "= await on_node_deactivate(node, credentials=node_credentials",
+                                                            "children": [
+                                                                {
+                                                                    "type": "call",
+                                                                    "start_token": 317,
+                                                                    "end_token": 324,
+                                                                    "label": "await on_node_deactivate(node, credentials=node_credentials",
+                                                                    "children": []
+                                                                }
+                                                            ]
+                                                        },
+                                                        {
+                                                            "type": "expression_statement",
+                                                            "start_token": 327,
+                                                            "end_token": 331,
+                                                            "label": "updated_nodes.append(updated_node",
+                                                            "children": [
+                                                                {
+                                                                    "type": "call",
+                                                                    "start_token": 328,
+                                                                    "end_token": 331,
+                                                                    "label": ".append(updated_node",
+                                                                    "children": []
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 335,
+                            "end_token": 339,
+                            "label": "graph.nodes = updated_nodes",
+                            "children": [
+                                {
+                                    "type": "attribute",
+                                    "start_token": 336,
+                                    "end_token": 338,
+                                    "label": ".nodes =",
+                                    "children": []
+                                },
+                                {
+                                    "type": "identifier",
+                                    "start_token": 339,
+                                    "end_token": 339,
+                                    "label": "updated_nodes",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "return_statement",
+                            "start_token": 341,
+                            "end_token": 342,
+                            "label": "return graph",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "start_token": 346,
+            "end_token": 806,
+            "label": "async def on_node_activate(\n    user_id: str,\n    node: \"NodeModel\",\n    *,\n    credentials: Optional[\"Credentials\"] = None,\n) -> \"NodeModel\":\n    \"\"\"Hook to be called when the node is activated/created\"\"\"\n\n    block = get_block(node.block_id)\n    if not block:\n        raise ValueError(\n            f\"Node #{node.id} is instance of unknown block #{node.block_id}\"\n        )\n\n    if not block.webhook_config:\n        return node\n\n    provider = block.webhook_config.provider\n    if provider not in WEBHOOK_MANAGERS_BY_NAME:\n        raise ValueError(\n            f\"Block #{block.id} has webhook_config for provider {provider} \"\n            \"which does not support webhooks\"\n        )\n\n    logger.debug(\n        f\"Activating webhook node #{node.id} with config {block.webhook_config}\"\n    )\n\n    webhooks_manager = WEBHOOK_MANAGERS_BY_NAME[provider]()\n\n    if auto_setup_webhook := isinstance(block.webhook_config, BlockWebhookConfig):\n        try:\n            resource = block.webhook_config.resource_format.format(**node.input_default)\n        except KeyError:\n            resource = None\n        logger.debug(\n            f\"Constructed resource string {resource} from input {node.input_default}\"\n        )\n    else:\n        resource = \"\"  # not relevant for manual webhooks\n\n    needs_credentials = CREDENTIALS_FIELD_NAME in block.input_schema.model_fields\n    credentials_meta = (\n        node.input_default.get(CREDENTIALS_FIELD_NAME) if needs_credentials else None\n    )\n    event_filter_input_name = block.webhook_config.event_filter_input\n    has_everything_for_webhook = (\n        resource is not None\n        and (credentials_meta or not needs_credentials)\n        and (\n            not event_filter_input_name\n            or (\n                event_filter_input_name in node.input_default\n                and any(\n                    is_on\n                    for is_on in node.input_default[event_filter_input_name].values()\n                )\n            )\n        )\n    )\n\n    if has_everything_for_webhook and resource is not None:\n        logger.debug(f\"Node #{node} has everything for a webhook!\")\n        if credentials_meta and not credentials:\n            raise ValueError(\n                f\"Cannot set up webhook for node #{node.id}: \"\n                f\"credentials #{credentials_meta['id']} not available\"\n            )\n\n        if event_filter_input_name:\n            # Shape of the event filter is enforced in Block.__init__\n            event_filter = cast(dict, node.input_default[event_filter_input_name])\n            events = [\n                block.webhook_config.event_format.format(event=event)\n                for event, enabled in event_filter.items()\n                if enabled is True\n            ]\n            logger.debug(f\"Webhook events to subscribe to: {', '.join(events)}\")\n        else:\n            events = []\n\n        # Find/make and attach a suitable webhook to the node\n        if auto_setup_webhook:\n            assert credentials is not None\n            new_webhook = await webhooks_manager.get_suitable_auto_webhook(\n                user_id,\n                credentials,\n                block.webhook_config.webhook_type,\n                resource,\n                events,\n            )\n        else:\n",
+            "children": [
+                {
+                    "type": "parameters",
+                    "start_token": 349,
+                    "end_token": 372,
+                    "label": "(\n    user_id: str,\n    node: \"NodeModel\",\n    *,\n    credentials: Optional[\"Credentials\"] = None,",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 351,
+                            "end_token": 353,
+                            "label": "user_id: str",
+                            "children": []
+                        },
+                        {
+                            "type": "typed_parameter",
+                            "start_token": 356,
+                            "end_token": 370,
+                            "label": "node: \"NodeModel\",\n    *,\n    credentials: Optional[\"Credentials\"] =",
+                            "children": [
+                                {
+                                    "type": "generic_type",
+                                    "start_token": 358,
+                                    "end_token": 368,
+                                    "label": "\"NodeModel\",\n    *,\n    credentials: Optional[\"Credentials\"",
+                                    "children": [
+                                        {
+                                            "type": "identifier",
+                                            "start_token": 360,
+                                            "end_token": 362,
+                                            "label": "\n    *,",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "union_type",
+                                            "start_token": 364,
+                                            "end_token": 366,
+                                            "label": "credentials: Optional",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "type": "block",
+                    "start_token": 373,
+                    "end_token": 806,
+                    "label": "\n) -> \"NodeModel\":\n    \"\"\"Hook to be called when the node is activated/created\"\"\"\n\n    block = get_block(node.block_id)\n    if not block:\n        raise ValueError(\n            f\"Node #{node.id} is instance of unknown block #{node.block_id}\"\n        )\n\n    if not block.webhook_config:\n        return node\n\n    provider = block.webhook_config.provider\n    if provider not in WEBHOOK_MANAGERS_BY_NAME:\n        raise ValueError(\n            f\"Block #{block.id} has webhook_config for provider {provider} \"\n            \"which does not support webhooks\"\n        )\n\n    logger.debug(\n        f\"Activating webhook node #{node.id} with config {block.webhook_config}\"\n    )\n\n    webhooks_manager = WEBHOOK_MANAGERS_BY_NAME[provider]()\n\n    if auto_setup_webhook := isinstance(block.webhook_config, BlockWebhookConfig):\n        try:\n            resource = block.webhook_config.resource_format.format(**node.input_default)\n        except KeyError:\n            resource = None\n        logger.debug(\n            f\"Constructed resource string {resource} from input {node.input_default}\"\n        )\n    else:\n        resource = \"\"  # not relevant for manual webhooks\n\n    needs_credentials = CREDENTIALS_FIELD_NAME in block.input_schema.model_fields\n    credentials_meta = (\n        node.input_default.get(CREDENTIALS_FIELD_NAME) if needs_credentials else None\n    )\n    event_filter_input_name = block.webhook_config.event_filter_input\n    has_everything_for_webhook = (\n        resource is not None\n        and (credentials_meta or not needs_credentials)\n        and (\n            not event_filter_input_name\n            or (\n                event_filter_input_name in node.input_default\n                and any(\n                    is_on\n                    for is_on in node.input_default[event_filter_input_name].values()\n                )\n            )\n        )\n    )\n\n    if has_everything_for_webhook and resource is not None:\n        logger.debug(f\"Node #{node} has everything for a webhook!\")\n        if credentials_meta and not credentials:\n            raise ValueError(\n                f\"Cannot set up webhook for node #{node.id}: \"\n                f\"credentials #{credentials_meta['id']} not available\"\n            )\n\n        if event_filter_input_name:\n            # Shape of the event filter is enforced in Block.__init__\n            event_filter = cast(dict, node.input_default[event_filter_input_name])\n            events = [\n                block.webhook_config.event_format.format(event=event)\n                for event, enabled in event_filter.items()\n                if enabled is True\n            ]\n            logger.debug(f\"Webhook events to subscribe to: {', '.join(events)}\")\n        else:\n            events = []\n\n        # Find/make and attach a suitable webhook to the node\n        if auto_setup_webhook:\n            assert credentials is not None\n            new_webhook = await webhooks_manager.get_suitable_auto_webhook(\n                user_id,\n                credentials,\n                block.webhook_config.webhook_type,\n                resource,\n                events,\n            )\n        else:\n",
+                    "children": [
+                        {
+                            "type": "comment",
+                            "start_token": 380,
+                            "end_token": 382,
+                            "label": "\"\"\"Hook to be called when the node is activated/created\"\"\"",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 385,
+                            "end_token": 392,
+                            "label": "block = get_block(node.block_id)",
+                            "children": [
+                                {
+                                    "type": "call",
+                                    "start_token": 387,
+                                    "end_token": 392,
+                                    "label": "get_block(node.block_id)",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "if_statement",
+                            "start_token": 394,
+                            "end_token": 406,
+                            "label": "if not block:\n        raise ValueError(\n            f\"Node #{node.id} is instance of unknown block #{node.block_id}\"\n        )",
+                            "children": [
+                                {
+                                    "type": "if_clause",
+                                    "start_token": 394,
+                                    "end_token": 396,
+                                    "label": "if not block",
+                                    "children": []
+                                },
+                                {
+                                    "type": "block",
+                                    "start_token": 397,
+                                    "end_token": 406,
+                                    "label": ":\n        raise ValueError(\n            f\"Node #{node.id} is instance of unknown block #{node.block_id}\"\n        )",
+                                    "children": [
+                                        {
+                                            "type": "raise_statement",
+                                            "start_token": 399,
+                                            "end_token": 406,
+                                            "label": "raise ValueError(\n            f\"Node #{node.id} is instance of unknown block #{node.block_id}\"\n        )",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "if_statement",
+                            "start_token": 409,
+                            "end_token": 417,
+                            "label": "if not block.webhook_config:\n        return node",
+                            "children": [
+                                {
+                                    "type": "if_clause",
+                                    "start_token": 409,
+                                    "end_token": 411,
+                                    "label": "if not block",
+                                    "children": []
+                                },
+                                {
+                                    "type": "block",
+                                    "start_token": 412,
+                                    "end_token": 417,
+                                    "label": ".webhook_config:\n        return node",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 420,
+                            "end_token": 426,
+                            "label": "provider = block.webhook_config.provider",
+                            "children": [
+                                {
+                                    "type": "attribute",
+                                    "start_token": 422,
+                                    "end_token": 424,
+                                    "label": "block.webhook_config",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "if_statement",
+                            "start_token": 428,
+                            "end_token": 444,
+                            "label": "if provider not in WEBHOOK_MANAGERS_BY_NAME:\n        raise ValueError(\n            f\"Block #{block.id} has webhook_config for provider {provider} \"\n            \"which does not support webhooks\"\n        )",
+                            "children": [
+                                {
+                                    "type": "comparison_operator",
+                                    "start_token": 430,
+                                    "end_token": 434,
+                                    "label": "not in WEBHOOK_MANAGERS_BY_NAME:\n",
+                                    "children": []
+                                },
+                                {
+                                    "type": "raise_statement",
+                                    "start_token": 436,
+                                    "end_token": 444,
+                                    "label": "ValueError(\n            f\"Block #{block.id} has webhook_config for provider {provider} \"\n            \"which does not support webhooks\"\n        )",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "await",
+                            "start_token": 459,
+                            "end_token": 466,
+                            "label": "= WEBHOOK_MANAGERS_BY_NAME[provider]()\n",
+                            "children": [
+                                {
+                                    "type": "call",
+                                    "start_token": 460,
+                                    "end_token": 466,
+                                    "label": "WEBHOOK_MANAGERS_BY_NAME[provider]()\n",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "if_statement",
+                            "start_token": 468,
+                            "end_token": 556,
+                            "label": "if auto_setup_webhook := isinstance(block.webhook_config, BlockWebhookConfig):\n        try:\n            resource = block.webhook_config.resource_format.format(**node.input_default)\n        except KeyError:\n            resource = None\n        logger.debug(\n            f\"Constructed resource string {resource} from input {node.input_default}\"\n        )\n    else:\n        resource = \"\"  # not relevant for manual webhooks\n\n    needs_credentials = CREDENTIALS_FIELD_NAME in block.input_schema.model_fields\n    credentials_meta = (\n        node.input_default.get(CREDENTIALS_FIELD_NAME) if",
+                            "children": [
+                                {
+                                    "type": "comparison_operator",
+                                    "start_token": 470,
+                                    "end_token": 480,
+                                    "label": ":= isinstance(block.webhook_config, BlockWebhookConfig):",
+                                    "children": []
+                                },
+                                {
+                                    "type": "try_statement",
+                                    "start_token": 482,
+                                    "end_token": 519,
+                                    "label": "try:\n            resource = block.webhook_config.resource_format.format(**node.input_default)\n        except KeyError:\n            resource = None\n        logger.debug(\n            f\"Constructed resource string {resource} from input {node.input_default}\"\n        )\n",
+                                    "children": [
+                                        {
+                                            "type": "try_clause",
+                                            "start_token": 482,
+                                            "end_token": 506,
+                                            "label": "try:\n            resource = block.webhook_config.resource_format.format(**node.input_default)\n        except KeyError:\n            resource",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "except_clause",
+                                            "start_token": 508,
+                                            "end_token": 519,
+                                            "label": "None\n        logger.debug(\n            f\"Constructed resource string {resource} from input {node.input_default}\"\n        )\n",
+                                            "children": []
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "if_statement",
+                                    "start_token": 523,
+                                    "end_token": 532,
+                                    "label": "resource = \"\"  # not relevant for manual webhooks\n",
+                                    "children": [
+                                        {
+                                            "type": "comparison_operator",
+                                            "start_token": 524,
+                                            "end_token": 532,
+                                            "label": "= \"\"  # not relevant for manual webhooks\n",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "if_statement",
+                            "start_token": 635,
+                            "end_token": 643,
+                            "label": "resource is not None:\n        logger.debug",
+                            "children": [
+                                {
+                                    "type": "comparison_operator",
+                                    "start_token": 636,
+                                    "end_token": 639,
+                                    "label": "is not None:",
+                                    "children": []
+                                },
+                                {
+                                    "type": "block",
+                                    "start_token": 640,
+                                    "end_token": 643,
+                                    "label": "\n        logger.debug",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "return_statement",
+                            "start_token": 886,
+                            "end_token": 887,
+                            "label": "return node",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "start_token": 889,
+            "end_token": 887,
+            "label": "",
+            "children": [
+                {
+                    "type": "parameters",
+                    "start_token": 889,
+                    "end_token": 372,
+                    "label": "",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 889,
+                            "end_token": 372,
+                            "label": "",
+                            "children": []
+                        },
+                        {
+                            "type": "typed_parameter",
+                            "start_token": 889,
+                            "end_token": 370,
+                            "label": "",
+                            "children": [
+                                {
+                                    "type": "generic_type",
+                                    "start_token": 358,
+                                    "end_token": 368,
+                                    "label": "\"NodeModel\",\n    *,\n    credentials: Optional[\"Credentials\"",
+                                    "children": [
+                                        {
+                                            "type": "identifier",
+                                            "start_token": 889,
+                                            "end_token": 362,
+                                            "label": "",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

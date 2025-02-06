@@ -1,0 +1,1507 @@
+{
+    "type": "module",
+    "start_token": 0,
+    "end_token": 1424,
+    "label": "import io\nimport unittest.mock\n\nimport fastapi\nimport pytest\nimport starlette.datastructures\n\nimport backend.server.v2.store.exceptions\nimport backend.server.v2.store.media\nfrom backend.util.settings import Settings\n\n\n@pytest.fixture\ndef mock_settings(monkeypatch):\n    settings = Settings()\n    settings.config.media_gcs_bucket_name = \"test-bucket\"\n    settings.config.google_application_credentials = \"test-credentials\"\n    monkeypatch.setattr(\"backend.server.v2.store.media.Settings\", lambda: settings)\n    return settings\n\n\n@pytest.fixture\ndef mock_storage_client(mocker):\n    mock_client = unittest.mock.MagicMock()\n    mock_bucket = unittest.mock.MagicMock()\n    mock_blob = unittest.mock.MagicMock()\n\n    mock_client.bucket.return_value = mock_bucket\n    mock_bucket.blob.return_value = mock_blob\n    mock_blob.public_url = \"http://test-url/media/laptop.jpeg\"\n\n    mocker.patch(\"google.cloud.storage.Client\", return_value=mock_client)\n\n    return mock_client\n\n\nasync def test_upload_media_success(mock_settings, mock_storage_client):\n    # Create test JPEG data with valid signature\n    test_data = b\"\\xFF\\xD8\\xFF\" + b\"test data\"\n\n    test_file = fastapi.UploadFile(\n        filename=\"laptop.jpeg\",\n        file=io.BytesIO(test_data),\n        headers=starlette.datastructures.Headers({\"content-type\": \"image/jpeg\"}),\n    )\n\n    result = await backend.server.v2.store.media.upload_media(\"test-user\", test_file)\n\n    assert result == \"http://test-url/media/laptop.jpeg\"\n    mock_bucket = mock_storage_client.bucket.return_value\n    mock_blob = mock_bucket.blob.return_value\n    mock_blob.upload_from_string.assert_called_once()\n\n\nasync def test_upload_media_invalid_type(mock_settings, mock_storage_client):\n    test_file = fastapi.UploadFile(\n        filename=\"test.txt\",\n        file=io.BytesIO(b\"test data\"),\n        headers=starlette.datastructures.Headers({\"content-type\": \"text/plain\"}),\n    )\n\n    with pytest.raises(backend.server.v2.store.exceptions.InvalidFileTypeError):\n        await backend.server.v2.store.media.upload_media(\"test-user\", test_file)\n\n    mock_bucket = mock_storage_client.bucket.return_value\n    mock_blob = mock_bucket.blob.return_value\n    mock_blob.upload_from_string.assert_not_called()\n\n\nasync def test_upload_media_missing_credentials(monkeypatch):\n    settings = Settings()\n    settings.config.media_gcs_bucket_name = \"\"\n    settings.config.google_application_credentials = \"\"\n    monkeypatch.setattr(\"backend.server.v2.store.media.Settings\", lambda: settings)\n\n    test_file = fastapi.UploadFile(\n        filename=\"laptop.jpeg\",\n        file=io.BytesIO(b\"\\xFF\\xD8\\xFF\" + b\"test data\"),  # Valid JPEG signature\n        headers=starlette.datastructures.Headers({\"content-type\": \"image/jpeg\"}),\n    )\n\n    with pytest.raises(backend.server.v2.store.exceptions.StorageConfigError):\n        await backend.server.v2.store.media.upload_media(\"test-user\", test_file)\n\n\nasync def test_upload_media_video_type(mock_settings, mock_storage_client):\n    test_file = fastapi.UploadFile(\n        filename=\"test.mp4\",\n        file=io.BytesIO(b\"\\x00\\x00\\x00\\x18ftypmp42\"),  # Valid MP4 signature\n        headers=starlette.datastructures.Headers({\"content-type\": \"video/mp4\"}),\n    )\n\n    result = await backend.server.v2.store.media.upload_media(\"test-user\", test_file)\n\n    assert result == \"http://test-url/media/laptop.jpeg\"\n    mock_bucket = mock_storage_client.bucket.return_value\n    mock_blob = mock_bucket.blob.return_value\n    mock_blob.upload_from_string.assert_called_once()\n\n\nasync def test_upload_media_file_too_large(mock_settings, mock_storage_client):\n    large_data = b\"\\xFF\\xD8\\xFF\" + b\"x\" * (\n        50 * 1024 * 1024 + 1\n    )  # 50MB + 1 byte with valid JPEG signature\n    test_file = fastapi.UploadFile(\n        filename=\"laptop.jpeg\",\n        file=io.BytesIO(large_data),\n        headers=starlette.datastructures.Headers({\"content-type\": \"image/jpeg\"}),\n    )\n\n    with pytest.raises(backend.server.v2.store.exceptions.FileSizeTooLargeError):\n        await backend.server.v2.store.media.upload_media(\"test-user\", test_file)\n\n\nasync def test_upload_media_file_read_error(mock_settings, mock_storage_client):\n    test_file = fastapi.UploadFile(\n        filename=\"laptop.jpeg\",\n        file=io.BytesIO(b\"\"),  # Empty file that will raise error on read\n        headers=starlette.datastructures.Headers({\"content-type\": \"image/jpeg\"}),\n    )\n    test_file.read = unittest.mock.AsyncMock(side_effect=Exception(\"Read error\"))\n\n    with pytest.raises(backend.server.v2.store.exceptions.FileReadError):\n        await backend.server.v2.store.media.upload_media(\"test-user\", test_file)\n\n\nasync def test_upload_media_png_success(mock_settings, mock_storage_client):\n    test_file = fastapi.UploadFile(\n        filename=\"test.png\",\n        file=io.BytesIO(b\"\\x89PNG\\r\\n\\x1a\\n\"),  # Valid PNG signature\n        headers=starlette.datastructures.Headers({\"content-type\": \"image/png\"}),\n    )\n\n    result = await backend.server.v2.store.media.upload_media(\"test-user\", test_file)\n    assert result == \"http://test-url/media/laptop.jpeg\"\n\n\nasync def test_upload_media_gif_success(mock_settings, mock_storage_client):\n    test_file = fastapi.UploadFile(\n        filename=\"test.gif\",\n        file=io.BytesIO(b\"GIF89a\"),  # Valid GIF signature\n        headers=starlette.datastructures.Headers({\"content-type\": \"image/gif\"}),\n    )\n\n    result = await backend.server.v2.store.media.upload_media(\"test-user\", test_file)\n    assert result == \"http://test-url/media/laptop.jpeg\"\n\n\nasync def test_upload_media_webp_success(mock_settings, mock_storage_client):\n    test_file = fastapi.UploadFile(\n        filename=\"test.webp\",\n        file=io.BytesIO(b\"RIFF\\x00\\x00\\x00\\x00WEBP\"),  # Valid WebP signature\n        headers=starlette.datastructures.Headers({\"content-type\": \"image/webp\"}),\n    )\n\n    result = await backend.server.v2.store.media.upload_media(\"test-user\", test_file)\n    assert result == \"http://test-url/media/laptop.jpeg\"\n\n\nasync def test_upload_media_webm_success(mock_settings, mock_storage_client):\n    test_file = fastapi.UploadFile(\n        filename=\"test.webm\",\n        file=io.BytesIO(b\"\\x1a\\x45\\xdf\\xa3\"),  # Valid WebM signature\n        headers=starlette.datastructures.Headers({\"content-type\": \"video/webm\"}),\n    )\n\n    result = await backend.server.v2.store.media.upload_media(\"test-user\", test_file)\n    assert result == \"http://test-url/media/laptop.jpeg\"\n\n\nasync def test_upload_media_mismatched_signature(mock_settings, mock_storage_client):\n    test_file = fastapi.UploadFile(\n        filename=\"test.jpeg\",\n        file=io.BytesIO(b\"\\x89PNG\\r\\n\\x1a\\n\"),  # PNG signature with JPEG content type\n        headers=starlette.datastructures.Headers({\"content-type\": \"image/jpeg\"}),\n    )\n\n    with pytest.raises(backend.server.v2.store.exceptions.InvalidFileTypeError):\n        await backend.server.v2.store.media.upload_media(\"test-user\", test_file)\n\n\nasync def test_upload_media_invalid_signature(mock_settings, mock_storage_client):\n    test_file = fastapi.UploadFile(\n        filename=\"test.jpeg\",\n        file=io.BytesIO(b\"invalid signature\"),\n        headers=starlette.datastructures.Headers({\"content-type\": \"image/jpeg\"}),\n    )\n\n    with pytest.raises(backend.server.v2.store.exceptions.InvalidFileTypeError):\n        await backend.server.v2.store.media.upload_media(\"test-user\", test_file)\n",
+    "children": [
+        {
+            "type": "import_statement",
+            "start_token": 0,
+            "end_token": 1,
+            "label": "import io",
+            "children": []
+        },
+        {
+            "type": "import_statement",
+            "start_token": 3,
+            "end_token": 6,
+            "label": "import unittest.mock",
+            "children": []
+        },
+        {
+            "type": "import_statement",
+            "start_token": 9,
+            "end_token": 10,
+            "label": "import fastapi",
+            "children": []
+        },
+        {
+            "type": "import_statement",
+            "start_token": 12,
+            "end_token": 13,
+            "label": "import pytest",
+            "children": []
+        },
+        {
+            "type": "import_statement",
+            "start_token": 15,
+            "end_token": 18,
+            "label": "import starlette.datastructures",
+            "children": []
+        },
+        {
+            "type": "import_statement",
+            "start_token": 21,
+            "end_token": 30,
+            "label": "import backend.server.v2.store.exceptions",
+            "children": []
+        },
+        {
+            "type": "import_statement",
+            "start_token": 32,
+            "end_token": 41,
+            "label": "import backend.server.v2.store.media",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 43,
+            "end_token": 50,
+            "label": "from backend.util.settings import Settings",
+            "children": []
+        },
+        {
+            "type": "decorated_definition",
+            "start_token": 54,
+            "end_token": 101,
+            "label": "@pytest.fixture\ndef mock_settings(monkeypatch):\n    settings = Settings()\n    settings.config.media_gcs_bucket_name = \"test-bucket\"\n    settings.config.google_application_credentials = \"test-credentials\"\n    monkeypatch.setattr(\"backend.server.v2.store.media.Settings\", lambda: settings)\n    return settings\n",
+            "children": [
+                {
+                    "type": "decorator",
+                    "start_token": 54,
+                    "end_token": 57,
+                    "label": "@pytest.fixture",
+                    "children": []
+                },
+                {
+                    "type": "function_definition",
+                    "start_token": 59,
+                    "end_token": 101,
+                    "label": "def mock_settings(monkeypatch):\n    settings = Settings()\n    settings.config.media_gcs_bucket_name = \"test-bucket\"\n    settings.config.google_application_credentials = \"test-credentials\"\n    monkeypatch.setattr(\"backend.server.v2.store.media.Settings\", lambda: settings)\n    return settings\n",
+                    "children": [
+                        {
+                            "type": "parameters",
+                            "start_token": 61,
+                            "end_token": 63,
+                            "label": "(monkeypatch)",
+                            "children": []
+                        },
+                        {
+                            "type": "block",
+                            "start_token": 64,
+                            "end_token": 101,
+                            "label": ":\n    settings = Settings()\n    settings.config.media_gcs_bucket_name = \"test-bucket\"\n    settings.config.google_application_credentials = \"test-credentials\"\n    monkeypatch.setattr(\"backend.server.v2.store.media.Settings\", lambda: settings)\n    return settings\n",
+                            "children": [
+                                {
+                                    "type": "assignment",
+                                    "start_token": 66,
+                                    "end_token": 70,
+                                    "label": "settings = Settings()",
+                                    "children": []
+                                },
+                                {
+                                    "type": "attribute",
+                                    "start_token": 72,
+                                    "end_token": 77,
+                                    "label": "settings.config.media_gcs_bucket_name =",
+                                    "children": []
+                                },
+                                {
+                                    "type": "assignment",
+                                    "start_token": 77,
+                                    "end_token": 78,
+                                    "label": "= \"test-bucket\"",
+                                    "children": []
+                                },
+                                {
+                                    "type": "attribute",
+                                    "start_token": 80,
+                                    "end_token": 85,
+                                    "label": "settings.config.google_application_credentials =",
+                                    "children": []
+                                },
+                                {
+                                    "type": "assignment",
+                                    "start_token": 85,
+                                    "end_token": 86,
+                                    "label": "= \"test-credentials\"",
+                                    "children": []
+                                },
+                                {
+                                    "type": "call",
+                                    "start_token": 88,
+                                    "end_token": 97,
+                                    "label": "monkeypatch.setattr(\"backend.server.v2.store.media.Settings\", lambda: settings)",
+                                    "children": [
+                                        {
+                                            "type": "attribute",
+                                            "start_token": 88,
+                                            "end_token": 90,
+                                            "label": "monkeypatch.setattr",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "argument_list",
+                                            "start_token": 91,
+                                            "end_token": 97,
+                                            "label": "(\"backend.server.v2.store.media.Settings\", lambda: settings)",
+                                            "children": []
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "return_statement",
+                                    "start_token": 99,
+                                    "end_token": 100,
+                                    "label": "return settings",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "decorated_definition",
+            "start_token": 104,
+            "end_token": 184,
+            "label": "@pytest.fixture\ndef mock_storage_client(mocker):\n    mock_client = unittest.mock.MagicMock()\n    mock_bucket = unittest.mock.MagicMock()\n    mock_blob = unittest.mock.MagicMock()\n\n    mock_client.bucket.return_value = mock_bucket\n    mock_bucket.blob.return_value = mock_blob\n    mock_blob.public_url = \"http://test-url/media/laptop.jpeg\"\n\n    mocker.patch(\"google.cloud.storage.Client\", return_value=mock_client)\n\n    return mock_client\n",
+            "children": [
+                {
+                    "type": "decorator",
+                    "start_token": 104,
+                    "end_token": 107,
+                    "label": "@pytest.fixture",
+                    "children": []
+                },
+                {
+                    "type": "function_definition",
+                    "start_token": 109,
+                    "end_token": 184,
+                    "label": "def mock_storage_client(mocker):\n    mock_client = unittest.mock.MagicMock()\n    mock_bucket = unittest.mock.MagicMock()\n    mock_blob = unittest.mock.MagicMock()\n\n    mock_client.bucket.return_value = mock_bucket\n    mock_bucket.blob.return_value = mock_blob\n    mock_blob.public_url = \"http://test-url/media/laptop.jpeg\"\n\n    mocker.patch(\"google.cloud.storage.Client\", return_value=mock_client)\n\n    return mock_client\n",
+                    "children": [
+                        {
+                            "type": "parameters",
+                            "start_token": 111,
+                            "end_token": 113,
+                            "label": "(mocker)",
+                            "children": []
+                        },
+                        {
+                            "type": "block",
+                            "start_token": 114,
+                            "end_token": 184,
+                            "label": ":\n    mock_client = unittest.mock.MagicMock()\n    mock_bucket = unittest.mock.MagicMock()\n    mock_blob = unittest.mock.MagicMock()\n\n    mock_client.bucket.return_value = mock_bucket\n    mock_bucket.blob.return_value = mock_blob\n    mock_blob.public_url = \"http://test-url/media/laptop.jpeg\"\n\n    mocker.patch(\"google.cloud.storage.Client\", return_value=mock_client)\n\n    return mock_client\n",
+                            "children": [
+                                {
+                                    "type": "assignment",
+                                    "start_token": 116,
+                                    "end_token": 124,
+                                    "label": "mock_client = unittest.mock.MagicMock()",
+                                    "children": []
+                                },
+                                {
+                                    "type": "assignment",
+                                    "start_token": 126,
+                                    "end_token": 134,
+                                    "label": "mock_bucket = unittest.mock.MagicMock()",
+                                    "children": []
+                                },
+                                {
+                                    "type": "assignment",
+                                    "start_token": 136,
+                                    "end_token": 144,
+                                    "label": "mock_blob = unittest.mock.MagicMock()",
+                                    "children": []
+                                },
+                                {
+                                    "type": "attribute",
+                                    "start_token": 147,
+                                    "end_token": 149,
+                                    "label": "mock_client.bucket",
+                                    "children": []
+                                },
+                                {
+                                    "type": "assignment",
+                                    "start_token": 151,
+                                    "end_token": 153,
+                                    "label": "return_value = mock_bucket",
+                                    "children": []
+                                },
+                                {
+                                    "type": "attribute",
+                                    "start_token": 155,
+                                    "end_token": 157,
+                                    "label": "mock_bucket.blob",
+                                    "children": []
+                                },
+                                {
+                                    "type": "assignment",
+                                    "start_token": 159,
+                                    "end_token": 161,
+                                    "label": "return_value = mock_blob",
+                                    "children": []
+                                },
+                                {
+                                    "type": "attribute",
+                                    "start_token": 163,
+                                    "end_token": 165,
+                                    "label": "mock_blob.public_url",
+                                    "children": []
+                                },
+                                {
+                                    "type": "assignment",
+                                    "start_token": 167,
+                                    "end_token": 167,
+                                    "label": "\"http://test-url/media/laptop.jpeg\"",
+                                    "children": []
+                                },
+                                {
+                                    "type": "call",
+                                    "start_token": 170,
+                                    "end_token": 179,
+                                    "label": "mocker.patch(\"google.cloud.storage.Client\", return_value=mock_client)",
+                                    "children": [
+                                        {
+                                            "type": "attribute",
+                                            "start_token": 170,
+                                            "end_token": 172,
+                                            "label": "mocker.patch",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "argument_list",
+                                            "start_token": 173,
+                                            "end_token": 179,
+                                            "label": "(\"google.cloud.storage.Client\", return_value=mock_client)",
+                                            "children": []
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "return_statement",
+                                    "start_token": 182,
+                                    "end_token": 183,
+                                    "label": "return mock_client",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "async_function_definition",
+            "start_token": 187,
+            "end_token": 282,
+            "label": "async def test_upload_media_success(mock_settings, mock_storage_client):\n    # Create test JPEG data with valid signature\n    test_data = b\"\\xFF\\xD8\\xFF\" + b\"test data\"\n\n    test_file = fastapi.UploadFile(\n        filename=\"laptop.jpeg\",\n        file=io.BytesIO(test_data),\n        headers=starlette.datastructures.Headers({\"content-type\": \"image/jpeg\"}),\n    )\n\n    result = await backend.server.v2.store.media.upload_media(\"test-user\", test_file)\n\n    assert result == \"http://test-url/media/laptop.jpeg\"\n",
+            "children": [
+                {
+                    "type": "parameters",
+                    "start_token": 190,
+                    "end_token": 194,
+                    "label": "(mock_settings, mock_storage_client)",
+                    "children": []
+                },
+                {
+                    "type": "block",
+                    "start_token": 195,
+                    "end_token": 282,
+                    "label": ":\n    # Create test JPEG data with valid signature\n    test_data = b\"\\xFF\\xD8\\xFF\" + b\"test data\"\n\n    test_file = fastapi.UploadFile(\n        filename=\"laptop.jpeg\",\n        file=io.BytesIO(test_data),\n        headers=starlette.datastructures.Headers({\"content-type\": \"image/jpeg\"}),\n    )\n\n    result = await backend.server.v2.store.media.upload_media(\"test-user\", test_file)\n\n    assert result == \"http://test-url/media/laptop.jpeg\"\n",
+                    "children": [
+                        {
+                            "type": "assignment",
+                            "start_token": 206,
+                            "end_token": 213,
+                            "label": "test_data = b\"\\xFF\\xD8\\xFF\" + b\"test data\"\n",
+                            "children": []
+                        },
+                        {
+                            "type": "call",
+                            "start_token": 215,
+                            "end_token": 253,
+                            "label": "test_file = fastapi.UploadFile(\n        filename=\"laptop.jpeg\",\n        file=io.BytesIO(test_data),\n        headers=starlette.datastructures.Headers({\"content-type\": \"image/jpeg\"}),\n    )",
+                            "children": [
+                                {
+                                    "type": "attribute",
+                                    "start_token": 217,
+                                    "end_token": 219,
+                                    "label": "fastapi.UploadFile",
+                                    "children": []
+                                },
+                                {
+                                    "type": "argument_list",
+                                    "start_token": 220,
+                                    "end_token": 253,
+                                    "label": "(\n        filename=\"laptop.jpeg\",\n        file=io.BytesIO(test_data),\n        headers=starlette.datastructures.Headers({\"content-type\": \"image/jpeg\"}),\n    )",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 256,
+                            "end_token": 274,
+                            "label": "result = await backend.server.v2.store.media.upload_media(\"test-user\", test_file)",
+                            "children": [
+                                {
+                                    "type": "await",
+                                    "start_token": 258,
+                                    "end_token": 274,
+                                    "label": "await backend.server.v2.store.media.upload_media(\"test-user\", test_file)",
+                                    "children": [
+                                        {
+                                            "type": "call",
+                                            "start_token": 259,
+                                            "end_token": 274,
+                                            "label": "backend.server.v2.store.media.upload_media(\"test-user\", test_file)",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "assert_statement",
+                            "start_token": 277,
+                            "end_token": 281,
+                            "label": "assert result == \"http://test-url/media/laptop.jpeg\"",
+                            "children": []
+                        },
+                        {
+                            "type": "attribute",
+                            "start_token": 283,
+                            "end_token": 289,
+                            "label": "mock_bucket = mock_storage_client.bucket.return_value",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 290,
+                            "end_token": 290,
+                            "label": "\n",
+                            "children": []
+                        },
+                        {
+                            "type": "attribute",
+                            "start_token": 292,
+                            "end_token": 297,
+                            "label": "= mock_bucket.blob.return_value",
+                            "children": []
+                        },
+                        {
+                            "type": "call",
+                            "start_token": 299,
+                            "end_token": 305,
+                            "label": "mock_blob.upload_from_string.assert_called_once()",
+                            "children": [
+                                {
+                                    "type": "attribute",
+                                    "start_token": 299,
+                                    "end_token": 301,
+                                    "label": "mock_blob.upload_from_string",
+                                    "children": []
+                                },
+                                {
+                                    "type": "argument_list",
+                                    "start_token": 303,
+                                    "end_token": 305,
+                                    "label": "assert_called_once()",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "async_function_definition",
+            "start_token": 309,
+            "end_token": 421,
+            "label": "async def test_upload_media_invalid_type(mock_settings, mock_storage_client):\n    test_file = fastapi.UploadFile(\n        filename=\"test.txt\",\n        file=io.BytesIO(b\"test data\"),\n        headers=starlette.datastructures.Headers({\"content-type\": \"text/plain\"}),\n    )\n\n    with pytest.raises(backend.server.v2.store.exceptions.InvalidFileTypeError):\n        await backend.server.v2.store.media.upload_media(\"test-user\", test_file)\n\n    mock_bucket = mock_storage_client.bucket.return_value\n    mock_blob = mock_bucket.blob.return_value\n    mock_blob.upload_from_string.assert_not_called()",
+            "children": [
+                {
+                    "type": "parameters",
+                    "start_token": 312,
+                    "end_token": 316,
+                    "label": "(mock_settings, mock_storage_client)",
+                    "children": []
+                },
+                {
+                    "type": "block",
+                    "start_token": 317,
+                    "end_token": 421,
+                    "label": ":\n    test_file = fastapi.UploadFile(\n        filename=\"test.txt\",\n        file=io.BytesIO(b\"test data\"),\n        headers=starlette.datastructures.Headers({\"content-type\": \"text/plain\"}),\n    )\n\n    with pytest.raises(backend.server.v2.store.exceptions.InvalidFileTypeError):\n        await backend.server.v2.store.media.upload_media(\"test-user\", test_file)\n\n    mock_bucket = mock_storage_client.bucket.return_value\n    mock_blob = mock_bucket.blob.return_value\n    mock_blob.upload_from_string.assert_not_called()",
+                    "children": [
+                        {
+                            "type": "call",
+                            "start_token": 320,
+                            "end_token": 358,
+                            "label": "= fastapi.UploadFile(\n        filename=\"test.txt\",\n        file=io.BytesIO(b\"test data\"),\n        headers=starlette.datastructures.Headers({\"content-type\": \"text/plain\"}),\n    )",
+                            "children": [
+                                {
+                                    "type": "attribute",
+                                    "start_token": 322,
+                                    "end_token": 324,
+                                    "label": ".UploadFile(",
+                                    "children": []
+                                },
+                                {
+                                    "type": "argument_list",
+                                    "start_token": 325,
+                                    "end_token": 358,
+                                    "label": "\n        filename=\"test.txt\",\n        file=io.BytesIO(b\"test data\"),\n        headers=starlette.datastructures.Headers({\"content-type\": \"text/plain\"}),\n    )",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "with_statement",
+                            "start_token": 361,
+                            "end_token": 396,
+                            "label": "with pytest.raises(backend.server.v2.store.exceptions.InvalidFileTypeError):\n        await backend.server.v2.store.media.upload_media(\"test-user\", test_file)",
+                            "children": [
+                                {
+                                    "type": "with_clause",
+                                    "start_token": 362,
+                                    "end_token": 377,
+                                    "label": "pytest.raises(backend.server.v2.store.exceptions.InvalidFileTypeError)",
+                                    "children": [
+                                        {
+                                            "type": "call",
+                                            "start_token": 362,
+                                            "end_token": 377,
+                                            "label": "pytest.raises(backend.server.v2.store.exceptions.InvalidFileTypeError)",
+                                            "children": []
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "block",
+                                    "start_token": 378,
+                                    "end_token": 396,
+                                    "label": ":\n        await backend.server.v2.store.media.upload_media(\"test-user\", test_file)",
+                                    "children": [
+                                        {
+                                            "type": "await",
+                                            "start_token": 380,
+                                            "end_token": 396,
+                                            "label": "await backend.server.v2.store.media.upload_media(\"test-user\", test_file)",
+                                            "children": [
+                                                {
+                                                    "type": "call",
+                                                    "start_token": 381,
+                                                    "end_token": 396,
+                                                    "label": "backend.server.v2.store.media.upload_media(\"test-user\", test_file)",
+                                                    "children": []
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "attribute",
+                            "start_token": 399,
+                            "end_token": 405,
+                            "label": "mock_bucket = mock_storage_client.bucket.return_value",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 406,
+                            "end_token": 406,
+                            "label": "\n",
+                            "children": []
+                        },
+                        {
+                            "type": "attribute",
+                            "start_token": 408,
+                            "end_token": 413,
+                            "label": "= mock_bucket.blob.return_value",
+                            "children": []
+                        },
+                        {
+                            "type": "call",
+                            "start_token": 415,
+                            "end_token": 421,
+                            "label": "mock_blob.upload_from_string.assert_not_called()",
+                            "children": [
+                                {
+                                    "type": "attribute",
+                                    "start_token": 415,
+                                    "end_token": 417,
+                                    "label": "mock_blob.upload_from_string",
+                                    "children": []
+                                },
+                                {
+                                    "type": "argument_list",
+                                    "start_token": 419,
+                                    "end_token": 421,
+                                    "label": "assert_not_called()",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "async_function_definition",
+            "start_token": 425,
+            "end_token": 551,
+            "label": "async def test_upload_media_missing_credentials(monkeypatch):\n    settings = Settings()\n    settings.config.media_gcs_bucket_name = \"\"\n    settings.config.google_application_credentials = \"\"\n    monkeypatch.setattr(\"backend.server.v2.store.media.Settings\", lambda: settings)\n\n    test_file = fastapi.UploadFile(\n        filename=\"laptop.jpeg\",\n        file=io.BytesIO(b\"\\xFF\\xD8\\xFF\" + b\"test data\"),  # Valid JPEG signature\n        headers=starlette.datastructures.Headers({\"content-type\": \"image/jpeg\"}),\n    )\n\n    with pytest.raises(backend.server.v2.store.exceptions.StorageConfigError):\n        await backend.server.v2.store.media.upload_media(\"test-user\", test_file)",
+            "children": [
+                {
+                    "type": "parameters",
+                    "start_token": 428,
+                    "end_token": 430,
+                    "label": "(monkeypatch)",
+                    "children": []
+                },
+                {
+                    "type": "block",
+                    "start_token": 431,
+                    "end_token": 551,
+                    "label": ":\n    settings = Settings()\n    settings.config.media_gcs_bucket_name = \"\"\n    settings.config.google_application_credentials = \"\"\n    monkeypatch.setattr(\"backend.server.v2.store.media.Settings\", lambda: settings)\n\n    test_file = fastapi.UploadFile(\n        filename=\"laptop.jpeg\",\n        file=io.BytesIO(b\"\\xFF\\xD8\\xFF\" + b\"test data\"),  # Valid JPEG signature\n        headers=starlette.datastructures.Headers({\"content-type\": \"image/jpeg\"}),\n    )\n\n    with pytest.raises(backend.server.v2.store.exceptions.StorageConfigError):\n        await backend.server.v2.store.media.upload_media(\"test-user\", test_file)",
+                    "children": [
+                        {
+                            "type": "assignment",
+                            "start_token": 433,
+                            "end_token": 437,
+                            "label": "settings = Settings()",
+                            "children": []
+                        },
+                        {
+                            "type": "attribute",
+                            "start_token": 439,
+                            "end_token": 444,
+                            "label": "settings.config.media_gcs_bucket_name =",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 445,
+                            "end_token": 445,
+                            "label": "\"\"",
+                            "children": []
+                        },
+                        {
+                            "type": "attribute",
+                            "start_token": 447,
+                            "end_token": 452,
+                            "label": "settings.config.google_application_credentials =",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 453,
+                            "end_token": 453,
+                            "label": "\"\"",
+                            "children": []
+                        },
+                        {
+                            "type": "call",
+                            "start_token": 456,
+                            "end_token": 464,
+                            "label": ".setattr(\"backend.server.v2.store.media.Settings\", lambda: settings)",
+                            "children": [
+                                {
+                                    "type": "attribute",
+                                    "start_token": 456,
+                                    "end_token": 458,
+                                    "label": ".setattr(",
+                                    "children": []
+                                },
+                                {
+                                    "type": "argument_list",
+                                    "start_token": 459,
+                                    "end_token": 464,
+                                    "label": "\"backend.server.v2.store.media.Settings\", lambda: settings)",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "call",
+                            "start_token": 469,
+                            "end_token": 513,
+                            "label": "fastapi.UploadFile(\n        filename=\"laptop.jpeg\",\n        file=io.BytesIO(b\"\\xFF\\xD8\\xFF\" + b\"test data\"),  # Valid JPEG signature\n        headers=starlette.datastructures.Headers({\"content-type\": \"image/jpeg\"}),\n    )",
+                            "children": [
+                                {
+                                    "type": "attribute",
+                                    "start_token": 471,
+                                    "end_token": 473,
+                                    "label": "UploadFile(\n",
+                                    "children": []
+                                },
+                                {
+                                    "type": "argument_list",
+                                    "start_token": 474,
+                                    "end_token": 513,
+                                    "label": "filename=\"laptop.jpeg\",\n        file=io.BytesIO(b\"\\xFF\\xD8\\xFF\" + b\"test data\"),  # Valid JPEG signature\n        headers=starlette.datastructures.Headers({\"content-type\": \"image/jpeg\"}),\n    )",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "with_statement",
+                            "start_token": 516,
+                            "end_token": 550,
+                            "label": "with pytest.raises(backend.server.v2.store.exceptions.StorageConfigError):\n        await backend.server.v2.store.media.upload_media(\"test-user\", test_file",
+                            "children": [
+                                {
+                                    "type": "with_clause",
+                                    "start_token": 517,
+                                    "end_token": 531,
+                                    "label": "pytest.raises(backend.server.v2.store.exceptions.StorageConfigError",
+                                    "children": [
+                                        {
+                                            "type": "call",
+                                            "start_token": 517,
+                                            "end_token": 531,
+                                            "label": "pytest.raises(backend.server.v2.store.exceptions.StorageConfigError",
+                                            "children": []
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "block",
+                                    "start_token": 532,
+                                    "end_token": 550,
+                                    "label": "):\n        await backend.server.v2.store.media.upload_media(\"test-user\", test_file",
+                                    "children": [
+                                        {
+                                            "type": "await",
+                                            "start_token": 535,
+                                            "end_token": 550,
+                                            "label": "await backend.server.v2.store.media.upload_media(\"test-user\", test_file",
+                                            "children": [
+                                                {
+                                                    "type": "call",
+                                                    "start_token": 536,
+                                                    "end_token": 550,
+                                                    "label": "backend.server.v2.store.media.upload_media(\"test-user\", test_file",
+                                                    "children": []
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "async_function_definition",
+            "start_token": 555,
+            "end_token": 660,
+            "label": "async def test_upload_media_video_type(mock_settings, mock_storage_client):\n    test_file = fastapi.UploadFile(\n        filename=\"test.mp4\",\n        file=io.BytesIO(b\"\\x00\\x00\\x00\\x18ftypmp42\"),  # Valid MP4 signature\n        headers=starlette.datastructures.Headers({\"content-type\": \"video/mp4\"}),\n    )\n\n    result = await backend.server.v2.store.media.upload_media(\"test-user\", test_file)\n\n    assert result == \"http://test-url/media/laptop.jpeg\"\n    mock_bucket = mock_storage_client.bucket.return_value\n    mock_blob = mock_bucket.blob.return_value\n    mock_blob.upload_from_string.assert_called_once()",
+            "children": [
+                {
+                    "type": "parameters",
+                    "start_token": 558,
+                    "end_token": 562,
+                    "label": "(mock_settings, mock_storage_client)",
+                    "children": []
+                },
+                {
+                    "type": "block",
+                    "start_token": 563,
+                    "end_token": 660,
+                    "label": ":\n    test_file = fastapi.UploadFile(\n        filename=\"test.mp4\",\n        file=io.BytesIO(b\"\\x00\\x00\\x00\\x18ftypmp42\"),  # Valid MP4 signature\n        headers=starlette.datastructures.Headers({\"content-type\": \"video/mp4\"}),\n    )\n\n    result = await backend.server.v2.store.media.upload_media(\"test-user\", test_file)\n\n    assert result == \"http://test-url/media/laptop.jpeg\"\n    mock_bucket = mock_storage_client.bucket.return_value\n    mock_blob = mock_bucket.blob.return_value\n    mock_blob.upload_from_string.assert_called_once()",
+                    "children": [
+                        {
+                            "type": "call",
+                            "start_token": 566,
+                            "end_token": 607,
+                            "label": "= fastapi.UploadFile(\n        filename=\"test.mp4\",\n        file=io.BytesIO(b\"\\x00\\x00\\x00\\x18ftypmp42\"),  # Valid MP4 signature\n        headers=starlette.datastructures.Headers({\"content-type\": \"video/mp4\"}),\n",
+                            "children": [
+                                {
+                                    "type": "attribute",
+                                    "start_token": 568,
+                                    "end_token": 570,
+                                    "label": ".UploadFile(",
+                                    "children": []
+                                },
+                                {
+                                    "type": "argument_list",
+                                    "start_token": 571,
+                                    "end_token": 607,
+                                    "label": "\n        filename=\"test.mp4\",\n        file=io.BytesIO(b\"\\x00\\x00\\x00\\x18ftypmp42\"),  # Valid MP4 signature\n        headers=starlette.datastructures.Headers({\"content-type\": \"video/mp4\"}),\n",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 611,
+                            "end_token": 629,
+                            "label": "result = await backend.server.v2.store.media.upload_media(\"test-user\", test_file)",
+                            "children": [
+                                {
+                                    "type": "await",
+                                    "start_token": 613,
+                                    "end_token": 629,
+                                    "label": "await backend.server.v2.store.media.upload_media(\"test-user\", test_file)",
+                                    "children": [
+                                        {
+                                            "type": "call",
+                                            "start_token": 614,
+                                            "end_token": 629,
+                                            "label": "backend.server.v2.store.media.upload_media(\"test-user\", test_file)",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "assert_statement",
+                            "start_token": 632,
+                            "end_token": 636,
+                            "label": "assert result == \"http://test-url/media/laptop.jpeg\"",
+                            "children": []
+                        },
+                        {
+                            "type": "attribute",
+                            "start_token": 638,
+                            "end_token": 644,
+                            "label": "mock_bucket = mock_storage_client.bucket.return_value",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 645,
+                            "end_token": 645,
+                            "label": "\n",
+                            "children": []
+                        },
+                        {
+                            "type": "attribute",
+                            "start_token": 647,
+                            "end_token": 652,
+                            "label": "= mock_bucket.blob.return_value",
+                            "children": []
+                        },
+                        {
+                            "type": "call",
+                            "start_token": 654,
+                            "end_token": 660,
+                            "label": "mock_blob.upload_from_string.assert_called_once()",
+                            "children": [
+                                {
+                                    "type": "attribute",
+                                    "start_token": 654,
+                                    "end_token": 656,
+                                    "label": "mock_blob.upload_from_string",
+                                    "children": []
+                                },
+                                {
+                                    "type": "argument_list",
+                                    "start_token": 658,
+                                    "end_token": 660,
+                                    "label": "assert_called_once()",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "async_function_definition",
+            "start_token": 664,
+            "end_token": 780,
+            "label": "async def test_upload_media_file_too_large(mock_settings, mock_storage_client):\n    large_data = b\"\\xFF\\xD8\\xFF\" + b\"x\" * (\n        50 * 1024 * 1024 + 1\n    )  # 50MB + 1 byte with valid JPEG signature\n    test_file = fastapi.UploadFile(\n        filename=\"laptop.jpeg\",\n        file=io.BytesIO(large_data),\n        headers=starlette.datastructures.Headers({\"content-type\": \"image/jpeg\"}),\n    )\n\n    with pytest.raises(backend.server.v2.store.exceptions.FileSizeTooLargeError):\n        await backend.server.v2.store.media.upload_media(\"test-user\", test_file)",
+            "children": [
+                {
+                    "type": "parameters",
+                    "start_token": 667,
+                    "end_token": 671,
+                    "label": "(mock_settings, mock_storage_client)",
+                    "children": []
+                },
+                {
+                    "type": "block",
+                    "start_token": 672,
+                    "end_token": 780,
+                    "label": ":\n    large_data = b\"\\xFF\\xD8\\xFF\" + b\"x\" * (\n        50 * 1024 * 1024 + 1\n    )  # 50MB + 1 byte with valid JPEG signature\n    test_file = fastapi.UploadFile(\n        filename=\"laptop.jpeg\",\n        file=io.BytesIO(large_data),\n        headers=starlette.datastructures.Headers({\"content-type\": \"image/jpeg\"}),\n    )\n\n    with pytest.raises(backend.server.v2.store.exceptions.FileSizeTooLargeError):\n        await backend.server.v2.store.media.upload_media(\"test-user\", test_file)",
+                    "children": [
+                        {
+                            "type": "assignment",
+                            "start_token": 674,
+                            "end_token": 691,
+                            "label": "large_data = b\"\\xFF\\xD8\\xFF\" + b\"x\" * (\n        50 * 1024 * 1024 + 1\n",
+                            "children": []
+                        },
+                        {
+                            "type": "call",
+                            "start_token": 705,
+                            "end_token": 742,
+                            "label": "= fastapi.UploadFile(\n        filename=\"laptop.jpeg\",\n        file=io.BytesIO(large_data),\n        headers=starlette.datastructures.Headers({\"content-type\": \"image/jpeg\"}),\n    )",
+                            "children": [
+                                {
+                                    "type": "attribute",
+                                    "start_token": 707,
+                                    "end_token": 709,
+                                    "label": ".UploadFile(",
+                                    "children": []
+                                },
+                                {
+                                    "type": "argument_list",
+                                    "start_token": 710,
+                                    "end_token": 742,
+                                    "label": "\n        filename=\"laptop.jpeg\",\n        file=io.BytesIO(large_data),\n        headers=starlette.datastructures.Headers({\"content-type\": \"image/jpeg\"}),\n    )",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "with_statement",
+                            "start_token": 745,
+                            "end_token": 779,
+                            "label": "with pytest.raises(backend.server.v2.store.exceptions.FileSizeTooLargeError):\n        await backend.server.v2.store.media.upload_media(\"test-user\", test_file",
+                            "children": [
+                                {
+                                    "type": "with_clause",
+                                    "start_token": 746,
+                                    "end_token": 760,
+                                    "label": "pytest.raises(backend.server.v2.store.exceptions.FileSizeTooLargeError",
+                                    "children": [
+                                        {
+                                            "type": "call",
+                                            "start_token": 746,
+                                            "end_token": 760,
+                                            "label": "pytest.raises(backend.server.v2.store.exceptions.FileSizeTooLargeError",
+                                            "children": []
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "block",
+                                    "start_token": 761,
+                                    "end_token": 779,
+                                    "label": "):\n        await backend.server.v2.store.media.upload_media(\"test-user\", test_file",
+                                    "children": [
+                                        {
+                                            "type": "await",
+                                            "start_token": 764,
+                                            "end_token": 779,
+                                            "label": "await backend.server.v2.store.media.upload_media(\"test-user\", test_file",
+                                            "children": [
+                                                {
+                                                    "type": "call",
+                                                    "start_token": 765,
+                                                    "end_token": 779,
+                                                    "label": "backend.server.v2.store.media.upload_media(\"test-user\", test_file",
+                                                    "children": []
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "async_function_definition",
+            "start_token": 784,
+            "end_token": 898,
+            "label": "async def test_upload_media_file_read_error(mock_settings, mock_storage_client):\n    test_file = fastapi.UploadFile(\n        filename=\"laptop.jpeg\",\n        file=io.BytesIO(b\"\"),  # Empty file that will raise error on read\n        headers=starlette.datastructures.Headers({\"content-type\": \"image/jpeg\"}),\n    )\n    test_file.read = unittest.mock.AsyncMock(side_effect=Exception(\"Read error\"))\n\n    with pytest.raises(backend.server.v2.store.exceptions.FileReadError):\n        await backend.server.v2.store.media.upload_media(\"test-user\", test_file)",
+            "children": [
+                {
+                    "type": "parameters",
+                    "start_token": 787,
+                    "end_token": 791,
+                    "label": "(mock_settings, mock_storage_client)",
+                    "children": []
+                },
+                {
+                    "type": "block",
+                    "start_token": 792,
+                    "end_token": 898,
+                    "label": ":\n    test_file = fastapi.UploadFile(\n        filename=\"laptop.jpeg\",\n        file=io.BytesIO(b\"\"),  # Empty file that will raise error on read\n        headers=starlette.datastructures.Headers({\"content-type\": \"image/jpeg\"}),\n    )\n    test_file.read = unittest.mock.AsyncMock(side_effect=Exception(\"Read error\"))\n\n    with pytest.raises(backend.server.v2.store.exceptions.FileReadError):\n        await backend.server.v2.store.media.upload_media(\"test-user\", test_file)",
+                    "children": [
+                        {
+                            "type": "call",
+                            "start_token": 795,
+                            "end_token": 842,
+                            "label": "= fastapi.UploadFile(\n        filename=\"laptop.jpeg\",\n        file=io.BytesIO(b\"\"),  # Empty file that will raise error on read\n        headers=starlette.datastructures.Headers({\"content-type\": \"image/jpeg\"}),\n    )",
+                            "children": [
+                                {
+                                    "type": "attribute",
+                                    "start_token": 797,
+                                    "end_token": 799,
+                                    "label": ".UploadFile(",
+                                    "children": []
+                                },
+                                {
+                                    "type": "argument_list",
+                                    "start_token": 800,
+                                    "end_token": 842,
+                                    "label": "\n        filename=\"laptop.jpeg\",\n        file=io.BytesIO(b\"\"),  # Empty file that will raise error on read\n        headers=starlette.datastructures.Headers({\"content-type\": \"image/jpeg\"}),\n    )",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 844,
+                            "end_token": 861,
+                            "label": "test_file.read = unittest.mock.AsyncMock(side_effect=Exception(\"Read error\"))\n",
+                            "children": [
+                                {
+                                    "type": "call",
+                                    "start_token": 848,
+                                    "end_token": 858,
+                                    "label": "unittest.mock.AsyncMock(side_effect=Exception(\"Read error\"",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "with_statement",
+                            "start_token": 863,
+                            "end_token": 897,
+                            "label": "with pytest.raises(backend.server.v2.store.exceptions.FileReadError):\n        await backend.server.v2.store.media.upload_media(\"test-user\", test_file",
+                            "children": [
+                                {
+                                    "type": "with_clause",
+                                    "start_token": 864,
+                                    "end_token": 878,
+                                    "label": "pytest.raises(backend.server.v2.store.exceptions.FileReadError",
+                                    "children": [
+                                        {
+                                            "type": "call",
+                                            "start_token": 864,
+                                            "end_token": 878,
+                                            "label": "pytest.raises(backend.server.v2.store.exceptions.FileReadError",
+                                            "children": []
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "block",
+                                    "start_token": 879,
+                                    "end_token": 897,
+                                    "label": "):\n        await backend.server.v2.store.media.upload_media(\"test-user\", test_file",
+                                    "children": [
+                                        {
+                                            "type": "await",
+                                            "start_token": 882,
+                                            "end_token": 897,
+                                            "label": "await backend.server.v2.store.media.upload_media(\"test-user\", test_file",
+                                            "children": [
+                                                {
+                                                    "type": "call",
+                                                    "start_token": 883,
+                                                    "end_token": 897,
+                                                    "label": "backend.server.v2.store.media.upload_media(\"test-user\", test_file",
+                                                    "children": []
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "async_function_definition",
+            "start_token": 902,
+            "end_token": 976,
+            "label": "async def test_upload_media_png_success(mock_settings, mock_storage_client):\n    test_file = fastapi.UploadFile(\n        filename=\"test.png\",\n        file=io.BytesIO(b\"\\x89PNG\\r\\n\\x1a\\n\"),  # Valid PNG signature\n        headers=starlette.datastructures.Headers({\"content-type\": \"image/png\"}),\n    )\n\n    result = await backend.server.v2.store.media.upload_media(\"test-user\", test_file)",
+            "children": [
+                {
+                    "type": "parameters",
+                    "start_token": 905,
+                    "end_token": 909,
+                    "label": "(mock_settings, mock_storage_client)",
+                    "children": []
+                },
+                {
+                    "type": "block",
+                    "start_token": 910,
+                    "end_token": 976,
+                    "label": ":\n    test_file = fastapi.UploadFile(\n        filename=\"test.png\",\n        file=io.BytesIO(b\"\\x89PNG\\r\\n\\x1a\\n\"),  # Valid PNG signature\n        headers=starlette.datastructures.Headers({\"content-type\": \"image/png\"}),\n    )\n\n    result = await backend.server.v2.store.media.upload_media(\"test-user\", test_file)",
+                    "children": [
+                        {
+                            "type": "call",
+                            "start_token": 913,
+                            "end_token": 955,
+                            "label": "= fastapi.UploadFile(\n        filename=\"test.png\",\n        file=io.BytesIO(b\"\\x89PNG\\r\\n\\x1a\\n\"),  # Valid PNG signature\n        headers=starlette.datastructures.Headers({\"content-type\": \"image/png\"}),\n    )",
+                            "children": [
+                                {
+                                    "type": "attribute",
+                                    "start_token": 915,
+                                    "end_token": 917,
+                                    "label": ".UploadFile(",
+                                    "children": []
+                                },
+                                {
+                                    "type": "argument_list",
+                                    "start_token": 918,
+                                    "end_token": 955,
+                                    "label": "\n        filename=\"test.png\",\n        file=io.BytesIO(b\"\\x89PNG\\r\\n\\x1a\\n\"),  # Valid PNG signature\n        headers=starlette.datastructures.Headers({\"content-type\": \"image/png\"}),\n    )",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 958,
+                            "end_token": 975,
+                            "label": "result = await backend.server.v2.store.media.upload_media(\"test-user\", test_file",
+                            "children": [
+                                {
+                                    "type": "await",
+                                    "start_token": 960,
+                                    "end_token": 975,
+                                    "label": "await backend.server.v2.store.media.upload_media(\"test-user\", test_file",
+                                    "children": [
+                                        {
+                                            "type": "call",
+                                            "start_token": 961,
+                                            "end_token": 975,
+                                            "label": "backend.server.v2.store.media.upload_media(\"test-user\", test_file",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "assert_statement",
+                            "start_token": 979,
+                            "end_token": 982,
+                            "label": "result == \"http://test-url/media/laptop.jpeg\"",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "async_function_definition",
+            "start_token": 986,
+            "end_token": 1060,
+            "label": "async def test_upload_media_gif_success(mock_settings, mock_storage_client):\n    test_file = fastapi.UploadFile(\n        filename=\"test.gif\",\n        file=io.BytesIO(b\"GIF89a\"),  # Valid GIF signature\n        headers=starlette.datastructures.Headers({\"content-type\": \"image/gif\"}),\n    )\n\n    result = await backend.server.v2.store.media.upload_media(\"test-user\", test_file)",
+            "children": [
+                {
+                    "type": "parameters",
+                    "start_token": 989,
+                    "end_token": 993,
+                    "label": "(mock_settings, mock_storage_client)",
+                    "children": []
+                },
+                {
+                    "type": "block",
+                    "start_token": 994,
+                    "end_token": 1060,
+                    "label": ":\n    test_file = fastapi.UploadFile(\n        filename=\"test.gif\",\n        file=io.BytesIO(b\"GIF89a\"),  # Valid GIF signature\n        headers=starlette.datastructures.Headers({\"content-type\": \"image/gif\"}),\n    )\n\n    result = await backend.server.v2.store.media.upload_media(\"test-user\", test_file)",
+                    "children": [
+                        {
+                            "type": "call",
+                            "start_token": 997,
+                            "end_token": 1039,
+                            "label": "= fastapi.UploadFile(\n        filename=\"test.gif\",\n        file=io.BytesIO(b\"GIF89a\"),  # Valid GIF signature\n        headers=starlette.datastructures.Headers({\"content-type\": \"image/gif\"}),\n    )",
+                            "children": [
+                                {
+                                    "type": "attribute",
+                                    "start_token": 999,
+                                    "end_token": 1001,
+                                    "label": ".UploadFile(",
+                                    "children": []
+                                },
+                                {
+                                    "type": "argument_list",
+                                    "start_token": 1002,
+                                    "end_token": 1039,
+                                    "label": "\n        filename=\"test.gif\",\n        file=io.BytesIO(b\"GIF89a\"),  # Valid GIF signature\n        headers=starlette.datastructures.Headers({\"content-type\": \"image/gif\"}),\n    )",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 1042,
+                            "end_token": 1059,
+                            "label": "result = await backend.server.v2.store.media.upload_media(\"test-user\", test_file",
+                            "children": [
+                                {
+                                    "type": "await",
+                                    "start_token": 1044,
+                                    "end_token": 1059,
+                                    "label": "await backend.server.v2.store.media.upload_media(\"test-user\", test_file",
+                                    "children": [
+                                        {
+                                            "type": "call",
+                                            "start_token": 1045,
+                                            "end_token": 1059,
+                                            "label": "backend.server.v2.store.media.upload_media(\"test-user\", test_file",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "assert_statement",
+                            "start_token": 1062,
+                            "end_token": 1066,
+                            "label": "assert result == \"http://test-url/media/laptop.jpeg\"",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "async_function_definition",
+            "start_token": 1070,
+            "end_token": 1144,
+            "label": "async def test_upload_media_webp_success(mock_settings, mock_storage_client):\n    test_file = fastapi.UploadFile(\n        filename=\"test.webp\",\n        file=io.BytesIO(b\"RIFF\\x00\\x00\\x00\\x00WEBP\"),  # Valid WebP signature\n        headers=starlette.datastructures.Headers({\"content-type\": \"image/webp\"}),\n    )\n\n    result = await backend.server.v2.store.media.upload_media(\"test-user\", test_file)",
+            "children": [
+                {
+                    "type": "parameters",
+                    "start_token": 1073,
+                    "end_token": 1077,
+                    "label": "(mock_settings, mock_storage_client)",
+                    "children": []
+                },
+                {
+                    "type": "block",
+                    "start_token": 1078,
+                    "end_token": 1144,
+                    "label": ":\n    test_file = fastapi.UploadFile(\n        filename=\"test.webp\",\n        file=io.BytesIO(b\"RIFF\\x00\\x00\\x00\\x00WEBP\"),  # Valid WebP signature\n        headers=starlette.datastructures.Headers({\"content-type\": \"image/webp\"}),\n    )\n\n    result = await backend.server.v2.store.media.upload_media(\"test-user\", test_file)",
+                    "children": [
+                        {
+                            "type": "call",
+                            "start_token": 1081,
+                            "end_token": 1123,
+                            "label": "= fastapi.UploadFile(\n        filename=\"test.webp\",\n        file=io.BytesIO(b\"RIFF\\x00\\x00\\x00\\x00WEBP\"),  # Valid WebP signature\n        headers=starlette.datastructures.Headers({\"content-type\": \"image/webp\"}),\n    )",
+                            "children": [
+                                {
+                                    "type": "attribute",
+                                    "start_token": 1083,
+                                    "end_token": 1085,
+                                    "label": ".UploadFile(",
+                                    "children": []
+                                },
+                                {
+                                    "type": "argument_list",
+                                    "start_token": 1086,
+                                    "end_token": 1123,
+                                    "label": "\n        filename=\"test.webp\",\n        file=io.BytesIO(b\"RIFF\\x00\\x00\\x00\\x00WEBP\"),  # Valid WebP signature\n        headers=starlette.datastructures.Headers({\"content-type\": \"image/webp\"}),\n    )",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 1126,
+                            "end_token": 1143,
+                            "label": "result = await backend.server.v2.store.media.upload_media(\"test-user\", test_file",
+                            "children": [
+                                {
+                                    "type": "await",
+                                    "start_token": 1128,
+                                    "end_token": 1143,
+                                    "label": "await backend.server.v2.store.media.upload_media(\"test-user\", test_file",
+                                    "children": [
+                                        {
+                                            "type": "call",
+                                            "start_token": 1129,
+                                            "end_token": 1143,
+                                            "label": "backend.server.v2.store.media.upload_media(\"test-user\", test_file",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "assert_statement",
+                            "start_token": 1146,
+                            "end_token": 1150,
+                            "label": "assert result == \"http://test-url/media/laptop.jpeg\"",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "async_function_definition",
+            "start_token": 1154,
+            "end_token": 1228,
+            "label": "async def test_upload_media_webm_success(mock_settings, mock_storage_client):\n    test_file = fastapi.UploadFile(\n        filename=\"test.webm\",\n        file=io.BytesIO(b\"\\x1a\\x45\\xdf\\xa3\"),  # Valid WebM signature\n        headers=starlette.datastructures.Headers({\"content-type\": \"video/webm\"}),\n    )\n\n    result = await backend.server.v2.store.media.upload_media(\"test-user\", test_file)",
+            "children": [
+                {
+                    "type": "parameters",
+                    "start_token": 1157,
+                    "end_token": 1161,
+                    "label": "(mock_settings, mock_storage_client)",
+                    "children": []
+                },
+                {
+                    "type": "block",
+                    "start_token": 1162,
+                    "end_token": 1228,
+                    "label": ":\n    test_file = fastapi.UploadFile(\n        filename=\"test.webm\",\n        file=io.BytesIO(b\"\\x1a\\x45\\xdf\\xa3\"),  # Valid WebM signature\n        headers=starlette.datastructures.Headers({\"content-type\": \"video/webm\"}),\n    )\n\n    result = await backend.server.v2.store.media.upload_media(\"test-user\", test_file)",
+                    "children": [
+                        {
+                            "type": "call",
+                            "start_token": 1165,
+                            "end_token": 1207,
+                            "label": "= fastapi.UploadFile(\n        filename=\"test.webm\",\n        file=io.BytesIO(b\"\\x1a\\x45\\xdf\\xa3\"),  # Valid WebM signature\n        headers=starlette.datastructures.Headers({\"content-type\": \"video/webm\"}),\n    )",
+                            "children": [
+                                {
+                                    "type": "attribute",
+                                    "start_token": 1167,
+                                    "end_token": 1169,
+                                    "label": ".UploadFile(",
+                                    "children": []
+                                },
+                                {
+                                    "type": "argument_list",
+                                    "start_token": 1170,
+                                    "end_token": 1207,
+                                    "label": "\n        filename=\"test.webm\",\n        file=io.BytesIO(b\"\\x1a\\x45\\xdf\\xa3\"),  # Valid WebM signature\n        headers=starlette.datastructures.Headers({\"content-type\": \"video/webm\"}),\n    )",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 1210,
+                            "end_token": 1227,
+                            "label": "result = await backend.server.v2.store.media.upload_media(\"test-user\", test_file",
+                            "children": [
+                                {
+                                    "type": "await",
+                                    "start_token": 1212,
+                                    "end_token": 1227,
+                                    "label": "await backend.server.v2.store.media.upload_media(\"test-user\", test_file",
+                                    "children": [
+                                        {
+                                            "type": "call",
+                                            "start_token": 1213,
+                                            "end_token": 1227,
+                                            "label": "backend.server.v2.store.media.upload_media(\"test-user\", test_file",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "assert_statement",
+                            "start_token": 1230,
+                            "end_token": 1234,
+                            "label": "assert result == \"http://test-url/media/laptop.jpeg\"",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "async_function_definition",
+            "start_token": 1238,
+            "end_token": 1332,
+            "label": "async def test_upload_media_mismatched_signature(mock_settings, mock_storage_client):\n    test_file = fastapi.UploadFile(\n        filename=\"test.jpeg\",\n        file=io.BytesIO(b\"\\x89PNG\\r\\n\\x1a\\n\"),  # PNG signature with JPEG content type\n        headers=starlette.datastructures.Headers({\"content-type\": \"image/jpeg\"}),\n    )\n\n    with pytest.raises(backend.server.v2.store.exceptions.InvalidFileTypeError):\n        await backend.server.v2.store.media.upload_media(\"test-user\", test_file)",
+            "children": [
+                {
+                    "type": "parameters",
+                    "start_token": 1241,
+                    "end_token": 1245,
+                    "label": "(mock_settings, mock_storage_client)",
+                    "children": []
+                },
+                {
+                    "type": "block",
+                    "start_token": 1246,
+                    "end_token": 1332,
+                    "label": ":\n    test_file = fastapi.UploadFile(\n        filename=\"test.jpeg\",\n        file=io.BytesIO(b\"\\x89PNG\\r\\n\\x1a\\n\"),  # PNG signature with JPEG content type\n        headers=starlette.datastructures.Headers({\"content-type\": \"image/jpeg\"}),\n    )\n\n    with pytest.raises(backend.server.v2.store.exceptions.InvalidFileTypeError):\n        await backend.server.v2.store.media.upload_media(\"test-user\", test_file)",
+                    "children": [
+                        {
+                            "type": "call",
+                            "start_token": 1249,
+                            "end_token": 1294,
+                            "label": "= fastapi.UploadFile(\n        filename=\"test.jpeg\",\n        file=io.BytesIO(b\"\\x89PNG\\r\\n\\x1a\\n\"),  # PNG signature with JPEG content type\n        headers=starlette.datastructures.Headers({\"content-type\": \"image/jpeg\"}),\n    )",
+                            "children": [
+                                {
+                                    "type": "attribute",
+                                    "start_token": 1251,
+                                    "end_token": 1253,
+                                    "label": ".UploadFile(",
+                                    "children": []
+                                },
+                                {
+                                    "type": "argument_list",
+                                    "start_token": 1254,
+                                    "end_token": 1294,
+                                    "label": "\n        filename=\"test.jpeg\",\n        file=io.BytesIO(b\"\\x89PNG\\r\\n\\x1a\\n\"),  # PNG signature with JPEG content type\n        headers=starlette.datastructures.Headers({\"content-type\": \"image/jpeg\"}),\n    )",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "with_statement",
+                            "start_token": 1297,
+                            "end_token": 1331,
+                            "label": "with pytest.raises(backend.server.v2.store.exceptions.InvalidFileTypeError):\n        await backend.server.v2.store.media.upload_media(\"test-user\", test_file",
+                            "children": [
+                                {
+                                    "type": "with_clause",
+                                    "start_token": 1298,
+                                    "end_token": 1312,
+                                    "label": "pytest.raises(backend.server.v2.store.exceptions.InvalidFileTypeError",
+                                    "children": [
+                                        {
+                                            "type": "call",
+                                            "start_token": 1298,
+                                            "end_token": 1312,
+                                            "label": "pytest.raises(backend.server.v2.store.exceptions.InvalidFileTypeError",
+                                            "children": []
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "block",
+                                    "start_token": 1314,
+                                    "end_token": 1331,
+                                    "label": ":\n        await backend.server.v2.store.media.upload_media(\"test-user\", test_file",
+                                    "children": [
+                                        {
+                                            "type": "await",
+                                            "start_token": 1316,
+                                            "end_token": 1331,
+                                            "label": "await backend.server.v2.store.media.upload_media(\"test-user\", test_file",
+                                            "children": [
+                                                {
+                                                    "type": "call",
+                                                    "start_token": 1317,
+                                                    "end_token": 1331,
+                                                    "label": "backend.server.v2.store.media.upload_media(\"test-user\", test_file",
+                                                    "children": []
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "async_function_definition",
+            "start_token": 1336,
+            "end_token": 1423,
+            "label": "async def test_upload_media_invalid_signature(mock_settings, mock_storage_client):\n    test_file = fastapi.UploadFile(\n        filename=\"test.jpeg\",\n        file=io.BytesIO(b\"invalid signature\"),\n        headers=starlette.datastructures.Headers({\"content-type\": \"image/jpeg\"}),\n    )\n\n    with pytest.raises(backend.server.v2.store.exceptions.InvalidFileTypeError):\n        await backend.server.v2.store.media.upload_media(\"test-user\", test_file)",
+            "children": [
+                {
+                    "type": "parameters",
+                    "start_token": 1339,
+                    "end_token": 1343,
+                    "label": "(mock_settings, mock_storage_client)",
+                    "children": []
+                },
+                {
+                    "type": "block",
+                    "start_token": 1344,
+                    "end_token": 1423,
+                    "label": ":\n    test_file = fastapi.UploadFile(\n        filename=\"test.jpeg\",\n        file=io.BytesIO(b\"invalid signature\"),\n        headers=starlette.datastructures.Headers({\"content-type\": \"image/jpeg\"}),\n    )\n\n    with pytest.raises(backend.server.v2.store.exceptions.InvalidFileTypeError):\n        await backend.server.v2.store.media.upload_media(\"test-user\", test_file)",
+                    "children": [
+                        {
+                            "type": "call",
+                            "start_token": 1347,
+                            "end_token": 1385,
+                            "label": "= fastapi.UploadFile(\n        filename=\"test.jpeg\",\n        file=io.BytesIO(b\"invalid signature\"),\n        headers=starlette.datastructures.Headers({\"content-type\": \"image/jpeg\"}),\n    )",
+                            "children": [
+                                {
+                                    "type": "attribute",
+                                    "start_token": 1349,
+                                    "end_token": 1351,
+                                    "label": ".UploadFile(",
+                                    "children": []
+                                },
+                                {
+                                    "type": "argument_list",
+                                    "start_token": 1352,
+                                    "end_token": 1385,
+                                    "label": "\n        filename=\"test.jpeg\",\n        file=io.BytesIO(b\"invalid signature\"),\n        headers=starlette.datastructures.Headers({\"content-type\": \"image/jpeg\"}),\n    )",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "with_statement",
+                            "start_token": 1388,
+                            "end_token": 1422,
+                            "label": "with pytest.raises(backend.server.v2.store.exceptions.InvalidFileTypeError):\n        await backend.server.v2.store.media.upload_media(\"test-user\", test_file",
+                            "children": [
+                                {
+                                    "type": "with_clause",
+                                    "start_token": 1389,
+                                    "end_token": 1403,
+                                    "label": "pytest.raises(backend.server.v2.store.exceptions.InvalidFileTypeError",
+                                    "children": [
+                                        {
+                                            "type": "call",
+                                            "start_token": 1389,
+                                            "end_token": 1403,
+                                            "label": "pytest.raises(backend.server.v2.store.exceptions.InvalidFileTypeError",
+                                            "children": []
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "block",
+                                    "start_token": 1405,
+                                    "end_token": 1422,
+                                    "label": ":\n        await backend.server.v2.store.media.upload_media(\"test-user\", test_file",
+                                    "children": [
+                                        {
+                                            "type": "await",
+                                            "start_token": 1407,
+                                            "end_token": 1422,
+                                            "label": "await backend.server.v2.store.media.upload_media(\"test-user\", test_file",
+                                            "children": [
+                                                {
+                                                    "type": "call",
+                                                    "start_token": 1408,
+                                                    "end_token": 1422,
+                                                    "label": "backend.server.v2.store.media.upload_media(\"test-user\", test_file",
+                                                    "children": []
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

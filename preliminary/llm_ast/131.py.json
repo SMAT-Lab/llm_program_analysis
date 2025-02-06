@@ -1,0 +1,445 @@
+{
+    "type": "module",
+    "code": "",
+    "children": [
+        {
+            "type": "import_statement",
+            "code": "import logging",
+            "children": []
+        },
+        {
+            "type": "import_statement",
+            "code": "from typing import TYPE_CHECKING, AsyncGenerator, Optional",
+            "children": []
+        },
+        {
+            "type": "import_statement",
+            "code": "from prisma import Json",
+            "children": []
+        },
+        {
+            "type": "import_statement",
+            "code": "from prisma.models import IntegrationWebhook",
+            "children": []
+        },
+        {
+            "type": "import_statement",
+            "code": "from pydantic import Field, computed_field",
+            "children": []
+        },
+        {
+            "type": "import_statement",
+            "code": "from backend.data.includes import INTEGRATION_WEBHOOK_INCLUDE",
+            "children": []
+        },
+        {
+            "type": "import_statement",
+            "code": "from backend.data.queue import AsyncRedisEventBus",
+            "children": []
+        },
+        {
+            "type": "import_statement",
+            "code": "from backend.integrations.providers import ProviderName",
+            "children": []
+        },
+        {
+            "type": "import_statement",
+            "code": "from backend.integrations.webhooks.utils import webhook_ingress_url",
+            "children": []
+        },
+        {
+            "type": "import_statement",
+            "code": "from .db import BaseDbModel",
+            "children": []
+        },
+        {
+            "type": "block",
+            "code": "if TYPE_CHECKING:\n    from .graph import NodeModel",
+            "children": [
+                {
+                    "type": "if_statement",
+                    "code": "if TYPE_CHECKING:",
+                    "children": [
+                        {
+                            "type": "import_statement",
+                            "code": "from .graph import NodeModel",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "assignment",
+            "code": "logger = logging.getLogger(__name__)",
+            "children": []
+        },
+        {
+            "type": "class_definition",
+            "code": "class Webhook(BaseDbModel):",
+            "children": [
+                {
+                    "type": "assignment",
+                    "code": "user_id: str",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "code": "provider: ProviderName",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "code": "credentials_id: str",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "code": "webhook_type: str",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "code": "resource: str",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "code": "events: list[str]",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "code": "config: dict = Field(default_factory=dict)",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "code": "secret: str",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "code": "provider_webhook_id: str",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "code": "attached_nodes: Optional[list['NodeModel']] = None",
+                    "children": []
+                },
+                {
+                    "type": "decorated_definition",
+                    "code": "@computed_field\n    @property",
+                    "children": [
+                        {
+                            "type": "function_definition",
+                            "code": "def url(self) -> str:",
+                            "children": [
+                                {
+                                    "type": "return_statement",
+                                    "code": "return webhook_ingress_url(self.provider.value, self.id)",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "type": "function_definition",
+                    "code": "def from_db(webhook: IntegrationWebhook):",
+                    "children": [
+                        {
+                            "type": "import_statement",
+                            "code": "from .graph import NodeModel",
+                            "children": []
+                        },
+                        {
+                            "type": "return_statement",
+                            "code": "return Webhook(\n            id=webhook.id,\n            user_id=webhook.userId,\n            provider=ProviderName(webhook.provider),\n            credentials_id=webhook.credentialsId,\n            webhook_type=webhook.webhookType,\n            resource=webhook.resource,\n            events=webhook.events,\n            config=dict(webhook.config),\n            secret=webhook.secret,\n            provider_webhook_id=webhook.providerWebhookId,\n            attached_nodes=(\n                [NodeModel.from_db(node) for node in webhook.AgentNodes]\n                if webhook.AgentNodes is not None\n                else None\n            ),\n        )",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "block",
+            "code": "# --------------------- CRUD functions --------------------- #",
+            "children": []
+        },
+        {
+            "type": "function_definition",
+            "code": "async def create_webhook(webhook: Webhook) -> Webhook:",
+            "children": [
+                {
+                    "type": "assignment",
+                    "code": "created_webhook = await IntegrationWebhook.prisma().create(\n        data={\n            'id': webhook.id,\n            'userId': webhook.user_id,\n            'provider': webhook.provider.value,\n            'credentialsId': webhook.credentials_id,\n            'webhookType': webhook.webhook_type,\n            'resource': webhook.resource,\n            'events': webhook.events,\n            'config': Json(webhook.config),\n            'secret': webhook.secret,\n            'providerWebhookId': webhook.provider_webhook_id,\n        }\n    )",
+                    "children": []
+                },
+                {
+                    "type": "return_statement",
+                    "code": "return Webhook.from_db(created_webhook)",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "code": "async def get_webhook(webhook_id: str) -> Webhook:",
+            "children": [
+                {
+                    "type": "comment",
+                    "code": "\"\"\"⚠️ No `user_id` check: DO NOT USE without check in user-facing endpoints.\"\"\"",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "code": "webhook = await IntegrationWebhook.prisma().find_unique_or_raise(\n        where={'id': webhook_id},\n        include=INTEGRATION_WEBHOOK_INCLUDE,\n    )",
+                    "children": []
+                },
+                {
+                    "type": "return_statement",
+                    "code": "return Webhook.from_db(webhook)",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "code": "async def get_all_webhooks_by_creds(credentials_id: str) -> list[Webhook]:",
+            "children": [
+                {
+                    "type": "comment",
+                    "code": "\"\"\"⚠️ No `user_id` check: DO NOT USE without check in user-facing endpoints.\"\"\"",
+                    "children": []
+                },
+                {
+                    "type": "if_statement",
+                    "code": "if not credentials_id:",
+                    "children": [
+                        {
+                            "type": "raise_statement",
+                            "code": "raise ValueError('credentials_id must not be empty')",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "assignment",
+                    "code": "webhooks = await IntegrationWebhook.prisma().find_many(\n        where={'credentialsId': credentials_id},\n        include=INTEGRATION_WEBHOOK_INCLUDE,\n    )",
+                    "children": []
+                },
+                {
+                    "type": "return_statement",
+                    "code": "return [Webhook.from_db(webhook) for webhook in webhooks]",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "code": "async def find_webhook_by_credentials_and_props(\n    credentials_id: str, webhook_type: str, resource: str, events: list[str]\n) -> Webhook | None:",
+            "children": [
+                {
+                    "type": "comment",
+                    "code": "\"\"\"⚠️ No `user_id` check: DO NOT USE without check in user-facing endpoints.\"\"\"",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "code": "webhook = await IntegrationWebhook.prisma().find_first(\n        where={\n            'credentialsId': credentials_id,\n            'webhookType': webhook_type,\n            'resource': resource,\n            'events': {'has_every': events},\n        },\n        include=INTEGRATION_WEBHOOK_INCLUDE,\n    )",
+                    "children": []
+                },
+                {
+                    "type": "return_statement",
+                    "code": "return Webhook.from_db(webhook) if webhook else None",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "code": "async def find_webhook_by_graph_and_props(\n    graph_id: str, provider: str, webhook_type: str, events: list[str]\n) -> Webhook | None:",
+            "children": [
+                {
+                    "type": "comment",
+                    "code": "\"\"\"⚠️ No `user_id` check: DO NOT USE without check in user-facing endpoints.\"\"\"",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "code": "webhook = await IntegrationWebhook.prisma().find_first(\n        where={\n            'provider': provider,\n            'webhookType': webhook_type,\n            'events': {'has_every': events},\n            'AgentNodes': {'some': {'agentGraphId': graph_id}},\n        },\n        include=INTEGRATION_WEBHOOK_INCLUDE,\n    )",
+                    "children": []
+                },
+                {
+                    "type": "return_statement",
+                    "code": "return Webhook.from_db(webhook) if webhook else None",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "code": "async def update_webhook_config(webhook_id: str, updated_config: dict) -> Webhook:",
+            "children": [
+                {
+                    "type": "comment",
+                    "code": "\"\"\"⚠️ No `user_id` check: DO NOT USE without check in user-facing endpoints.\"\"\"",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "code": "_updated_webhook = await IntegrationWebhook.prisma().update(\n        where={'id': webhook_id},\n        data={'config': Json(updated_config)},\n        include=INTEGRATION_WEBHOOK_INCLUDE,\n    )",
+                    "children": []
+                },
+                {
+                    "type": "if_statement",
+                    "code": "if _updated_webhook is None:",
+                    "children": [
+                        {
+                            "type": "raise_statement",
+                            "code": "raise ValueError(f'Webhook #{webhook_id} not found')",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "return_statement",
+                    "code": "return Webhook.from_db(_updated_webhook)",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "code": "async def delete_webhook(webhook_id: str) -> None:",
+            "children": [
+                {
+                    "type": "comment",
+                    "code": "\"\"\"⚠️ No `user_id` check: DO NOT USE without check in user-facing endpoints.\"\"\"",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "code": "deleted = await IntegrationWebhook.prisma().delete(where={'id': webhook_id})",
+                    "children": []
+                },
+                {
+                    "type": "if_statement",
+                    "code": "if not deleted:",
+                    "children": [
+                        {
+                            "type": "raise_statement",
+                            "code": "raise ValueError(f'Webhook #{webhook_id} not found')",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "block",
+            "code": "# --------------------- WEBHOOK EVENTS --------------------- #",
+            "children": []
+        },
+        {
+            "type": "class_definition",
+            "code": "class WebhookEvent(BaseDbModel):",
+            "children": [
+                {
+                    "type": "assignment",
+                    "code": "provider: str",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "code": "webhook_id: str",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "code": "event_type: str",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "code": "payload: dict",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "class_definition",
+            "code": "class WebhookEventBus(AsyncRedisEventBus[WebhookEvent]):",
+            "children": [
+                {
+                    "type": "assignment",
+                    "code": "Model = WebhookEvent",
+                    "children": []
+                },
+                {
+                    "type": "decorated_definition",
+                    "code": "@property",
+                    "children": [
+                        {
+                            "type": "function_definition",
+                            "code": "def event_bus_name(self) -> str:",
+                            "children": [
+                                {
+                                    "type": "return_statement",
+                                    "code": "return 'webhooks'",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "assignment",
+            "code": "_webhook_event_bus = WebhookEventBus()",
+            "children": []
+        },
+        {
+            "type": "function_definition",
+            "code": "async def publish_webhook_event(event: WebhookEvent):",
+            "children": [
+                {
+                    "type": "await",
+                    "code": "await _webhook_event_bus.publish_event(\n        event, f'{event.webhook_id}/{event.event_type}'\n    )",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "code": "async def listen_for_webhook_events(\n    webhook_id: str, event_type: Optional[str] = None\n) -> AsyncGenerator[WebhookEvent, None]:",
+            "children": [
+                {
+                    "type": "for_statement",
+                    "code": "async for event in _webhook_event_bus.listen_events(\n        f'{webhook_id}/{event_type or '*'}'\n    ):",
+                    "children": [
+                        {
+                            "type": "yield",
+                            "code": "yield event",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "code": "async def wait_for_webhook_event(\n    webhook_id: str, event_type: Optional[str] = None, timeout: Optional[float] = None\n) -> WebhookEvent | None:",
+            "children": [
+                {
+                    "type": "return_statement",
+                    "code": "return await _webhook_event_bus.wait_for_event(\n        f'{webhook_id}/{event_type or '*'}', timeout\n    )",
+                    "children": []
+                }
+            ]
+        }
+    ]
+}

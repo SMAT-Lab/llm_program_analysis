@@ -1,0 +1,434 @@
+{
+    "type": "module",
+    "start_token": 0,
+    "end_token": 913,
+    "label": "import logging\nfrom typing import TYPE_CHECKING, Annotated, Literal\n\nfrom fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Request\nfrom pydantic import BaseModel, Field, SecretStr\n\nfrom backend.data.graph import set_node_webhook\nfrom backend.data.integrations import (\n    WebhookEvent,\n    get_all_webhooks_by_creds,\n    get_webhook,\n    publish_webhook_event,\n    wait_for_webhook_event,\n)\nfrom backend.data.model import (\n    APIKeyCredentials,\n    Credentials,\n    CredentialsType,\n    OAuth2Credentials,\n)\nfrom backend.executor.manager import ExecutionManager\nfrom backend.integrations.creds_manager import IntegrationCredentialsManager\nfrom backend.integrations.oauth import HANDLERS_BY_NAME\nfrom backend.integrations.providers import ProviderName\nfrom backend.integrations.webhooks import WEBHOOK_MANAGERS_BY_NAME\nfrom backend.util.exceptions import NeedConfirmation\nfrom backend.util.service import get_service_client\nfrom backend.util.settings import Settings\n\nif TYPE_CHECKING:\n    from backend.integrations.oauth import BaseOAuthHandler\n\nfrom ..utils import get_user_id\n\nlogger = logging.getLogger(__name__)\nsettings = Settings()\nrouter = APIRouter()\n\ncreds_manager = IntegrationCredentialsManager()\n\n\nclass LoginResponse(BaseModel):\n    login_url: str\n    state_token: str\n\n\n@router.get(\"/{provider}/login\")\ndef login(\n    provider: Annotated[\n        ProviderName, Path(title=\"The provider to initiate an OAuth flow for\")\n    ],\n    user_id: Annotated[str, Depends(get_user_id)],\n    request: Request,\n    scopes: Annotated[\n        str, Query(title=\"Comma-separated list of authorization scopes\")\n    ] = \"\",\n) -> LoginResponse:\n    handler = _get_provider_oauth_handler(request, provider)\n\n    requested_scopes = scopes.split(\",\") if scopes else []\n\n    # Generate and store a secure random state token along with the scopes\n    state_token = creds_manager.store.store_state_token(\n        user_id, provider, requested_scopes\n    )\n\n    login_url = handler.get_login_url(requested_scopes, state_token)\n\n    return LoginResponse(login_url=login_url, state_token=state_token)\n\n\nclass CredentialsMetaResponse(BaseModel):\n    id: str\n    provider: str\n    type: CredentialsType\n    title: str | None\n    scopes: list[str] | None\n    username: str | None\n\n\n@router.post(\"/{provider}/callback\")\ndef callback(\n    provider: Annotated[\n        ProviderName, Path(title=\"The target provider for this OAuth exchange\")\n    ],\n    code: Annotated[str, Body(title=\"Authorization code acquired by user login\")],\n    state_token: Annotated[str, Body(title=\"Anti-CSRF nonce\")],\n    user_id: Annotated[str, Depends(get_user_id)],\n    request: Request,\n) -> CredentialsMetaResponse:\n    logger.debug(f\"Received OAuth callback for provider: {provider}\")\n    handler = _get_provider_oauth_handler(request, provider)\n\n    # Verify the state token\n    if not creds_manager.store.verify_state_token(user_id, state_token, provider):\n        logger.warning(f\"Invalid or expired state token for user {user_id}\")\n        raise HTTPException(status_code=400, detail=\"Invalid or expired state token\")\n\n    try:\n        scopes = creds_manager.store.get_any_valid_scopes_from_state_token(\n            user_id, state_token, provider\n        )\n        logger.debug(f\"Retrieved scopes from state token: {scopes}\")\n\n        scopes = handler.handle_default_scopes(scopes)\n\n        credentials = handler.exchange_code_for_tokens(code, scopes)\n        logger.debug(f\"Received credentials with final scopes: {credentials.scopes}\")\n\n        # Check if the granted scopes are sufficient for the requested scopes\n        if not set(scopes).issubset(set(credentials.scopes)):\n            # For now, we'll just log the warning and continue\n            logger.warning(\n                f\"Granted scopes {credentials.scopes} for provider {provider.value} \"\n                f\"do not include all requested scopes {scopes}\"\n            )\n\n    except Exception as e:\n        logger.error(f\"Code->Token exchange failed for provider {provider.value}: {e}\")\n        raise HTTPException(\n            status_code=400, detail=f\"Failed to exchange code for tokens: {str(e)}\"\n        )\n\n    # TODO: Allow specifying `title` to set on `credentials`\n    creds_manager.create(user_id, credentials)\n\n    logger.debug(\n        f\"Successfully processed OAuth callback for user {user_id} \"\n        f\"and provider {provider.value}\"\n    )\n    return CredentialsMetaResponse(\n        id=credentials.id,\n        provider=credentials.provider,\n        type=credentials.type,\n        title=credentials.title,\n        scopes=credentials.scopes,\n        username=credentials.username,\n    )\n\n\n@router.get(\"/credentials\")\ndef list_credentials(\n    user_id: Annotated[str, Depends(get_user_id)],\n) -> list[CredentialsMetaResponse]:\n    credentials = creds_manager.store.get_all_creds(user_id)\n    return [\n        CredentialsMetaResponse(\n            id=cred.id,\n            provider=cred.provider,\n            type=cred.type,\n            title=cred.title,\n            scopes=cred.scopes if isinstance(cred, OAuth2Credentials) else None,\n            username=cred.username if isinstance(cred, OAuth2Credentials) else None,\n        )\n        for cred in credentials\n    ]\n\n\n@router.get(\"/{provider}/credentials\")\ndef list_credentials_by_provider(\n    provider: Annotated[\n        ProviderName, Path(title=\"The provider to list credentials for\")\n    ],\n    user_id: Annotated[str, Depends(get_user_id)],\n) -> list[CredentialsMetaResponse]:\n    credentials = creds_manager.store.get_creds_by_provider(user_id, provider)\n    return [\n        CredentialsMetaResponse(\n            id=cred.id,\n            provider=cred.provider,\n            type=cred.type,\n            title=cred.title,\n            scopes=cred.scopes if isinstance(cred, OAuth2Credentials) else None,\n            username=cred.username if isinstance(cred, OAuth2Credentials) else None,\n        )\n        for cred in credentials\n    ]\n\n\n@router.get(\"/{provider}/credentials/{cred_id}\")\ndef get_credential(\n    provider: Annotated[\n        ProviderName, Path(title=\"The provider to retrieve credentials for\")\n    ],\n    cred_id: Annotated[str, Path(title=\"The ID of the credentials to retrieve\")],\n    user_id: Annotated[str, Depends(get_user_id)],\n) -> Credentials:\n    credential = creds_manager.get(user_id, cred_id)\n    if not credential:\n        raise HTTPException(status_code=404, detail=\"Credentials not found\")\n    if credential.provider != provider:\n        raise HTTPException(\n            status_code=404, detail=\"Credentials do not match the specified provider\"\n        )\n    return credential\n\n\n@router.post(\"/{provider}/credentials\", status_code=201)\ndef create_api_key_credentials(\n    user_id: Annotated[str, Depends(get_user_id)],\n    provider: Annotated[\n        ProviderName, Path(title=\"The provider to create credentials for\")\n    ],\n    api_key: Annotated[str, Body(title=\"The API key to store\")],\n    title: Annotated[str, Body(title=\"Optional title for the credentials\")],\n    expires_at: Annotated[\n        int | None, Body(title=\"Unix timestamp when the key expires\")\n    ] = None,\n) -> APIKeyCredentials:\n    new_credentials = APIKeyCredentials(\n        provider=provider,\n        api_key=SecretStr(api_key),\n        title=title,\n        expires_at=expires_at,\n    )\n\n    try:\n        creds_manager.create(user_id, new_credentials)\n    except Exception as e:\n        raise HTTPException(\n            status_code=500, detail=f\"Failed to store credentials: {str(e)}\"\n        )\n    return new_credentials\n\n\nclass CredentialsDeletionResponse(BaseModel):\n    deleted: Literal[True] = True\n    revoked: bool | None = Field(\n        description=\"Indicates whether the credentials were also revoked by their \"\n        \"provider. `None`/`null` if not applicable, e.g. when deleting \"\n        \"non-revocable credentials such as API keys.\"\n    )\n\n\nclass CredentialsDeletionNeedsConfirmationResponse(BaseModel):\n    deleted: Literal[False] = False\n    need_confirmation: Literal[True] = True\n    message: str\n\n\n@router.delete(\"/{provider}/credentials/{cred_id}\")\nasync def delete_credentials(\n    request: Request,\n    provider: Annotated[\n        ProviderName, Path(title=\"The provider to delete credentials for\")\n    ],\n    cred_id: Annotated[str, Path(title=\"The ID of the credentials to delete\")],\n    user_id: Annotated[str, Depends(get_user_id)],\n    force: Annotated[\n        bool, Query(title=\"Whether to proceed if any linked webhooks are still in use\")\n    ] = False,\n) -> CredentialsDeletionResponse | CredentialsDeletionNeedsConfirmationResponse:\n    creds = creds_manager.store.get_creds_by_id(user_id, cred_id)\n    if not creds:\n        raise HTTPException(status_code=404, detail=\"Credentials not found\")\n    if creds.provider != provider:\n        raise HTTPException(\n            status_code=404, detail=\"Credentials do not match the specified provider\"\n        )\n\n    try:\n        await remove_all_webhooks_for_credentials(creds, force)\n    except NeedConfirmation as e:\n        return CredentialsDeletionNeedsConfirmationResponse(message=str(e))\n\n    creds_manager.delete(user_id, cred_id)\n\n    tokens_revoked = None\n    if isinstance(creds, OAuth2Credentials):\n        handler = _get_provider_oauth_handler(request, provider)\n        tokens_revoked = handler.revoke_tokens(creds)\n\n    return CredentialsDeletionResponse(revoked=tokens_revoked)\n\n\n# ------------------------- WEBHOOK STUFF -------------------------- #\n\n\n# ⚠️ Note\n# No user auth check because this endpoint is for webhook ingress and relies on\n# validation by the provider-specific `WebhooksManager`.\n@router.post(\"/{provider}/webhooks/{webhook_id}/ingress\")\nasync def webhook_ingress_generic(\n    request: Request,\n    provider: Annotated[\n        ProviderName, Path(title=\"Provider where the webhook was registered\")\n    ],\n    webhook_id: Annotated[str, Path(title=\"Our ID for the webhook\")],\n):\n    logger.debug(f\"Received {provider.value} webhook ingress for ID {webhook_id}\")\n    webhook_manager = WEBHOOK_MANAGERS_BY_NAME[provider]()\n    webhook = await get_webhook(webhook_id)\n    logger.debug(f\"Webhook #{webhook_id}: {webhook}\")\n    payload, event_type = await webhook_manager.validate_payload(webhook, request)\n    logger.debug(\n        f\"Validated {provider.value} {webhook.webhook_type} {event_type} event \"\n        f\"with payload {payload}\"\n    )\n\n    webhook_event = WebhookEvent(\n        provider=provider,\n        webhook_id=webhook_id,\n        event_type=event_type,\n        payload=payload,\n    )\n    await publish_webhook_event(webhook_event)\n    logger.debug(f\"Webhook event published: {webhook_event}\")\n\n    if not webhook.attached_nodes:\n        return\n\n    executor = get_service_client(ExecutionManager)\n    for node in webhook.attached_nodes:\n        logger.debug(f\"Webhook-attached node: {node}\")\n        if not node.is_triggered_by_event_type(event_type):\n            logger.debug(f\"Node #{node.id} doesn't trigger on event {event_type}\")\n            continue\n        logger.debug(f\"Executing graph #{node.graph_id} node #{node.id}\")\n        executor.add_execution(\n            node.graph_id,\n            data={f\"webhook_{webhook_id}_payload\": payload},\n            user_id=webhook.user_id,\n        )\n\n\n@router.post(\"/webhooks/{webhook_id}/ping\")\nasync def webhook_ping(\n    webhook_id: Annotated[str, Path(title=\"Our ID for the webhook\")],\n    user_id: Annotated[str, Depends(get_user_id)],  # require auth\n):\n    webhook = await get_webhook(webhook_id)\n    webhook_manager = WEBHOOK_MANAGERS_BY_NAME[webhook.provider]()\n\n    credentials = (\n        creds_manager.get(user_id, webhook.credentials_id)\n        if webhook.credentials_id\n        else None\n    )\n    try:\n        await webhook_manager.trigger_ping(webhook, credentials)\n    except NotImplementedError:\n        return False\n\n    if not await wait_for_webhook_event(webhook_id, event_type=\"ping\", timeout=10):\n        raise HTTPException(status_code=504, detail=\"Webhook ping timed out\")\n\n    return True\n\n\n# --------------------------- UTILITIES ---------------------------- #\n\n\nasync def remove_all_webhooks_for_credentials(\n    credentials: Credentials, force: bool = False\n) -> None:\n    \"\"\"\n    Remove and deregister all webhooks that were registered using the given credentials.\n\n    Params:\n        credentials: The credentials for which to remove the associated webhooks.\n        force: Whether to proceed if any of the webhooks are still in use.\n\n    Raises:\n        NeedConfirmation: If any of the webhooks are still in use and `force` is `False`\n    \"\"\"\n    webhooks = await get_all_webhooks_by_creds(credentials.id)\n    if credentials.provider not in WEBHOOK_MANAGERS_BY_NAME:\n        if webhooks:\n            logger.error(\n                f\"Credentials #{credentials.id} for provider {credentials.provider} \"\n                f\"are attached to {len(webhooks)} webhooks, \"\n                f\"but there is no available WebhooksHandler for {credentials.provider}\"\n            )\n        return\n    if any(w.attached_nodes for w in webhooks) and not force:\n        raise NeedConfirmation(\n            \"Some webhooks linked to these credentials are still in use by an agent\"\n        )\n    for webhook in webhooks:\n        # Unlink all nodes\n        for node in webhook.attached_nodes or []:\n            await set_node_webhook(node.id, None)\n\n        # Prune the webhook\n        webhook_manager = WEBHOOK_MANAGERS_BY_NAME[credentials.provider]()\n        success = await webhook_manager.prune_webhook_if_dangling(\n            webhook.id, credentials\n        )\n        if not success:\n            logger.warning(f\"Webhook #{webhook.id} failed to prune\")\n\n\ndef _get_provider_oauth_handler(\n    req: Request, provider_name: ProviderName\n) -> \"BaseOAuthHandler\":\n    if provider_name not in HANDLERS_BY_NAME:\n        raise HTTPException(\n            status_code=404,\n            detail=f\"Provider '{provider_name.value}' does not support OAuth\",\n        )\n\n    client_id = getattr(settings.secrets, f\"{provider_name.value}_client_id\")\n    client_secret = getattr(settings.secrets, f\"{provider_name.value}_client_secret\")\n    if not (client_id and client_secret):\n        raise HTTPException(\n            status_code=501,\n            detail=(\n                f\"Integration with provider '{provider_name.value}' is not configured\"\n            ),\n        )\n\n    handler_class = HANDLERS_BY_NAME[provider_name]\n    frontend_base_url = (\n        settings.config.frontend_base_url\n        or settings.config.platform_base_url\n        or str(req.base_url)\n    )\n    return handler_class(\n        client_id=client_id,\n        client_secret=client_secret,\n        redirect_uri=f\"{frontend_base_url}/auth/integrations/oauth_callback\",\n    )\n",
+    "children": [
+        {
+            "type": "block",
+            "start_token": 0,
+            "end_token": 30,
+            "label": "import logging\nfrom typing import TYPE_CHECKING, Annotated, Literal\n\nfrom fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Request\nfrom",
+            "children": [
+                {
+                    "type": "import_statement",
+                    "start_token": 0,
+                    "end_token": 1,
+                    "label": "import logging",
+                    "children": []
+                },
+                {
+                    "type": "aliased_import",
+                    "start_token": 3,
+                    "end_token": 11,
+                    "label": "from typing import TYPE_CHECKING, Annotated, Literal\n",
+                    "children": []
+                },
+                {
+                    "type": "import_from_statement",
+                    "start_token": 13,
+                    "end_token": 29,
+                    "label": "from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Request\n",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "block",
+            "start_token": 30,
+            "end_token": 39,
+            "label": "from pydantic import BaseModel, Field, SecretStr\n\n",
+            "children": [
+                {
+                    "type": "import_from_statement",
+                    "start_token": 30,
+                    "end_token": 38,
+                    "label": "from pydantic import BaseModel, Field, SecretStr\n",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "block",
+            "start_token": 40,
+            "end_token": 49,
+            "label": "from backend.data.graph import set_node_webhook\nfrom",
+            "children": [
+                {
+                    "type": "import_from_statement",
+                    "start_token": 40,
+                    "end_token": 48,
+                    "label": "from backend.data.graph import set_node_webhook\n",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "block",
+            "start_token": 49,
+            "end_token": 74,
+            "label": "from backend.data.integrations import (\n    WebhookEvent,\n    get_all_webhooks_by_creds,\n    get_webhook,\n    publish_webhook_event,\n    wait_for_webhook_event,\n)\n",
+            "children": [
+                {
+                    "type": "import_from_statement",
+                    "start_token": 49,
+                    "end_token": 73,
+                    "label": "from backend.data.integrations import (\n    WebhookEvent,\n    get_all_webhooks_by_creds,\n    get_webhook,\n    publish_webhook_event,\n    wait_for_webhook_event,\n)",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "block",
+            "start_token": 75,
+            "end_token": 97,
+            "label": "from backend.data.model import (\n    APIKeyCredentials,\n    Credentials,\n    CredentialsType,\n    OAuth2Credentials,\n)\n",
+            "children": [
+                {
+                    "type": "import_from_statement",
+                    "start_token": 75,
+                    "end_token": 96,
+                    "label": "from backend.data.model import (\n    APIKeyCredentials,\n    Credentials,\n    CredentialsType,\n    OAuth2Credentials,\n)",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "block",
+            "start_token": 98,
+            "end_token": 106,
+            "label": "from backend.executor.manager import ExecutionManager\n",
+            "children": [
+                {
+                    "type": "import_from_statement",
+                    "start_token": 98,
+                    "end_token": 105,
+                    "label": "from backend.executor.manager import ExecutionManager",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "block",
+            "start_token": 107,
+            "end_token": 115,
+            "label": "from backend.integrations.creds_manager import IntegrationCredentialsManager\n",
+            "children": [
+                {
+                    "type": "import_from_statement",
+                    "start_token": 107,
+                    "end_token": 114,
+                    "label": "from backend.integrations.creds_manager import IntegrationCredentialsManager",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "block",
+            "start_token": 116,
+            "end_token": 124,
+            "label": "from backend.integrations.oauth import HANDLERS_BY_NAME\n",
+            "children": [
+                {
+                    "type": "import_from_statement",
+                    "start_token": 116,
+                    "end_token": 123,
+                    "label": "from backend.integrations.oauth import HANDLERS_BY_NAME",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "block",
+            "start_token": 125,
+            "end_token": 133,
+            "label": "from backend.integrations.providers import ProviderName\n",
+            "children": [
+                {
+                    "type": "import_from_statement",
+                    "start_token": 125,
+                    "end_token": 132,
+                    "label": "from backend.integrations.providers import ProviderName",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "block",
+            "start_token": 134,
+            "end_token": 142,
+            "label": "from backend.integrations.webhooks import WEBHOOK_MANAGERS_BY_NAME\n",
+            "children": [
+                {
+                    "type": "import_from_statement",
+                    "start_token": 134,
+                    "end_token": 141,
+                    "label": "from backend.integrations.webhooks import WEBHOOK_MANAGERS_BY_NAME",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "block",
+            "start_token": 143,
+            "end_token": 151,
+            "label": "from backend.util.exceptions import NeedConfirmation\n",
+            "children": [
+                {
+                    "type": "import_from_statement",
+                    "start_token": 143,
+                    "end_token": 150,
+                    "label": "from backend.util.exceptions import NeedConfirmation",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "block",
+            "start_token": 152,
+            "end_token": 160,
+            "label": "from backend.util.service import get_service_client\n",
+            "children": [
+                {
+                    "type": "import_from_statement",
+                    "start_token": 152,
+                    "end_token": 159,
+                    "label": "from backend.util.service import get_service_client",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "block",
+            "start_token": 161,
+            "end_token": 169,
+            "label": "from backend.util.settings import Settings\n",
+            "children": [
+                {
+                    "type": "import_from_statement",
+                    "start_token": 161,
+                    "end_token": 168,
+                    "label": "from backend.util.settings import Settings",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "if_statement",
+            "start_token": 170,
+            "end_token": 183,
+            "label": "\nif TYPE_CHECKING:\n    from backend.integrations.oauth import BaseOAuthHandler\n",
+            "children": [
+                {
+                    "type": "block",
+                    "start_token": 171,
+                    "end_token": 182,
+                    "label": "if TYPE_CHECKING:\n    from backend.integrations.oauth import BaseOAuthHandler",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "block",
+            "start_token": 185,
+            "end_token": 201,
+            "label": "from ..utils import get_user_id\n\nlogger = logging.getLogger(__name__)\n",
+            "children": [
+                {
+                    "type": "import_from_statement",
+                    "start_token": 185,
+                    "end_token": 191,
+                    "label": "from ..utils import get_user_id\n",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "start_token": 193,
+                    "end_token": 200,
+                    "label": "logger = logging.getLogger(__name__)",
+                    "children": [
+                        {
+                            "type": "attribute",
+                            "start_token": 195,
+                            "end_token": 198,
+                            "label": "logging.getLogger(",
+                            "children": []
+                        },
+                        {
+                            "type": "call",
+                            "start_token": 198,
+                            "end_token": 200,
+                            "label": "(__name__)",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "assignment",
+            "start_token": 202,
+            "end_token": 206,
+            "label": "settings = Settings()",
+            "children": [
+                {
+                    "type": "call",
+                    "start_token": 204,
+                    "end_token": 206,
+                    "label": "Settings()",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "assignment",
+            "start_token": 208,
+            "end_token": 212,
+            "label": "router = APIRouter()",
+            "children": [
+                {
+                    "type": "call",
+                    "start_token": 210,
+                    "end_token": 212,
+                    "label": "APIRouter()",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "assignment",
+            "start_token": 215,
+            "end_token": 219,
+            "label": "creds_manager = IntegrationCredentialsManager()",
+            "children": [
+                {
+                    "type": "call",
+                    "start_token": 217,
+                    "end_token": 219,
+                    "label": "IntegrationCredentialsManager()",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "class_definition",
+            "start_token": 223,
+            "end_token": 237,
+            "label": "class LoginResponse(BaseModel):\n    login_url: str\n    state_token: str\n",
+            "children": [
+                {
+                    "type": "block",
+                    "start_token": 228,
+                    "end_token": 237,
+                    "label": ":\n    login_url: str\n    state_token: str\n",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "decorated_definition",
+            "start_token": 240,
+            "end_token": 391,
+            "label": "@router.get(\"/{provider}/login\")\ndef login(\n    provider: Annotated[\n        ProviderName, Path(title=\"The provider to initiate an OAuth flow for\")\n    ],\n    user_id: Annotated[str, Depends(get_user_id)],\n    request: Request,\n    scopes: Annotated[\n        str, Query(title=\"Comma-separated list of authorization scopes\")\n    ] = \"\",\n) -> LoginResponse:\n    handler = _get_provider_oauth_handler(request, provider)\n\n    requested_scopes = scopes.split(\",\") if scopes else []\n\n    # Generate and store a secure random state token along with the scopes\n    state_token = creds_manager.store.store_state_token(\n        user_id, provider, requested_scopes\n    )\n\n    login_url = handler.get_login_url(requested_scopes, state_token)\n\n    return LoginResponse(login_url=login_url, state_token=state_token)",
+            "children": [
+                {
+                    "type": "decorator",
+                    "start_token": 240,
+                    "end_token": 246,
+                    "label": "@router.get(\"/{provider}/login\")",
+                    "children": []
+                },
+                {
+                    "type": "function_definition",
+                    "start_token": 248,
+                    "end_token": 391,
+                    "label": "def login(\n    provider: Annotated[\n        ProviderName, Path(title=\"The provider to initiate an OAuth flow for\")\n    ],\n    user_id: Annotated[str, Depends(get_user_id)],\n    request: Request,\n    scopes: Annotated[\n        str, Query(title=\"Comma-separated list of authorization scopes\")\n    ] = \"\",\n) -> LoginResponse:\n    handler = _get_provider_oauth_handler(request, provider)\n\n    requested_scopes = scopes.split(\",\") if scopes else []\n\n    # Generate and store a secure random state token along with the scopes\n    state_token = creds_manager.store.store_state_token(\n        user_id, provider, requested_scopes\n    )\n\n    login_url = handler.get_login_url(requested_scopes, state_token)\n\n    return LoginResponse(login_url=login_url, state_token=state_token)",
+                    "children": [
+                        {
+                            "type": "block",
+                            "start_token": 310,
+                            "end_token": 391,
+                            "label": ":\n    handler = _get_provider_oauth_handler(request, provider)\n\n    requested_scopes = scopes.split(\",\") if scopes else []\n\n    # Generate and store a secure random state token along with the scopes\n    state_token = creds_manager.store.store_state_token(\n        user_id, provider, requested_scopes\n    )\n\n    login_url = handler.get_login_url(requested_scopes, state_token)\n\n    return LoginResponse(login_url=login_url, state_token=state_token)",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "class_definition",
+            "start_token": 395,
+            "end_token": 433,
+            "label": "class CredentialsMetaResponse(BaseModel):\n    id: str\n    provider: str\n    type: CredentialsType\n    title: str | None\n    scopes: list[str] | None\n    username: str | None",
+            "children": [
+                {
+                    "type": "block",
+                    "start_token": 400,
+                    "end_token": 433,
+                    "label": ":\n    id: str\n    provider: str\n    type: CredentialsType\n    title: str | None\n    scopes: list[str] | None\n    username: str | None",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "decorated_definition",
+            "start_token": 437,
+            "end_token": 519,
+            "label": "@router.post(\"/{provider}/callback\")\ndef callback(\n    provider: Annotated[\n        ProviderName, Path(title=\"The target provider for this OAuth exchange\")\n    ],\n    code: Annotated[str, Body(title=\"Authorization code acquired by user login\")],\n    state_token: Annotated[str, Body(title=\"Anti-CSRF nonce\")],\n    user_id: Annotated[str, Depends(get_user_id)],\n    request: Request,\n) -> CredentialsMetaResponse:\n",
+            "children": [
+                {
+                    "type": "decorator",
+                    "start_token": 437,
+                    "end_token": 443,
+                    "label": "@router.post(\"/{provider}/callback\")",
+                    "children": []
+                },
+                {
+                    "type": "function_definition",
+                    "start_token": 445,
+                    "end_token": 519,
+                    "label": "def callback(\n    provider: Annotated[\n        ProviderName, Path(title=\"The target provider for this OAuth exchange\")\n    ],\n    code: Annotated[str, Body(title=\"Authorization code acquired by user login\")],\n    state_token: Annotated[str, Body(title=\"Anti-CSRF nonce\")],\n    user_id: Annotated[str, Depends(get_user_id)],\n    request: Request,\n) -> CredentialsMetaResponse:\n",
+                    "children": [
+                        {
+                            "type": "block",
+                            "start_token": 518,
+                            "end_token": 519,
+                            "label": ":\n",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "decorated_definition",
+            "start_token": 522,
+            "end_token": 576,
+            "label": "debug(f\"Received OAuth callback for provider: {provider}\")\n    handler = _get_provider_oauth_handler(request, provider)\n\n    # Verify the state token\n    if not creds_manager.store.verify_state_token(user_id, state_token, provider):\n        logger.warning(f\"Invalid or expired state token for user {user_id}\")\n        raise HTTPException(status_code=400, detail=",
+            "children": [
+                {
+                    "type": "decorator",
+                    "start_token": 522,
+                    "end_token": 558,
+                    "label": "debug(f\"Received OAuth callback for provider: {provider}\")\n    handler = _get_provider_oauth_handler(request, provider)\n\n    # Verify the state token\n    if not creds_manager.store.verify_state_token(user_id, state_token, provider):",
+                    "children": []
+                },
+                {
+                    "type": "function_definition",
+                    "start_token": 560,
+                    "end_token": 576,
+                    "label": "logger.warning(f\"Invalid or expired state token for user {user_id}\")\n        raise HTTPException(status_code=400, detail=",
+                    "children": [
+                        {
+                            "type": "block",
+                            "start_token": 575,
+                            "end_token": 576,
+                            "label": "detail=",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

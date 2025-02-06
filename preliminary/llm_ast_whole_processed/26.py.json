@@ -1,0 +1,627 @@
+{
+    "type": "module",
+    "start_token": 0,
+    "end_token": 1773,
+    "label": "from enum import Enum\nfrom typing import Literal\n\nimport replicate\nfrom pydantic import SecretStr\nfrom replicate.helpers import FileOutput\n\nfrom backend.data.block import Block, BlockCategory, BlockSchema\nfrom backend.data.model import (\n    APIKeyCredentials,\n    CredentialsField,\n    CredentialsMetaInput,\n    SchemaField,\n)\nfrom backend.integrations.providers import ProviderName\n\n\nclass ImageSize(str, Enum):\n    \"\"\"\n    Semantic sizes that map reliably across all models\n    \"\"\"\n\n    SQUARE = \"square\"  # For profile pictures, icons, etc.\n    LANDSCAPE = \"landscape\"  # For traditional photos, scenes\n    PORTRAIT = \"portrait\"  # For vertical photos, portraits\n    WIDE = \"wide\"  # For cinematic, desktop wallpapers\n    TALL = \"tall\"  # For mobile wallpapers, stories\n\n\n# Mapping semantic sizes to model-specific formats\nSIZE_TO_SD_RATIO = {\n    ImageSize.SQUARE: \"1:1\",\n    ImageSize.LANDSCAPE: \"4:3\",\n    ImageSize.PORTRAIT: \"3:4\",\n    ImageSize.WIDE: \"16:9\",\n    ImageSize.TALL: \"9:16\",\n}\n\nSIZE_TO_FLUX_RATIO = {\n    ImageSize.SQUARE: \"1:1\",\n    ImageSize.LANDSCAPE: \"4:3\",\n    ImageSize.PORTRAIT: \"3:4\",\n    ImageSize.WIDE: \"16:9\",\n    ImageSize.TALL: \"9:16\",\n}\n\nSIZE_TO_FLUX_DIMENSIONS = {\n    ImageSize.SQUARE: (1024, 1024),\n    ImageSize.LANDSCAPE: (1365, 1024),\n    ImageSize.PORTRAIT: (1024, 1365),\n    ImageSize.WIDE: (1440, 810),  # Adjusted to maintain 16:9 within 1440 limit\n    ImageSize.TALL: (810, 1440),  # Adjusted to maintain 9:16 within 1440 limit\n}\n\nSIZE_TO_RECRAFT_DIMENSIONS = {\n    ImageSize.SQUARE: \"1024x1024\",\n    ImageSize.LANDSCAPE: \"1365x1024\",\n    ImageSize.PORTRAIT: \"1024x1365\",\n    ImageSize.WIDE: \"1536x1024\",\n    ImageSize.TALL: \"1024x1536\",\n}\n\n\nclass ImageStyle(str, Enum):\n    \"\"\"\n    Complete set of supported styles\n    \"\"\"\n\n    ANY = \"any\"\n    # Realistic image styles\n    REALISTIC = \"realistic_image\"\n    REALISTIC_BW = \"realistic_image/b_and_w\"\n    REALISTIC_HDR = \"realistic_image/hdr\"\n    REALISTIC_NATURAL = \"realistic_image/natural_light\"\n    REALISTIC_STUDIO = \"realistic_image/studio_portrait\"\n    REALISTIC_ENTERPRISE = \"realistic_image/enterprise\"\n    REALISTIC_HARD_FLASH = \"realistic_image/hard_flash\"\n    REALISTIC_MOTION_BLUR = \"realistic_image/motion_blur\"\n    # Digital illustration styles\n    DIGITAL_ART = \"digital_illustration\"\n    PIXEL_ART = \"digital_illustration/pixel_art\"\n    HAND_DRAWN = \"digital_illustration/hand_drawn\"\n    GRAIN = \"digital_illustration/grain\"\n    SKETCH = \"digital_illustration/infantile_sketch\"\n    POSTER = \"digital_illustration/2d_art_poster\"\n    POSTER_2 = \"digital_illustration/2d_art_poster_2\"\n    HANDMADE_3D = \"digital_illustration/handmade_3d\"\n    HAND_DRAWN_OUTLINE = \"digital_illustration/hand_drawn_outline\"\n    ENGRAVING_COLOR = \"digital_illustration/engraving_color\"\n\n\nclass ImageGenModel(str, Enum):\n    \"\"\"\n    Available model providers\n    \"\"\"\n\n    FLUX = \"Flux 1.1 Pro\"\n    FLUX_ULTRA = \"Flux 1.1 Pro Ultra\"\n    RECRAFT = \"Recraft v3\"\n    SD3_5 = \"Stable Diffusion 3.5 Medium\"\n\n\nclass AIImageGeneratorBlock(Block):\n    class Input(BlockSchema):\n        credentials: CredentialsMetaInput[\n            Literal[ProviderName.REPLICATE], Literal[\"api_key\"]\n        ] = CredentialsField(\n            description=\"Enter your Replicate API key to access the image generation API. You can obtain an API key from https://replicate.com/account/api-tokens.\",\n        )\n        prompt: str = SchemaField(\n            description=\"Text prompt for image generation\",\n            placeholder=\"e.g., 'A red panda using a laptop in a snowy forest'\",\n            title=\"Prompt\",\n        )\n        model: ImageGenModel = SchemaField(\n            description=\"The AI model to use for image generation\",\n            default=ImageGenModel.SD3_5,\n            title=\"Model\",\n        )\n        size: ImageSize = SchemaField(\n            description=(\n                \"Format of the generated image:\\n\"\n                \"- Square: Perfect for profile pictures, icons\\n\"\n                \"- Landscape: Traditional photo format\\n\"\n                \"- Portrait: Vertical photos, portraits\\n\"\n                \"- Wide: Cinematic format, desktop wallpapers\\n\"\n                \"- Tall: Mobile wallpapers, social media stories\"\n            ),\n            default=ImageSize.SQUARE,\n            title=\"Image Format\",\n        )\n        style: ImageStyle = SchemaField(\n            description=\"Visual style for the generated image\",\n            default=ImageStyle.ANY,\n            title=\"Image Style\",\n        )\n\n    class Output(BlockSchema):\n        image_url: str = SchemaField(description=\"URL of the generated image\")\n        error: str = SchemaField(description=\"Error message if generation failed\")\n\n    def __init__(self):\n        super().__init__(\n            id=\"ed1ae7a0-b770-4089-b520-1f0005fad19a\",\n            description=\"Generate images using various AI models through a unified interface\",\n            categories={BlockCategory.AI},\n            input_schema=AIImageGeneratorBlock.Input,\n            output_schema=AIImageGeneratorBlock.Output,\n            test_input={\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n                \"prompt\": \"An octopus using a laptop in a snowy forest with 'AutoGPT' clearly visible on the screen\",\n                \"model\": ImageGenModel.RECRAFT,\n                \"size\": ImageSize.SQUARE,\n                \"style\": ImageStyle.REALISTIC,\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[\n                (\n                    \"image_url\",\n                    \"https://replicate.delivery/generated-image.webp\",\n                ),\n            ],\n            test_mock={\n                \"_run_client\": lambda *args, **kwargs: \"https://replicate.delivery/generated-image.webp\"\n            },\n        )\n\n    def _run_client(\n        self, credentials: APIKeyCredentials, model_name: str, input_params: dict\n    ):\n        try:\n            # Initialize Replicate client\n            client = replicate.Client(api_token=credentials.api_key.get_secret_value())\n\n            # Run the model with input parameters\n            output = client.run(model_name, input=input_params, wait=False)\n\n            # Process output\n            if isinstance(output, list) and len(output) > 0:\n                if isinstance(output[0], FileOutput):\n                    result_url = output[0].url\n                else:\n                    result_url = output[0]\n            elif isinstance(output, FileOutput):\n                result_url = output.url\n            elif isinstance(output, str):\n                result_url = output\n            else:\n                result_url = None\n\n            return result_url\n\n        except TypeError as e:\n            raise TypeError(f\"Error during model execution: {e}\")\n        except Exception as e:\n            raise RuntimeError(f\"Unexpected error during model execution: {e}\")\n\n    def generate_image(self, input_data: Input, credentials: APIKeyCredentials):\n        try:\n            # Handle style-based prompt modification for models without native style support\n            modified_prompt = input_data.prompt\n            if input_data.model not in [ImageGenModel.RECRAFT]:\n                style_prefix = self._style_to_prompt_prefix(input_data.style)\n                modified_prompt = f\"{style_prefix} {modified_prompt}\".strip()\n\n            if input_data.model == ImageGenModel.SD3_5:\n                # Use Stable Diffusion 3.5 with aspect ratio\n                input_params = {\n                    \"prompt\": modified_prompt,\n                    \"aspect_ratio\": SIZE_TO_SD_RATIO[input_data.size],\n                    \"output_format\": \"webp\",\n                    \"output_quality\": 90,\n                    \"steps\": 40,\n                    \"cfg_scale\": 7.0,\n                }\n                output = self._run_client(\n                    credentials,\n                    \"stability-ai/stable-diffusion-3.5-medium\",\n                    input_params,\n                )\n                return output\n\n            elif input_data.model == ImageGenModel.FLUX:\n                # Use Flux-specific dimensions with 'jpg' format to avoid ReplicateError\n                width, height = SIZE_TO_FLUX_DIMENSIONS[input_data.size]\n                input_params = {\n                    \"prompt\": modified_prompt,\n                    \"width\": width,\n                    \"height\": height,\n                    \"aspect_ratio\": SIZE_TO_FLUX_RATIO[input_data.size],\n                    \"output_format\": \"jpg\",  # Set to jpg for Flux models\n                    \"output_quality\": 90,\n                }\n                output = self._run_client(\n                    credentials, \"black-forest-labs/flux-1.1-pro\", input_params\n                )\n                return output\n\n            elif input_data.model == ImageGenModel.FLUX_ULTRA:\n                width, height = SIZE_TO_FLUX_DIMENSIONS[input_data.size]\n                input_params = {\n                    \"prompt\": modified_prompt,\n                    \"width\": width,\n                    \"height\": height,\n                    \"aspect_ratio\": SIZE_TO_FLUX_RATIO[input_data.size],\n                    \"output_format\": \"jpg\",\n                    \"output_quality\": 90,\n                }\n                output = self._run_client(\n                    credentials, \"black-forest-labs/flux-1.1-pro-ultra\", input_params\n                )\n                return output\n\n            elif input_data.model == ImageGenModel.RECRAFT:\n                input_params = {\n                    \"prompt\": input_data.prompt,\n                    \"size\": SIZE_TO_RECRAFT_DIMENSIONS[input_data.size],\n                    \"style\": input_data.style.value,\n                }\n                output = self._run_client(\n                    credentials, \"recraft-ai/recraft-v3\", input_params\n                )\n                return output\n\n        except Exception as e:\n            raise RuntimeError(f\"Failed to generate image: {str(e)}\")\n\n    def _style_to_prompt_prefix(self, style: ImageStyle) -> str:\n        \"\"\"\n        Convert a style enum to a prompt prefix for models without native style support.\n        \"\"\"\n        if style == ImageStyle.ANY:\n            return \"\"\n\n        style_map = {\n            ImageStyle.REALISTIC: \"photorealistic\",\n            ImageStyle.REALISTIC_BW: \"black and white photograph\",\n            ImageStyle.REALISTIC_HDR: \"HDR photograph\",\n            ImageStyle.REALISTIC_NATURAL: \"natural light photograph\",\n            ImageStyle.REALISTIC_STUDIO: \"studio portrait photograph\",\n            ImageStyle.REALISTIC_ENTERPRISE: \"enterprise photograph\",\n            ImageStyle.REALISTIC_HARD_FLASH: \"hard flash photograph\",\n            ImageStyle.REALISTIC_MOTION_BLUR: \"motion blur photograph\",\n            ImageStyle.DIGITAL_ART: \"digital art\",\n            ImageStyle.PIXEL_ART: \"pixel art\",\n            ImageStyle.HAND_DRAWN: \"hand drawn illustration\",\n            ImageStyle.GRAIN: \"grainy digital illustration\",\n            ImageStyle.SKETCH: \"sketchy illustration\",\n            ImageStyle.POSTER: \"2D art poster\",\n            ImageStyle.POSTER_2: \"alternate 2D art poster\",\n            ImageStyle.HANDMADE_3D: \"handmade 3D illustration\",\n            ImageStyle.HAND_DRAWN_OUTLINE: \"hand drawn outline illustration\",\n            ImageStyle.ENGRAVING_COLOR: \"color engraving illustration\",\n        }\n\n        style_text = style_map.get(style, \"\")\n        return f\"{style_text} of\" if style_text else \"\"\n\n    def run(self, input_data: Input, *, credentials: APIKeyCredentials, **kwargs):\n        try:\n            url = self.generate_image(input_data, credentials)\n            if url:\n                yield \"image_url\", url\n            else:\n                yield \"error\", \"Image generation returned an empty result.\"\n        except Exception as e:\n            # Capture and return only the message of the exception, avoiding serialization of non-serializable objects\n            yield \"error\", str(e)\n\n\n# Test credentials stay the same\nTEST_CREDENTIALS = APIKeyCredentials(\n    id=\"01234567-89ab-cdef-0123-456789abcdef\",\n    provider=\"replicate\",\n    api_key=SecretStr(\"mock-replicate-api-key\"),\n    title=\"Mock Replicate API key\",\n    expires_at=None,\n)\n\nTEST_CREDENTIALS_INPUT = {\n    \"provider\": TEST_CREDENTIALS.provider,\n    \"id\": TEST_CREDENTIALS.id,\n    \"type\": TEST_CREDENTIALS.type,\n    \"title\": TEST_CREDENTIALS.title,\n}\n",
+    "children": [
+        {
+            "type": "import_from_statement",
+            "start_token": 0,
+            "end_token": 3,
+            "label": "from enum import Enum",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 5,
+            "end_token": 8,
+            "label": "from typing import Literal",
+            "children": []
+        },
+        {
+            "type": "import_statement",
+            "start_token": 11,
+            "end_token": 12,
+            "label": "import replicate",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 14,
+            "end_token": 17,
+            "label": "from pydantic import SecretStr",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 19,
+            "end_token": 24,
+            "label": "from replicate.helpers import FileOutput",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 27,
+            "end_token": 38,
+            "label": "from backend.data.block import Block, BlockCategory, BlockSchema",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 40,
+            "end_token": 61,
+            "label": "from backend.data.model import (\n    APIKeyCredentials,\n    CredentialsField,\n    CredentialsMetaInput,\n    SchemaField,\n)",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 63,
+            "end_token": 70,
+            "label": "from backend.integrations.providers import ProviderName",
+            "children": []
+        },
+        {
+            "type": "class_definition",
+            "start_token": 74,
+            "end_token": 140,
+            "label": "class ImageSize(str, Enum):\n    \"\"\"\n    Semantic sizes that map reliably across all models\n    \"\"\"\n\n    SQUARE = \"square\"  # For profile pictures, icons, etc.\n    LANDSCAPE = \"landscape\"  # For traditional photos, scenes\n    PORTRAIT = \"portrait\"  # For vertical photos, portraits\n    WIDE = \"wide\"  # For cinematic, desktop wallpapers\n    TALL = \"tall\"  # For mobile wallpapers, stories\n",
+            "children": [
+                {
+                    "type": "block",
+                    "start_token": 82,
+                    "end_token": 140,
+                    "label": "\n    \"\"\"\n    Semantic sizes that map reliably across all models\n    \"\"\"\n\n    SQUARE = \"square\"  # For profile pictures, icons, etc.\n    LANDSCAPE = \"landscape\"  # For traditional photos, scenes\n    PORTRAIT = \"portrait\"  # For vertical photos, portraits\n    WIDE = \"wide\"  # For cinematic, desktop wallpapers\n    TALL = \"tall\"  # For mobile wallpapers, stories\n",
+                    "children": [
+                        {
+                            "type": "assignment",
+                            "start_token": 88,
+                            "end_token": 90,
+                            "label": "SQUARE = \"square\"",
+                            "children": []
+                        },
+                        {
+                            "type": "comment",
+                            "start_token": 91,
+                            "end_token": 99,
+                            "label": "# For profile pictures, icons, etc.",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 101,
+                            "end_token": 103,
+                            "label": "LANDSCAPE = \"landscape\"",
+                            "children": []
+                        },
+                        {
+                            "type": "comment",
+                            "start_token": 104,
+                            "end_token": 110,
+                            "label": "# For traditional photos, scenes\n",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 111,
+                            "end_token": 113,
+                            "label": "PORTRAIT = \"portrait\"",
+                            "children": []
+                        },
+                        {
+                            "type": "comment",
+                            "start_token": 114,
+                            "end_token": 120,
+                            "label": "# For vertical photos, portraits\n",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 121,
+                            "end_token": 123,
+                            "label": "WIDE = \"wide\"",
+                            "children": []
+                        },
+                        {
+                            "type": "comment",
+                            "start_token": 124,
+                            "end_token": 130,
+                            "label": "# For cinematic, desktop wallpapers\n",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 131,
+                            "end_token": 133,
+                            "label": "TALL = \"tall\"",
+                            "children": []
+                        },
+                        {
+                            "type": "comment",
+                            "start_token": 134,
+                            "end_token": 140,
+                            "label": "# For mobile wallpapers, stories\n",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "assignment",
+            "start_token": 153,
+            "end_token": 192,
+            "label": "SIZE_TO_SD_RATIO = {\n    ImageSize.SQUARE: \"1:1\",\n    ImageSize.LANDSCAPE: \"4:3\",\n    ImageSize.PORTRAIT: \"3:4\",\n    ImageSize.WIDE: \"16:9\",\n    ImageSize.TALL: \"9:16\",\n}",
+            "children": [
+                {
+                    "type": "dictionary",
+                    "start_token": 155,
+                    "end_token": 192,
+                    "label": "{\n    ImageSize.SQUARE: \"1:1\",\n    ImageSize.LANDSCAPE: \"4:3\",\n    ImageSize.PORTRAIT: \"3:4\",\n    ImageSize.WIDE: \"16:9\",\n    ImageSize.TALL: \"9:16\",\n}",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "assignment",
+            "start_token": 195,
+            "end_token": 234,
+            "label": "SIZE_TO_FLUX_RATIO = {\n    ImageSize.SQUARE: \"1:1\",\n    ImageSize.LANDSCAPE: \"4:3\",\n    ImageSize.PORTRAIT: \"3:4\",\n    ImageSize.WIDE: \"16:9\",\n    ImageSize.TALL: \"9:16\",\n}",
+            "children": [
+                {
+                    "type": "dictionary",
+                    "start_token": 197,
+                    "end_token": 234,
+                    "label": "{\n    ImageSize.SQUARE: \"1:1\",\n    ImageSize.LANDSCAPE: \"4:3\",\n    ImageSize.PORTRAIT: \"3:4\",\n    ImageSize.WIDE: \"16:9\",\n    ImageSize.TALL: \"9:16\",\n}",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "assignment",
+            "start_token": 237,
+            "end_token": 316,
+            "label": "SIZE_TO_FLUX_DIMENSIONS = {\n    ImageSize.SQUARE: (1024, 1024),\n    ImageSize.LANDSCAPE: (1365, 1024),\n    ImageSize.PORTRAIT: (1024, 1365),\n    ImageSize.WIDE: (1440, 810),  # Adjusted to maintain 16:9 within 1440 limit\n    ImageSize.TALL: (810, 1440),  # Adjusted to maintain 9:16 within 1440 limit\n}",
+            "children": [
+                {
+                    "type": "dictionary",
+                    "start_token": 239,
+                    "end_token": 316,
+                    "label": "{\n    ImageSize.SQUARE: (1024, 1024),\n    ImageSize.LANDSCAPE: (1365, 1024),\n    ImageSize.PORTRAIT: (1024, 1365),\n    ImageSize.WIDE: (1440, 810),  # Adjusted to maintain 16:9 within 1440 limit\n    ImageSize.TALL: (810, 1440),  # Adjusted to maintain 9:16 within 1440 limit\n}",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "assignment",
+            "start_token": 319,
+            "end_token": 358,
+            "label": "SIZE_TO_RECRAFT_DIMENSIONS = {\n    ImageSize.SQUARE: \"1024x1024\",\n    ImageSize.LANDSCAPE: \"1365x1024\",\n    ImageSize.PORTRAIT: \"1024x1365\",\n    ImageSize.WIDE: \"1536x1024\",\n    ImageSize.TALL: \"1024x1536\",\n}",
+            "children": [
+                {
+                    "type": "dictionary",
+                    "start_token": 321,
+                    "end_token": 358,
+                    "label": "{\n    ImageSize.SQUARE: \"1024x1024\",\n    ImageSize.LANDSCAPE: \"1365x1024\",\n    ImageSize.PORTRAIT: \"1024x1365\",\n    ImageSize.WIDE: \"1536x1024\",\n    ImageSize.TALL: \"1024x1536\",\n}",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "class_definition",
+            "start_token": 362,
+            "end_token": 460,
+            "label": "class ImageStyle(str, Enum):\n    \"\"\"\n    Complete set of supported styles\n    \"\"\"\n\n    ANY = \"any\"\n    # Realistic image styles\n    REALISTIC = \"realistic_image\"\n    REALISTIC_BW = \"realistic_image/b_and_w\"\n    REALISTIC_HDR = \"realistic_image/hdr\"\n    REALISTIC_NATURAL = \"realistic_image/natural_light\"\n    REALISTIC_STUDIO = \"realistic_image/studio_portrait\"\n    REALISTIC_ENTERPRISE = \"realistic_image/enterprise\"\n    REALISTIC_HARD_FLASH = \"realistic_image/hard_flash\"\n    REALISTIC_MOTION_BLUR = \"realistic_image/motion_blur\"\n    # Digital illustration styles\n    DIGITAL_ART = \"digital_illustration\"\n    PIXEL_ART = \"digital_illustration/pixel_art\"\n    HAND_DRAWN = \"digital_illustration/hand_drawn\"\n    GRAIN = \"digital_illustration/grain\"\n    SKETCH = \"digital_illustration/infantile_sketch\"\n    POSTER = \"digital_illustration/2d_art_poster\"\n    POSTER_2 = \"digital_illustration/2d_art_poster_2\"\n    HANDMADE_3D = \"digital_illustration/handmade_3d\"\n    HAND_DRAWN_OUTLINE = \"digital_illustration/hand_drawn_outline\"\n    ENGRAVING_COLOR = \"digital_illustration/engraving_color\"",
+            "children": [
+                {
+                    "type": "block",
+                    "start_token": 370,
+                    "end_token": 460,
+                    "label": "\n    \"\"\"\n    Complete set of supported styles\n    \"\"\"\n\n    ANY = \"any\"\n    # Realistic image styles\n    REALISTIC = \"realistic_image\"\n    REALISTIC_BW = \"realistic_image/b_and_w\"\n    REALISTIC_HDR = \"realistic_image/hdr\"\n    REALISTIC_NATURAL = \"realistic_image/natural_light\"\n    REALISTIC_STUDIO = \"realistic_image/studio_portrait\"\n    REALISTIC_ENTERPRISE = \"realistic_image/enterprise\"\n    REALISTIC_HARD_FLASH = \"realistic_image/hard_flash\"\n    REALISTIC_MOTION_BLUR = \"realistic_image/motion_blur\"\n    # Digital illustration styles\n    DIGITAL_ART = \"digital_illustration\"\n    PIXEL_ART = \"digital_illustration/pixel_art\"\n    HAND_DRAWN = \"digital_illustration/hand_drawn\"\n    GRAIN = \"digital_illustration/grain\"\n    SKETCH = \"digital_illustration/infantile_sketch\"\n    POSTER = \"digital_illustration/2d_art_poster\"\n    POSTER_2 = \"digital_illustration/2d_art_poster_2\"\n    HANDMADE_3D = \"digital_illustration/handmade_3d\"\n    HAND_DRAWN_OUTLINE = \"digital_illustration/hand_drawn_outline\"\n    ENGRAVING_COLOR = \"digital_illustration/engraving_color\"",
+                    "children": [
+                        {
+                            "type": "assignment",
+                            "start_token": 376,
+                            "end_token": 378,
+                            "label": "ANY = \"any\"",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 385,
+                            "end_token": 387,
+                            "label": "REALISTIC = \"realistic_image\"",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 389,
+                            "end_token": 391,
+                            "label": "REALISTIC_BW = \"realistic_image/b_and_w\"",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 393,
+                            "end_token": 395,
+                            "label": "REALISTIC_HDR = \"realistic_image/hdr\"",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 397,
+                            "end_token": 399,
+                            "label": "REALISTIC_NATURAL = \"realistic_image/natural_light\"",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 401,
+                            "end_token": 403,
+                            "label": "REALISTIC_STUDIO = \"realistic_image/studio_portrait\"",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 405,
+                            "end_token": 407,
+                            "label": "REALISTIC_ENTERPRISE = \"realistic_image/enterprise\"",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 409,
+                            "end_token": 411,
+                            "label": "REALISTIC_HARD_FLASH = \"realistic_image/hard_flash\"",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 413,
+                            "end_token": 415,
+                            "label": "REALISTIC_MOTION_BLUR = \"realistic_image/motion_blur\"",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 422,
+                            "end_token": 424,
+                            "label": "DIGITAL_ART = \"digital_illustration\"",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 426,
+                            "end_token": 428,
+                            "label": "PIXEL_ART = \"digital_illustration/pixel_art\"",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 430,
+                            "end_token": 432,
+                            "label": "HAND_DRAWN = \"digital_illustration/hand_drawn\"",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 434,
+                            "end_token": 436,
+                            "label": "GRAIN = \"digital_illustration/grain\"",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 438,
+                            "end_token": 440,
+                            "label": "SKETCH = \"digital_illustration/infantile_sketch\"",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 442,
+                            "end_token": 444,
+                            "label": "POSTER = \"digital_illustration/2d_art_poster\"",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 446,
+                            "end_token": 448,
+                            "label": "POSTER_2 = \"digital_illustration/2d_art_poster_2\"",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 450,
+                            "end_token": 452,
+                            "label": "HANDMADE_3D = \"digital_illustration/handmade_3d\"",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 454,
+                            "end_token": 456,
+                            "label": "HAND_DRAWN_OUTLINE = \"digital_illustration/hand_drawn_outline\"",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 458,
+                            "end_token": 460,
+                            "label": "ENGRAVING_COLOR = \"digital_illustration/engraving_color\"",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "class_definition",
+            "start_token": 464,
+            "end_token": 492,
+            "label": "class ImageGenModel(str, Enum):\n    \"\"\"\n    Available model providers\n    \"\"\"\n\n    FLUX = \"Flux 1.1 Pro\"\n    FLUX_ULTRA = \"Flux 1.1 Pro Ultra\"\n    RECRAFT = \"Recraft v3\"\n    SD3_5 = \"Stable Diffusion 3.5 Medium\"",
+            "children": [
+                {
+                    "type": "block",
+                    "start_token": 472,
+                    "end_token": 492,
+                    "label": "\n    \"\"\"\n    Available model providers\n    \"\"\"\n\n    FLUX = \"Flux 1.1 Pro\"\n    FLUX_ULTRA = \"Flux 1.1 Pro Ultra\"\n    RECRAFT = \"Recraft v3\"\n    SD3_5 = \"Stable Diffusion 3.5 Medium\"",
+                    "children": [
+                        {
+                            "type": "assignment",
+                            "start_token": 478,
+                            "end_token": 480,
+                            "label": "FLUX = \"Flux 1.1 Pro\"",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 482,
+                            "end_token": 484,
+                            "label": "FLUX_ULTRA = \"Flux 1.1 Pro Ultra\"",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 486,
+                            "end_token": 488,
+                            "label": "RECRAFT = \"Recraft v3\"",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 490,
+                            "end_token": 492,
+                            "label": "SD3_5 = \"Stable Diffusion 3.5 Medium\"",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "class_definition",
+            "start_token": 496,
+            "end_token": 813,
+            "label": "class AIImageGeneratorBlock(Block):\n    class Input(BlockSchema):\n        credentials: CredentialsMetaInput[\n            Literal[ProviderName.REPLICATE], Literal[\"api_key\"]\n        ] = CredentialsField(\n            description=\"Enter your Replicate API key to access the image generation API. You can obtain an API key from https://replicate.com/account/api-tokens.\",\n        )\n        prompt: str = SchemaField(\n            description=\"Text prompt for image generation\",\n            placeholder=\"e.g., 'A red panda using a laptop in a snowy forest'\",\n            title=\"Prompt\",\n        )\n        model: ImageGenModel = SchemaField(\n            description=\"The AI model to use for image generation\",\n            default=ImageGenModel.SD3_5,\n            title=\"Model\",\n        )\n        size: ImageSize = SchemaField(\n            description=(\n                \"Format of the generated image:\\n\"\n                \"- Square: Perfect for profile pictures, icons\\n\"\n                \"- Landscape: Traditional photo format\\n\"\n                \"- Portrait: Vertical photos, portraits\\n\"\n                \"- Wide: Cinematic format, desktop wallpapers\\n\"\n                \"- Tall: Mobile wallpapers, social media stories\"\n            ),\n            default=ImageSize.SQUARE,\n            title=\"Image Format\",\n        )\n        style: ImageStyle = SchemaField(\n            description=\"Visual style for the generated image\",\n            default=ImageStyle.ANY,\n            title=\"Image Style\",\n        )\n\n    class Output(BlockSchema):\n        image_url: str = SchemaField(description=\"URL of the generated image\")\n        error: str = SchemaField(description=\"Error message if generation failed\")\n\n    def __init__(self):\n        super().__init__(\n            id=\"ed1ae7a0-b770-4089-b520-1f0005fad19a\",\n            description=\"Generate images using various AI models through a unified interface\",\n            categories={BlockCategory.AI},\n            input_schema=AIImageGeneratorBlock.Input,\n            output_schema=AIImageGeneratorBlock.Output,\n            test_input={\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n                \"prompt\": \"An octopus using a laptop in a snowy forest with 'AutoGPT' clearly visible on the screen\",\n                \"model\": ImageGenModel.RECRAFT,\n                \"size\": ImageSize.SQUARE,\n                \"style\": ImageStyle.REALISTIC,\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[\n                (\n                    \"image_url\",\n                    \"https://replicate.delivery/generated-image.webp\",\n                ),\n            ],\n            test_mock={\n                \"_run_client\": lambda *args, **kwargs: \"https://replicate.delivery/generated-image.webp\"\n            },\n        )",
+            "children": [
+                {
+                    "type": "block",
+                    "start_token": 502,
+                    "end_token": 813,
+                    "label": "\n    class Input(BlockSchema):\n        credentials: CredentialsMetaInput[\n            Literal[ProviderName.REPLICATE], Literal[\"api_key\"]\n        ] = CredentialsField(\n            description=\"Enter your Replicate API key to access the image generation API. You can obtain an API key from https://replicate.com/account/api-tokens.\",\n        )\n        prompt: str = SchemaField(\n            description=\"Text prompt for image generation\",\n            placeholder=\"e.g., 'A red panda using a laptop in a snowy forest'\",\n            title=\"Prompt\",\n        )\n        model: ImageGenModel = SchemaField(\n            description=\"The AI model to use for image generation\",\n            default=ImageGenModel.SD3_5,\n            title=\"Model\",\n        )\n        size: ImageSize = SchemaField(\n            description=(\n                \"Format of the generated image:\\n\"\n                \"- Square: Perfect for profile pictures, icons\\n\"\n                \"- Landscape: Traditional photo format\\n\"\n                \"- Portrait: Vertical photos, portraits\\n\"\n                \"- Wide: Cinematic format, desktop wallpapers\\n\"\n                \"- Tall: Mobile wallpapers, social media stories\"\n            ),\n            default=ImageSize.SQUARE,\n            title=\"Image Format\",\n        )\n        style: ImageStyle = SchemaField(\n            description=\"Visual style for the generated image\",\n            default=ImageStyle.ANY,\n            title=\"Image Style\",\n        )\n\n    class Output(BlockSchema):\n        image_url: str = SchemaField(description=\"URL of the generated image\")\n        error: str = SchemaField(description=\"Error message if generation failed\")\n\n    def __init__(self):\n        super().__init__(\n            id=\"ed1ae7a0-b770-4089-b520-1f0005fad19a\",\n            description=\"Generate images using various AI models through a unified interface\",\n            categories={BlockCategory.AI},\n            input_schema=AIImageGeneratorBlock.Input,\n            output_schema=AIImageGeneratorBlock.Output,\n            test_input={\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n                \"prompt\": \"An octopus using a laptop in a snowy forest with 'AutoGPT' clearly visible on the screen\",\n                \"model\": ImageGenModel.RECRAFT,\n                \"size\": ImageSize.SQUARE,\n                \"style\": ImageStyle.REALISTIC,\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[\n                (\n                    \"image_url\",\n                    \"https://replicate.delivery/generated-image.webp\",\n                ),\n            ],\n            test_mock={\n                \"_run_client\": lambda *args, **kwargs: \"https://replicate.delivery/generated-image.webp\"\n            },\n        )",
+                    "children": [
+                        {
+                            "type": "class_definition",
+                            "start_token": 503,
+                            "end_token": 561,
+                            "label": "class Input(BlockSchema):\n        credentials: CredentialsMetaInput[\n            Literal[ProviderName.REPLICATE], Literal[\"api_key\"]\n        ] = CredentialsField(\n            description=\"Enter your Replicate API key to access the image generation API. You can obtain an API key from https://replicate.com/account/api-tokens.\",\n        )\n        prompt: str = SchemaField(\n            description=\"Text prompt for image generation\",\n            placeholder=\"e.g., 'A red panda using a laptop in a snowy forest'\",\n            title=\"Prompt\",\n        )",
+                            "children": [
+                                {
+                                    "type": "block",
+                                    "start_token": 508,
+                                    "end_token": 561,
+                                    "label": ":\n        credentials: CredentialsMetaInput[\n            Literal[ProviderName.REPLICATE], Literal[\"api_key\"]\n        ] = CredentialsField(\n            description=\"Enter your Replicate API key to access the image generation API. You can obtain an API key from https://replicate.com/account/api-tokens.\",\n        )\n        prompt: str = SchemaField(\n            description=\"Text prompt for image generation\",\n            placeholder=\"e.g., 'A red panda using a laptop in a snowy forest'\",\n            title=\"Prompt\",\n        )",
+                                    "children": [
+                                        {
+                                            "type": "assignment",
+                                            "start_token": 510,
+                                            "end_token": 537,
+                                            "label": "credentials: CredentialsMetaInput[\n            Literal[ProviderName.REPLICATE], Literal[\"api_key\"]\n        ] = CredentialsField(\n            description=\"Enter your Replicate API key to access the image generation API. You can obtain an API key from https://replicate.com/account/api-tokens.\",\n        )",
+                                            "children": [
+                                                {
+                                                    "type": "dictionary",
+                                                    "start_token": 530,
+                                                    "end_token": 537,
+                                                    "label": "(\n            description=\"Enter your Replicate API key to access the image generation API. You can obtain an API key from https://replicate.com/account/api-tokens.\",\n        )",
+                                                    "children": []
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "assignment",
+                                            "start_token": 539,
+                                            "end_token": 561,
+                                            "label": "prompt: str = SchemaField(\n            description=\"Text prompt for image generation\",\n            placeholder=\"e.g., 'A red panda using a laptop in a snowy forest'\",\n            title=\"Prompt\",\n        )",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "class_definition",
+                            "start_token": 656,
+                            "end_token": 684,
+                            "label": "class Output(BlockSchema):\n        image_url: str = SchemaField(description=\"URL of the generated image\")\n        error: str = SchemaField(description=\"Error message if generation failed\")\n",
+                            "children": [
+                                {
+                                    "type": "block",
+                                    "start_token": 661,
+                                    "end_token": 684,
+                                    "label": ":\n        image_url: str = SchemaField(description=\"URL of the generated image\")\n        error: str = SchemaField(description=\"Error message if generation failed\")\n",
+                                    "children": [
+                                        {
+                                            "type": "assignment",
+                                            "start_token": 663,
+                                            "end_token": 672,
+                                            "label": "image_url: str = SchemaField(description=\"URL of the generated image\")",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "assignment",
+                                            "start_token": 674,
+                                            "end_token": 683,
+                                            "label": "error: str = SchemaField(description=\"Error message if generation failed\")",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "function_definition",
+                            "start_token": 686,
+                            "end_token": 814,
+                            "label": "def __init__(self):\n        super().__init__(\n            id=\"ed1ae7a0-b770-4089-b520-1f0005fad19a\",\n            description=\"Generate images using various AI models through a unified interface\",\n            categories={BlockCategory.AI},\n            input_schema=AIImageGeneratorBlock.Input,\n            output_schema=AIImageGeneratorBlock.Output,\n            test_input={\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n                \"prompt\": \"An octopus using a laptop in a snowy forest with 'AutoGPT' clearly visible on the screen\",\n                \"model\": ImageGenModel.RECRAFT,\n                \"size\": ImageSize.SQUARE,\n                \"style\": ImageStyle.REALISTIC,\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[\n                (\n                    \"image_url\",\n                    \"https://replicate.delivery/generated-image.webp\",\n                ),\n            ],\n            test_mock={\n                \"_run_client\": lambda *args, **kwargs: \"https://replicate.delivery/generated-image.webp\"\n            },\n        )\n",
+                            "children": [
+                                {
+                                    "type": "parameters",
+                                    "start_token": 687,
+                                    "end_token": 690,
+                                    "label": "__init__(self)",
+                                    "children": []
+                                },
+                                {
+                                    "type": "block",
+                                    "start_token": 691,
+                                    "end_token": 814,
+                                    "label": ":\n        super().__init__(\n            id=\"ed1ae7a0-b770-4089-b520-1f0005fad19a\",\n            description=\"Generate images using various AI models through a unified interface\",\n            categories={BlockCategory.AI},\n            input_schema=AIImageGeneratorBlock.Input,\n            output_schema=AIImageGeneratorBlock.Output,\n            test_input={\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n                \"prompt\": \"An octopus using a laptop in a snowy forest with 'AutoGPT' clearly visible on the screen\",\n                \"model\": ImageGenModel.RECRAFT,\n                \"size\": ImageSize.SQUARE,\n                \"style\": ImageStyle.REALISTIC,\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[\n                (\n                    \"image_url\",\n                    \"https://replicate.delivery/generated-image.webp\",\n                ),\n            ],\n            test_mock={\n                \"_run_client\": lambda *args, **kwargs: \"https://replicate.delivery/generated-image.webp\"\n            },\n        )\n",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "start_token": 816,
+            "end_token": 1004,
+            "label": "def _run_client(\n        self, credentials: APIKeyCredentials, model_name: str, input_params: dict\n    ):\n        try:\n            # Initialize Replicate client\n            client = replicate.Client(api_token=credentials.api_key.get_secret_value())\n\n            # Run the model with input parameters\n            output = client.run(model_name, input=input_params, wait=False)\n\n            # Process output\n            if isinstance(output, list) and len(output) > 0:\n                if isinstance(output[0], FileOutput):\n                    result_url = output[0].url\n                else:\n                    result_url = output[0]\n            elif isinstance(output, FileOutput):\n                result_url = output.url\n            elif isinstance(output, str):\n                result_url = output\n            else:\n                result_url = None\n\n            return result_url\n\n        except TypeError as e:\n            raise TypeError(f\"Error during model execution: {e}\")\n        except Exception as e:\n            raise RuntimeError(f\"Unexpected error during model execution: {e}\")",
+            "children": [
+                {
+                    "type": "parameters",
+                    "start_token": 818,
+                    "end_token": 832,
+                    "label": "(\n        self, credentials: APIKeyCredentials, model_name: str, input_params: dict",
+                    "children": []
+                },
+                {
+                    "type": "block",
+                    "start_token": 835,
+                    "end_token": 1004,
+                    "label": ":\n        try:\n            # Initialize Replicate client\n            client = replicate.Client(api_token=credentials.api_key.get_secret_value())\n\n            # Run the model with input parameters\n            output = client.run(model_name, input=input_params, wait=False)\n\n            # Process output\n            if isinstance(output, list) and len(output) > 0:\n                if isinstance(output[0], FileOutput):\n                    result_url = output[0].url\n                else:\n                    result_url = output[0]\n            elif isinstance(output, FileOutput):\n                result_url = output.url\n            elif isinstance(output, str):\n                result_url = output\n            else:\n                result_url = None\n\n            return result_url\n\n        except TypeError as e:\n            raise TypeError(f\"Error during model execution: {e}\")\n        except Exception as e:\n            raise RuntimeError(f\"Unexpected error during model execution: {e}\")",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "start_token": 1007,
+            "end_token": 1423,
+            "label": "def generate_image(self, input_data: Input, credentials: APIKeyCredentials):\n        try:\n            # Handle style-based prompt modification for models without native style support\n            modified_prompt = input_data.prompt\n            if input_data.model not in [ImageGenModel.RECRAFT]:\n                style_prefix = self._style_to_prompt_prefix(input_data.style)\n                modified_prompt = f\"{style_prefix} {modified_prompt}\".strip()\n\n            if input_data.model == ImageGenModel.SD3_5:\n                # Use Stable Diffusion 3.5 with aspect ratio\n                input_params = {\n                    \"prompt\": modified_prompt,\n                    \"aspect_ratio\": SIZE_TO_SD_RATIO[input_data.size],\n                    \"output_format\": \"webp\",\n                    \"output_quality\": 90,\n                    \"steps\": 40,\n                    \"cfg_scale\": 7.0,\n                }\n                output = self._run_client(\n                    credentials,\n                    \"stability-ai/stable-diffusion-3.5-medium\",\n                    input_params,\n                )\n                return output\n\n            elif input_data.model == ImageGenModel.FLUX:\n                # Use Flux-specific dimensions with 'jpg' format to avoid ReplicateError\n                width, height = SIZE_TO_FLUX_DIMENSIONS[input_data.size]\n                input_params = {\n                    \"prompt\": modified_prompt,\n                    \"width\": width,\n                    \"height\": height,\n                    \"aspect_ratio\": SIZE_TO_FLUX_RATIO[input_data.size],\n                    \"output_format\": \"jpg\",  # Set to jpg for Flux models\n                    \"output_quality\": 90,\n                }\n                output = self._run_client(\n                    credentials, \"black-forest-labs/flux-1.1-pro\", input_params\n                )\n                return output\n\n            elif input_data.model == ImageGenModel.FLUX_ULTRA:\n                width, height = SIZE_TO_FLUX_DIMENSIONS[input_data.size]\n                input_params = {\n                    \"prompt\": modified_prompt,\n                    \"width\": width,\n                    \"height\": height,\n                    \"aspect_ratio\": SIZE_TO_FLUX_RATIO[input_data.size],\n                    \"output_format\": \"jpg\",\n                    \"output_quality\": 90,\n                }\n                output = self._run_client(\n                    credentials, \"black-forest-labs/flux-1.1-pro-ultra\", input_params\n                )\n                return output\n\n            elif input_data.model == ImageGenModel.RECRAFT:\n                input_params = {\n                    \"prompt\": input_data.prompt,\n                    \"size\": SIZE_TO_RECRAFT_DIMENSIONS[input_data.size],\n                    \"style\": input_data.style.value,\n                }\n                output = self._run_client(\n                    credentials, \"recraft-ai/recraft-v3\", input_params\n                )\n                return output\n\n        except Exception as e:\n            raise RuntimeError(f\"Failed to generate image: {str(e)}\")",
+            "children": [
+                {
+                    "type": "parameters",
+                    "start_token": 1008,
+                    "end_token": 1019,
+                    "label": "generate_image(self, input_data: Input, credentials: APIKeyCredentials)",
+                    "children": []
+                },
+                {
+                    "type": "block",
+                    "start_token": 1020,
+                    "end_token": 1423,
+                    "label": ":\n        try:\n            # Handle style-based prompt modification for models without native style support\n            modified_prompt = input_data.prompt\n            if input_data.model not in [ImageGenModel.RECRAFT]:\n                style_prefix = self._style_to_prompt_prefix(input_data.style)\n                modified_prompt = f\"{style_prefix} {modified_prompt}\".strip()\n\n            if input_data.model == ImageGenModel.SD3_5:\n                # Use Stable Diffusion 3.5 with aspect ratio\n                input_params = {\n                    \"prompt\": modified_prompt,\n                    \"aspect_ratio\": SIZE_TO_SD_RATIO[input_data.size],\n                    \"output_format\": \"webp\",\n                    \"output_quality\": 90,\n                    \"steps\": 40,\n                    \"cfg_scale\": 7.0,\n                }\n                output = self._run_client(\n                    credentials,\n                    \"stability-ai/stable-diffusion-3.5-medium\",\n                    input_params,\n                )\n                return output\n\n            elif input_data.model == ImageGenModel.FLUX:\n                # Use Flux-specific dimensions with 'jpg' format to avoid ReplicateError\n                width, height = SIZE_TO_FLUX_DIMENSIONS[input_data.size]\n                input_params = {\n                    \"prompt\": modified_prompt,\n                    \"width\": width,\n                    \"height\": height,\n                    \"aspect_ratio\": SIZE_TO_FLUX_RATIO[input_data.size],\n                    \"output_format\": \"jpg\",  # Set to jpg for Flux models\n                    \"output_quality\": 90,\n                }\n                output = self._run_client(\n                    credentials, \"black-forest-labs/flux-1.1-pro\", input_params\n                )\n                return output\n\n            elif input_data.model == ImageGenModel.FLUX_ULTRA:\n                width, height = SIZE_TO_FLUX_DIMENSIONS[input_data.size]\n                input_params = {\n                    \"prompt\": modified_prompt,\n                    \"width\": width,\n                    \"height\": height,\n                    \"aspect_ratio\": SIZE_TO_FLUX_RATIO[input_data.size],\n                    \"output_format\": \"jpg\",\n                    \"output_quality\": 90,\n                }\n                output = self._run_client(\n                    credentials, \"black-forest-labs/flux-1.1-pro-ultra\", input_params\n                )\n                return output\n\n            elif input_data.model == ImageGenModel.RECRAFT:\n                input_params = {\n                    \"prompt\": input_data.prompt,\n                    \"size\": SIZE_TO_RECRAFT_DIMENSIONS[input_data.size],\n                    \"style\": input_data.style.value,\n                }\n                output = self._run_client(\n                    credentials, \"recraft-ai/recraft-v3\", input_params\n                )\n                return output\n\n        except Exception as e:\n            raise RuntimeError(f\"Failed to generate image: {str(e)}\")",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "start_token": 1426,
+            "end_token": 1608,
+            "label": "def _style_to_prompt_prefix(self, style: ImageStyle) -> str:\n        \"\"\"\n        Convert a style enum to a prompt prefix for models without native style support.\n        \"\"\"\n        if style == ImageStyle.ANY:\n            return \"\"\n\n        style_map = {\n            ImageStyle.REALISTIC: \"photorealistic\",\n            ImageStyle.REALISTIC_BW: \"black and white photograph\",\n            ImageStyle.REALISTIC_HDR: \"HDR photograph\",\n            ImageStyle.REALISTIC_NATURAL: \"natural light photograph\",\n            ImageStyle.REALISTIC_STUDIO: \"studio portrait photograph\",\n            ImageStyle.REALISTIC_ENTERPRISE: \"enterprise photograph\",\n            ImageStyle.REALISTIC_HARD_FLASH: \"hard flash photograph\",\n            ImageStyle.REALISTIC_MOTION_BLUR: \"motion blur photograph\",\n            ImageStyle.DIGITAL_ART: \"digital art\",\n            ImageStyle.PIXEL_ART: \"pixel art\",\n            ImageStyle.HAND_DRAWN: \"hand drawn illustration\",\n            ImageStyle.GRAIN: \"grainy digital illustration\",\n            ImageStyle.SKETCH: \"sketchy illustration\",\n            ImageStyle.POSTER: \"2D art poster\",\n            ImageStyle.POSTER_2: \"alternate 2D art poster\",\n            ImageStyle.HANDMADE_3D: \"handmade 3D illustration\",\n            ImageStyle.HAND_DRAWN_OUTLINE: \"hand drawn outline illustration\",\n            ImageStyle.ENGRAVING_COLOR: \"color engraving illustration\",\n        }\n\n        style_text = style_map.get(style, \"\")\n        return f\"{style_text} of\" if style_text else \"\"\n",
+            "children": [
+                {
+                    "type": "parameters",
+                    "start_token": 1427,
+                    "end_token": 1434,
+                    "label": "_style_to_prompt_prefix(self, style: ImageStyle)",
+                    "children": []
+                },
+                {
+                    "type": "block",
+                    "start_token": 1438,
+                    "end_token": 1608,
+                    "label": ":\n        \"\"\"\n        Convert a style enum to a prompt prefix for models without native style support.\n        \"\"\"\n        if style == ImageStyle.ANY:\n            return \"\"\n\n        style_map = {\n            ImageStyle.REALISTIC: \"photorealistic\",\n            ImageStyle.REALISTIC_BW: \"black and white photograph\",\n            ImageStyle.REALISTIC_HDR: \"HDR photograph\",\n            ImageStyle.REALISTIC_NATURAL: \"natural light photograph\",\n            ImageStyle.REALISTIC_STUDIO: \"studio portrait photograph\",\n            ImageStyle.REALISTIC_ENTERPRISE: \"enterprise photograph\",\n            ImageStyle.REALISTIC_HARD_FLASH: \"hard flash photograph\",\n            ImageStyle.REALISTIC_MOTION_BLUR: \"motion blur photograph\",\n            ImageStyle.DIGITAL_ART: \"digital art\",\n            ImageStyle.PIXEL_ART: \"pixel art\",\n            ImageStyle.HAND_DRAWN: \"hand drawn illustration\",\n            ImageStyle.GRAIN: \"grainy digital illustration\",\n            ImageStyle.SKETCH: \"sketchy illustration\",\n            ImageStyle.POSTER: \"2D art poster\",\n            ImageStyle.POSTER_2: \"alternate 2D art poster\",\n            ImageStyle.HANDMADE_3D: \"handmade 3D illustration\",\n            ImageStyle.HAND_DRAWN_OUTLINE: \"hand drawn outline illustration\",\n            ImageStyle.ENGRAVING_COLOR: \"color engraving illustration\",\n        }\n\n        style_text = style_map.get(style, \"\")\n        return f\"{style_text} of\" if style_text else \"\"\n",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "start_token": 1610,
+            "end_token": 1694,
+            "label": "def run(self, input_data: Input, *, credentials: APIKeyCredentials, **kwargs):\n        try:\n            url = self.generate_image(input_data, credentials)\n            if url:\n                yield \"image_url\", url\n            else:\n                yield \"error\", \"Image generation returned an empty result.\"\n        except Exception as e:\n            # Capture and return only the message of the exception, avoiding serialization of non-serializable objects\n            yield \"error\", str(e)\n",
+            "children": [
+                {
+                    "type": "parameters",
+                    "start_token": 1611,
+                    "end_token": 1629,
+                    "label": "run(self, input_data: Input, *, credentials: APIKeyCredentials, **kwargs):",
+                    "children": []
+                },
+                {
+                    "type": "block",
+                    "start_token": 1630,
+                    "end_token": 1694,
+                    "label": "\n        try:\n            url = self.generate_image(input_data, credentials)\n            if url:\n                yield \"image_url\", url\n            else:\n                yield \"error\", \"Image generation returned an empty result.\"\n        except Exception as e:\n            # Capture and return only the message of the exception, avoiding serialization of non-serializable objects\n            yield \"error\", str(e)\n",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "assignment",
+            "start_token": 1704,
+            "end_token": 1737,
+            "label": "TEST_CREDENTIALS = APIKeyCredentials(\n    id=\"01234567-89ab-cdef-0123-456789abcdef\",\n    provider=\"replicate\",\n    api_key=SecretStr(\"mock-replicate-api-key\"),\n    title=\"Mock Replicate API key\",\n    expires_at=None,\n)",
+            "children": [
+                {
+                    "type": "call",
+                    "start_token": 1706,
+                    "end_token": 1737,
+                    "label": "APIKeyCredentials(\n    id=\"01234567-89ab-cdef-0123-456789abcdef\",\n    provider=\"replicate\",\n    api_key=SecretStr(\"mock-replicate-api-key\"),\n    title=\"Mock Replicate API key\",\n    expires_at=None,\n)",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "assignment",
+            "start_token": 1740,
+            "end_token": 1772,
+            "label": "TEST_CREDENTIALS_INPUT = {\n    \"provider\": TEST_CREDENTIALS.provider,\n    \"id\": TEST_CREDENTIALS.id,\n    \"type\": TEST_CREDENTIALS.type,\n    \"title\": TEST_CREDENTIALS.title,\n}",
+            "children": [
+                {
+                    "type": "dictionary",
+                    "start_token": 1742,
+                    "end_token": 1772,
+                    "label": "{\n    \"provider\": TEST_CREDENTIALS.provider,\n    \"id\": TEST_CREDENTIALS.id,\n    \"type\": TEST_CREDENTIALS.type,\n    \"title\": TEST_CREDENTIALS.title,\n}",
+                    "children": []
+                }
+            ]
+        }
+    ]
+}

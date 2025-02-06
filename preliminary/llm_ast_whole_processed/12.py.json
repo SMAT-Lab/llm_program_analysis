@@ -1,0 +1,666 @@
+{
+    "type": "module",
+    "start_token": 0,
+    "end_token": 3662,
+    "label": "import base64\n\nfrom typing_extensions import TypedDict\n\nfrom backend.data.block import Block, BlockCategory, BlockOutput, BlockSchema\nfrom backend.data.model import SchemaField\n\nfrom ._api import get_api\nfrom ._auth import (\n    TEST_CREDENTIALS,\n    TEST_CREDENTIALS_INPUT,\n    GithubCredentials,\n    GithubCredentialsField,\n    GithubCredentialsInput,\n)\n\n\nclass GithubListTagsBlock(Block):\n    class Input(BlockSchema):\n        credentials: GithubCredentialsInput = GithubCredentialsField(\"repo\")\n        repo_url: str = SchemaField(\n            description=\"URL of the GitHub repository\",\n            placeholder=\"https://github.com/owner/repo\",\n        )\n\n    class Output(BlockSchema):\n        class TagItem(TypedDict):\n            name: str\n            url: str\n\n        tag: TagItem = SchemaField(\n            title=\"Tag\", description=\"Tags with their name and file tree browser URL\"\n        )\n        error: str = SchemaField(description=\"Error message if listing tags failed\")\n\n    def __init__(self):\n        super().__init__(\n            id=\"358924e7-9a11-4d1a-a0f2-13c67fe59e2e\",\n            description=\"This block lists all tags for a specified GitHub repository.\",\n            categories={BlockCategory.DEVELOPER_TOOLS},\n            input_schema=GithubListTagsBlock.Input,\n            output_schema=GithubListTagsBlock.Output,\n            test_input={\n                \"repo_url\": \"https://github.com/owner/repo\",\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[\n                (\n                    \"tag\",\n                    {\n                        \"name\": \"v1.0.0\",\n                        \"url\": \"https://github.com/owner/repo/tree/v1.0.0\",\n                    },\n                )\n            ],\n            test_mock={\n                \"list_tags\": lambda *args, **kwargs: [\n                    {\n                        \"name\": \"v1.0.0\",\n                        \"url\": \"https://github.com/owner/repo/tree/v1.0.0\",\n                    }\n                ]\n            },\n        )\n\n    @staticmethod\n    def list_tags(\n        credentials: GithubCredentials, repo_url: str\n    ) -> list[Output.TagItem]:\n        api = get_api(credentials)\n        tags_url = repo_url + \"/tags\"\n        response = api.get(tags_url)\n        data = response.json()\n        repo_path = repo_url.replace(\"https://github.com/\", \"\")\n        tags: list[GithubListTagsBlock.Output.TagItem] = [\n            {\n                \"name\": tag[\"name\"],\n                \"url\": f\"https://github.com/{repo_path}/tree/{tag['name']}\",\n            }\n            for tag in data\n        ]\n        return tags\n\n    def run(\n        self,\n        input_data: Input,\n        *,\n        credentials: GithubCredentials,\n        **kwargs,\n    ) -> BlockOutput:\n        tags = self.list_tags(\n            credentials,\n            input_data.repo_url,\n        )\n        yield from ((\"tag\", tag) for tag in tags)\n\n\nclass GithubListBranchesBlock(Block):\n    class Input(BlockSchema):\n        credentials: GithubCredentialsInput = GithubCredentialsField(\"repo\")\n        repo_url: str = SchemaField(\n            description=\"URL of the GitHub repository\",\n            placeholder=\"https://github.com/owner/repo\",\n        )\n\n    class Output(BlockSchema):\n        class BranchItem(TypedDict):\n            name: str\n            url: str\n\n        branch: BranchItem = SchemaField(\n            title=\"Branch\",\n            description=\"Branches with their name and file tree browser URL\",\n        )\n        error: str = SchemaField(description=\"Error message if listing branches failed\")\n\n    def __init__(self):\n        super().__init__(\n            id=\"74243e49-2bec-4916-8bf4-db43d44aead5\",\n            description=\"This block lists all branches for a specified GitHub repository.\",\n            categories={BlockCategory.DEVELOPER_TOOLS},\n            input_schema=GithubListBranchesBlock.Input,\n            output_schema=GithubListBranchesBlock.Output,\n            test_input={\n                \"repo_url\": \"https://github.com/owner/repo\",\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[\n                (\n                    \"branch\",\n                    {\n                        \"name\": \"main\",\n                        \"url\": \"https://github.com/owner/repo/tree/main\",\n                    },\n                )\n            ],\n            test_mock={\n                \"list_branches\": lambda *args, **kwargs: [\n                    {\n                        \"name\": \"main\",\n                        \"url\": \"https://github.com/owner/repo/tree/main\",\n                    }\n                ]\n            },\n        )\n\n    @staticmethod\n    def list_branches(\n        credentials: GithubCredentials, repo_url: str\n    ) -> list[Output.BranchItem]:\n        api = get_api(credentials)\n        branches_url = repo_url + \"/branches\"\n        response = api.get(branches_url)\n        data = response.json()\n        repo_path = repo_url.replace(\"https://github.com/\", \"\")\n        branches: list[GithubListBranchesBlock.Output.BranchItem] = [\n            {\n                \"name\": branch[\"name\"],\n                \"url\": f\"https://github.com/{repo_path}/tree/{branch['name']}\",\n            }\n            for branch in data\n        ]\n        return branches\n\n    def run(\n        self,\n        input_data: Input,\n        *,\n        credentials: GithubCredentials,\n        **kwargs,\n    ) -> BlockOutput:\n        branches = self.list_branches(\n            credentials,\n            input_data.repo_url,\n        )\n        yield from ((\"branch\", branch) for branch in branches)\n\n\nclass GithubListDiscussionsBlock(Block):\n    class Input(BlockSchema):\n        credentials: GithubCredentialsInput = GithubCredentialsField(\"repo\")\n        repo_url: str = SchemaField(\n            description=\"URL of the GitHub repository\",\n            placeholder=\"https://github.com/owner/repo\",\n        )\n        num_discussions: int = SchemaField(\n            description=\"Number of discussions to fetch\", default=5\n        )\n\n    class Output(BlockSchema):\n        class DiscussionItem(TypedDict):\n            title: str\n            url: str\n\n        discussion: DiscussionItem = SchemaField(\n            title=\"Discussion\", description=\"Discussions with their title and URL\"\n        )\n        error: str = SchemaField(\n            description=\"Error message if listing discussions failed\"\n        )\n\n    def __init__(self):\n        super().__init__(\n            id=\"3ef1a419-3d76-4e07-b761-de9dad4d51d7\",\n            description=\"This block lists recent discussions for a specified GitHub repository.\",\n            categories={BlockCategory.DEVELOPER_TOOLS},\n            input_schema=GithubListDiscussionsBlock.Input,\n            output_schema=GithubListDiscussionsBlock.Output,\n            test_input={\n                \"repo_url\": \"https://github.com/owner/repo\",\n                \"num_discussions\": 3,\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[\n                (\n                    \"discussion\",\n                    {\n                        \"title\": \"Discussion 1\",\n                        \"url\": \"https://github.com/owner/repo/discussions/1\",\n                    },\n                )\n            ],\n            test_mock={\n                \"list_discussions\": lambda *args, **kwargs: [\n                    {\n                        \"title\": \"Discussion 1\",\n                        \"url\": \"https://github.com/owner/repo/discussions/1\",\n                    }\n                ]\n            },\n        )\n\n    @staticmethod\n    def list_discussions(\n        credentials: GithubCredentials, repo_url: str, num_discussions: int\n    ) -> list[Output.DiscussionItem]:\n        api = get_api(credentials)\n        # GitHub GraphQL API endpoint is different; we'll use api.post with custom URL\n        repo_path = repo_url.replace(\"https://github.com/\", \"\")\n        owner, repo = repo_path.split(\"/\")\n        query = \"\"\"\n        query($owner: String!, $repo: String!, $num: Int!) {\n            repository(owner: $owner, name: $repo) {\n                discussions(first: $num) {\n                    nodes {\n                        title\n                        url\n                    }\n                }\n            }\n        }\n        \"\"\"\n        variables = {\"owner\": owner, \"repo\": repo, \"num\": num_discussions}\n        response = api.post(\n            \"https://api.github.com/graphql\",\n            json={\"query\": query, \"variables\": variables},\n        )\n        data = response.json()\n        discussions: list[GithubListDiscussionsBlock.Output.DiscussionItem] = [\n            {\"title\": discussion[\"title\"], \"url\": discussion[\"url\"]}\n            for discussion in data[\"data\"][\"repository\"][\"discussions\"][\"nodes\"]\n        ]\n        return discussions\n\n    def run(\n        self,\n        input_data: Input,\n        *,\n        credentials: GithubCredentials,\n        **kwargs,\n    ) -> BlockOutput:\n        discussions = self.list_discussions(\n            credentials, input_data.repo_url, input_data.num_discussions\n        )\n        yield from ((\"discussion\", discussion) for discussion in discussions)\n\n\nclass GithubListReleasesBlock(Block):\n    class Input(BlockSchema):\n        credentials: GithubCredentialsInput = GithubCredentialsField(\"repo\")\n        repo_url: str = SchemaField(\n            description=\"URL of the GitHub repository\",\n            placeholder=\"https://github.com/owner/repo\",\n        )\n\n    class Output(BlockSchema):\n        class ReleaseItem(TypedDict):\n            name: str\n            url: str\n\n        release: ReleaseItem = SchemaField(\n            title=\"Release\",\n            description=\"Releases with their name and file tree browser URL\",\n        )\n        error: str = SchemaField(description=\"Error message if listing releases failed\")\n\n    def __init__(self):\n        super().__init__(\n            id=\"3460367a-6ba7-4645-8ce6-47b05d040b92\",\n            description=\"This block lists all releases for a specified GitHub repository.\",\n            categories={BlockCategory.DEVELOPER_TOOLS},\n            input_schema=GithubListReleasesBlock.Input,\n            output_schema=GithubListReleasesBlock.Output,\n            test_input={\n                \"repo_url\": \"https://github.com/owner/repo\",\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[\n                (\n                    \"release\",\n                    {\n                        \"name\": \"v1.0.0\",\n                        \"url\": \"https://github.com/owner/repo/releases/tag/v1.0.0\",\n                    },\n                )\n            ],\n            test_mock={\n                \"list_releases\": lambda *args, **kwargs: [\n                    {\n                        \"name\": \"v1.0.0\",\n                        \"url\": \"https://github.com/owner/repo/releases/tag/v1.0.0\",\n                    }\n                ]\n            },\n        )\n\n    @staticmethod\n    def list_releases(\n        credentials: GithubCredentials, repo_url: str\n    ) -> list[Output.ReleaseItem]:\n        api = get_api(credentials)\n        releases_url = repo_url + \"/releases\"\n        response = api.get(releases_url)\n        data = response.json()\n        releases: list[GithubListReleasesBlock.Output.ReleaseItem] = [\n            {\"name\": release[\"name\"], \"url\": release[\"html_url\"]} for release in data\n        ]\n        return releases\n\n    def run(\n        self,\n        input_data: Input,\n        *,\n        credentials: GithubCredentials,\n        **kwargs,\n    ) -> BlockOutput:\n        releases = self.list_releases(\n            credentials,\n            input_data.repo_url,\n        )\n        yield from ((\"release\", release) for release in releases)\n\n\nclass GithubReadFileBlock(Block):\n    class Input(BlockSchema):\n        credentials: GithubCredentialsInput = GithubCredentialsField(\"repo\")\n        repo_url: str = SchemaField(\n            description=\"URL of the GitHub repository\",\n            placeholder=\"https://github.com/owner/repo\",\n        )\n        file_path: str = SchemaField(\n            description=\"Path to the file in the repository\",\n            placeholder=\"path/to/file\",\n        )\n        branch: str = SchemaField(\n            description=\"Branch to read from\",\n            placeholder=\"branch_name\",\n            default=\"master\",\n        )\n\n    class Output(BlockSchema):\n        text_content: str = SchemaField(\n            description=\"Content of the file (decoded as UTF-8 text)\"\n        )\n        raw_content: str = SchemaField(\n            description=\"Raw base64-encoded content of the file\"\n        )\n        size: int = SchemaField(description=\"The size of the file (in bytes)\")\n        error: str = SchemaField(description=\"Error message if the file reading failed\")\n\n    def __init__(self):\n        super().__init__(\n            id=\"87ce6c27-5752-4bbc-8e26-6da40a3dcfd3\",\n            description=\"This block reads the content of a specified file from a GitHub repository.\",\n            categories={BlockCategory.DEVELOPER_TOOLS},\n            input_schema=GithubReadFileBlock.Input,\n            output_schema=GithubReadFileBlock.Output,\n            test_input={\n                \"repo_url\": \"https://github.com/owner/repo\",\n                \"file_path\": \"path/to/file\",\n                \"branch\": \"master\",\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[\n                (\"raw_content\", \"RmlsZSBjb250ZW50\"),\n                (\"text_content\", \"File content\"),\n                (\"size\", 13),\n            ],\n            test_mock={\"read_file\": lambda *args, **kwargs: (\"RmlsZSBjb250ZW50\", 13)},\n        )\n\n    @staticmethod\n    def read_file(\n        credentials: GithubCredentials, repo_url: str, file_path: str, branch: str\n    ) -> tuple[str, int]:\n        api = get_api(credentials)\n        content_url = repo_url + f\"/contents/{file_path}?ref={branch}\"\n        response = api.get(content_url)\n        content = response.json()\n\n        if isinstance(content, list):\n            # Multiple entries of different types exist at this path\n            if not (file := next((f for f in content if f[\"type\"] == \"file\"), None)):\n                raise TypeError(\"Not a file\")\n            content = file\n\n        if content[\"type\"] != \"file\":\n            raise TypeError(\"Not a file\")\n\n        return content[\"content\"], content[\"size\"]\n\n    def run(\n        self,\n        input_data: Input,\n        *,\n        credentials: GithubCredentials,\n        **kwargs,\n    ) -> BlockOutput:\n        raw_content, size = self.read_file(\n            credentials,\n            input_data.repo_url,\n            input_data.file_path.lstrip(\"/\"),\n            input_data.branch,\n        )\n        yield \"raw_content\", raw_content\n        yield \"text_content\", base64.b64decode(raw_content).decode(\"utf-8\")\n        yield \"size\", size\n\n\nclass GithubReadFolderBlock(Block):\n    class Input(BlockSchema):\n        credentials: GithubCredentialsInput = GithubCredentialsField(\"repo\")\n        repo_url: str = SchemaField(\n            description=\"URL of the GitHub repository\",\n            placeholder=\"https://github.com/owner/repo\",\n        )\n        folder_path: str = SchemaField(\n            description=\"Path to the folder in the repository\",\n            placeholder=\"path/to/folder\",\n        )\n        branch: str = SchemaField(\n            description=\"Branch name to read from (defaults to master)\",\n            placeholder=\"branch_name\",\n            default=\"master\",\n        )\n\n    class Output(BlockSchema):\n        class DirEntry(TypedDict):\n            name: str\n            path: str\n\n        class FileEntry(TypedDict):\n            name: str\n            path: str\n            size: int\n\n        file: FileEntry = SchemaField(description=\"Files in the folder\")\n        dir: DirEntry = SchemaField(description=\"Directories in the folder\")\n        error: str = SchemaField(\n            description=\"Error message if reading the folder failed\"\n        )\n\n    def __init__(self):\n        super().__init__(\n            id=\"1355f863-2db3-4d75-9fba-f91e8a8ca400\",\n            description=\"This block reads the content of a specified folder from a GitHub repository.\",\n            categories={BlockCategory.DEVELOPER_TOOLS},\n            input_schema=GithubReadFolderBlock.Input,\n            output_schema=GithubReadFolderBlock.Output,\n            test_input={\n                \"repo_url\": \"https://github.com/owner/repo\",\n                \"folder_path\": \"path/to/folder\",\n                \"branch\": \"master\",\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[\n                (\n                    \"file\",\n                    {\n                        \"name\": \"file1.txt\",\n                        \"path\": \"path/to/folder/file1.txt\",\n                        \"size\": 1337,\n                    },\n                ),\n                (\"dir\", {\"name\": \"dir2\", \"path\": \"path/to/folder/dir2\"}),\n            ],\n            test_mock={\n                \"read_folder\": lambda *args, **kwargs: (\n                    [\n                        {\n                            \"name\": \"file1.txt\",\n                            \"path\": \"path/to/folder/file1.txt\",\n                            \"size\": 1337,\n                        }\n                    ],\n                    [{\"name\": \"dir2\", \"path\": \"path/to/folder/dir2\"}],\n                )\n            },\n        )\n\n    @staticmethod\n    def read_folder(\n        credentials: GithubCredentials, repo_url: str, folder_path: str, branch: str\n    ) -> tuple[list[Output.FileEntry], list[Output.DirEntry]]:\n        api = get_api(credentials)\n        contents_url = repo_url + f\"/contents/{folder_path}?ref={branch}\"\n        response = api.get(contents_url)\n        content = response.json()\n\n        if not isinstance(content, list):\n            raise TypeError(\"Not a folder\")\n\n        files = [\n            GithubReadFolderBlock.Output.FileEntry(\n                name=entry[\"name\"],\n                path=entry[\"path\"],\n                size=entry[\"size\"],\n            )\n            for entry in content\n            if entry[\"type\"] == \"file\"\n        ]\n        dirs = [\n            GithubReadFolderBlock.Output.DirEntry(\n                name=entry[\"name\"],\n                path=entry[\"path\"],\n            )\n            for entry in content\n            if entry[\"type\"] == \"dir\"\n        ]\n\n        return files, dirs\n\n    def run(\n        self,\n        input_data: Input,\n        *,\n        credentials: GithubCredentials,\n        **kwargs,\n    ) -> BlockOutput:\n        files, dirs = self.read_folder(\n            credentials,\n            input_data.repo_url,\n            input_data.folder_path.lstrip(\"/\"),\n            input_data.branch,\n        )\n        yield from ((\"file\", file) for file in files)\n        yield from ((\"dir\", dir) for dir in dirs)\n\n\nclass GithubMakeBranchBlock(Block):\n    class Input(BlockSchema):\n        credentials: GithubCredentialsInput = GithubCredentialsField(\"repo\")\n        repo_url: str = SchemaField(\n            description=\"URL of the GitHub repository\",\n            placeholder=\"https://github.com/owner/repo\",\n        )\n        new_branch: str = SchemaField(\n            description=\"Name of the new branch\",\n            placeholder=\"new_branch_name\",\n        )\n        source_branch: str = SchemaField(\n            description=\"Name of the source branch\",\n            placeholder=\"source_branch_name\",\n        )\n\n    class Output(BlockSchema):\n        status: str = SchemaField(description=\"Status of the branch creation operation\")\n        error: str = SchemaField(\n            description=\"Error message if the branch creation failed\"\n        )\n\n    def __init__(self):\n        super().__init__(\n            id=\"944cc076-95e7-4d1b-b6b6-b15d8ee5448d\",\n            description=\"This block creates a new branch from a specified source branch.\",\n            categories={BlockCategory.DEVELOPER_TOOLS},\n            input_schema=GithubMakeBranchBlock.Input,\n            output_schema=GithubMakeBranchBlock.Output,\n            test_input={\n                \"repo_url\": \"https://github.com/owner/repo\",\n                \"new_branch\": \"new_branch_name\",\n                \"source_branch\": \"source_branch_name\",\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[(\"status\", \"Branch created successfully\")],\n            test_mock={\n                \"create_branch\": lambda *args, **kwargs: \"Branch created successfully\"\n            },\n        )\n\n    @staticmethod\n    def create_branch(\n        credentials: GithubCredentials,\n        repo_url: str,\n        new_branch: str,\n        source_branch: str,\n    ) -> str:\n        api = get_api(credentials)\n        # Get the SHA of the source branch\n        ref_url = repo_url + f\"/git/refs/heads/{source_branch}\"\n        response = api.get(ref_url)\n        sha = response.json()[\"object\"][\"sha\"]\n\n        # Create the new branch\n        create_ref_url = repo_url + \"/git/refs\"\n        data = {\"ref\": f\"refs/heads/{new_branch}\", \"sha\": sha}\n        response = api.post(create_ref_url, json=data)\n        return \"Branch created successfully\"\n\n    def run(\n        self,\n        input_data: Input,\n        *,\n        credentials: GithubCredentials,\n        **kwargs,\n    ) -> BlockOutput:\n        status = self.create_branch(\n            credentials,\n            input_data.repo_url,\n            input_data.new_branch,\n            input_data.source_branch,\n        )\n        yield \"status\", status\n\n\nclass GithubDeleteBranchBlock(Block):\n    class Input(BlockSchema):\n        credentials: GithubCredentialsInput = GithubCredentialsField(\"repo\")\n        repo_url: str = SchemaField(\n            description=\"URL of the GitHub repository\",\n            placeholder=\"https://github.com/owner/repo\",\n        )\n        branch: str = SchemaField(\n            description=\"Name of the branch to delete\",\n            placeholder=\"branch_name\",\n        )\n\n    class Output(BlockSchema):\n        status: str = SchemaField(description=\"Status of the branch deletion operation\")\n        error: str = SchemaField(\n            description=\"Error message if the branch deletion failed\"\n        )\n\n    def __init__(self):\n        super().__init__(\n            id=\"0d4130f7-e0ab-4d55-adc3-0a40225e80f4\",\n            description=\"This block deletes a specified branch.\",\n            categories={BlockCategory.DEVELOPER_TOOLS},\n            input_schema=GithubDeleteBranchBlock.Input,\n            output_schema=GithubDeleteBranchBlock.Output,\n            test_input={\n                \"repo_url\": \"https://github.com/owner/repo\",\n                \"branch\": \"branch_name\",\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[(\"status\", \"Branch deleted successfully\")],\n            test_mock={\n                \"delete_branch\": lambda *args, **kwargs: \"Branch deleted successfully\"\n            },\n        )\n\n    @staticmethod\n    def delete_branch(\n        credentials: GithubCredentials, repo_url: str, branch: str\n    ) -> str:\n        api = get_api(credentials)\n        ref_url = repo_url + f\"/git/refs/heads/{branch}\"\n        api.delete(ref_url)\n        return \"Branch deleted successfully\"\n\n    def run(\n        self,\n        input_data: Input,\n        *,\n        credentials: GithubCredentials,\n        **kwargs,\n    ) -> BlockOutput:\n        status = self.delete_branch(\n            credentials,\n            input_data.repo_url,\n            input_data.branch,\n        )\n        yield \"status\", status\n",
+    "children": [
+        {
+            "type": "import_statements",
+            "start_token": 0,
+            "end_token": 62,
+            "label": "import base64\n\nfrom typing_extensions import TypedDict\n\nfrom backend.data.block import Block, BlockCategory, BlockOutput, BlockSchema\nfrom backend.data.model import SchemaField\n\nfrom ._api import get_api\nfrom ._auth import (\n    TEST_CREDENTIALS,\n    TEST_CREDENTIALS_INPUT,\n    GithubCredentials,\n    GithubCredentialsField,\n    GithubCredentialsInput,\n)",
+            "children": [
+                {
+                    "type": "import_statement",
+                    "start_token": 0,
+                    "end_token": 2,
+                    "label": "import base64\n",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 0,
+                            "end_token": 0,
+                            "label": "import",
+                            "children": []
+                        },
+                        {
+                            "type": "identifier",
+                            "start_token": 1,
+                            "end_token": 1,
+                            "label": "base64",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "import_from_statement",
+                    "start_token": 4,
+                    "end_token": 7,
+                    "label": "from typing_extensions import TypedDict",
+                    "children": [
+                        {
+                            "type": "relative_import",
+                            "start_token": 4,
+                            "end_token": 4,
+                            "label": "from",
+                            "children": [
+                                {
+                                    "type": "identifier",
+                                    "start_token": 5,
+                                    "end_token": 5,
+                                    "label": "typing_extensions",
+                                    "children": []
+                                },
+                                {
+                                    "type": "identifier",
+                                    "start_token": 6,
+                                    "end_token": 6,
+                                    "label": "import",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "identifier",
+                            "start_token": 7,
+                            "end_token": 7,
+                            "label": "TypedDict",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "import_from_statement",
+                    "start_token": 10,
+                    "end_token": 23,
+                    "label": "from backend.data.block import Block, BlockCategory, BlockOutput, BlockSchema",
+                    "children": [
+                        {
+                            "type": "relative_import",
+                            "start_token": 10,
+                            "end_token": 10,
+                            "label": "from",
+                            "children": [
+                                {
+                                    "type": "dotted_name",
+                                    "start_token": 11,
+                                    "end_token": 13,
+                                    "label": "backend.data",
+                                    "children": []
+                                },
+                                {
+                                    "type": "dotted_name",
+                                    "start_token": 14,
+                                    "end_token": 16,
+                                    "label": ".block import",
+                                    "children": [
+                                        {
+                                            "type": "identifier",
+                                            "start_token": 11,
+                                            "end_token": 11,
+                                            "label": "backend",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "identifier",
+                                            "start_token": 12,
+                                            "end_token": 12,
+                                            "label": ".",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "identifier",
+                                            "start_token": 13,
+                                            "end_token": 13,
+                                            "label": "data",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "identifier",
+                            "start_token": 11,
+                            "end_token": 12,
+                            "label": "backend.",
+                            "children": []
+                        },
+                        {
+                            "type": "identifier",
+                            "start_token": 13,
+                            "end_token": 14,
+                            "label": "data.",
+                            "children": []
+                        },
+                        {
+                            "type": "identifier",
+                            "start_token": 15,
+                            "end_token": 16,
+                            "label": "block import",
+                            "children": []
+                        },
+                        {
+                            "type": "identifier",
+                            "start_token": 17,
+                            "end_token": 17,
+                            "label": "Block",
+                            "children": []
+                        },
+                        {
+                            "type": "identifier",
+                            "start_token": 19,
+                            "end_token": 19,
+                            "label": "BlockCategory",
+                            "children": []
+                        },
+                        {
+                            "type": "identifier",
+                            "start_token": 21,
+                            "end_token": 21,
+                            "label": "BlockOutput",
+                            "children": []
+                        },
+                        {
+                            "type": "identifier",
+                            "start_token": 22,
+                            "end_token": 23,
+                            "label": ", BlockSchema",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "import_from_statement",
+                    "start_token": 25,
+                    "end_token": 32,
+                    "label": "from backend.data.model import SchemaField",
+                    "children": [
+                        {
+                            "type": "relative_import",
+                            "start_token": 25,
+                            "end_token": 25,
+                            "label": "from",
+                            "children": [
+                                {
+                                    "type": "dotted_name",
+                                    "start_token": 26,
+                                    "end_token": 28,
+                                    "label": "backend.data",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "identifier",
+                            "start_token": 26,
+                            "end_token": 27,
+                            "label": "backend.",
+                            "children": []
+                        },
+                        {
+                            "type": "identifier",
+                            "start_token": 28,
+                            "end_token": 28,
+                            "label": "data",
+                            "children": []
+                        },
+                        {
+                            "type": "identifier",
+                            "start_token": 31,
+                            "end_token": 32,
+                            "label": "import SchemaField",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "import_from_statement",
+                    "start_token": 35,
+                    "end_token": 39,
+                    "label": "from ._api import get_api",
+                    "children": [
+                        {
+                            "type": "relative_import",
+                            "start_token": 35,
+                            "end_token": 35,
+                            "label": "from",
+                            "children": [
+                                {
+                                    "type": "identifier",
+                                    "start_token": 37,
+                                    "end_token": 37,
+                                    "label": "_api",
+                                    "children": []
+                                },
+                                {
+                                    "type": "identifier",
+                                    "start_token": 38,
+                                    "end_token": 38,
+                                    "label": "import",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "identifier",
+                            "start_token": 39,
+                            "end_token": 39,
+                            "label": "get_api",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "import_from_statement",
+                    "start_token": 41,
+                    "end_token": 62,
+                    "label": "from ._auth import (\n    TEST_CREDENTIALS,\n    TEST_CREDENTIALS_INPUT,\n    GithubCredentials,\n    GithubCredentialsField,\n    GithubCredentialsInput,\n)",
+                    "children": [
+                        {
+                            "type": "relative_import",
+                            "start_token": 41,
+                            "end_token": 41,
+                            "label": "from",
+                            "children": [
+                                {
+                                    "type": "identifier",
+                                    "start_token": 43,
+                                    "end_token": 43,
+                                    "label": "_auth",
+                                    "children": []
+                                },
+                                {
+                                    "type": "identifier",
+                                    "start_token": 44,
+                                    "end_token": 44,
+                                    "label": "import",
+                                    "children": []
+                                },
+                                {
+                                    "type": "identifier",
+                                    "start_token": 46,
+                                    "end_token": 46,
+                                    "label": "\n",
+                                    "children": []
+                                },
+                                {
+                                    "type": "identifier",
+                                    "start_token": 48,
+                                    "end_token": 48,
+                                    "label": ",",
+                                    "children": []
+                                },
+                                {
+                                    "type": "identifier",
+                                    "start_token": 50,
+                                    "end_token": 50,
+                                    "label": "TEST_CREDENTIALS_INPUT",
+                                    "children": []
+                                },
+                                {
+                                    "type": "identifier",
+                                    "start_token": 52,
+                                    "end_token": 52,
+                                    "label": "\n",
+                                    "children": []
+                                },
+                                {
+                                    "type": "identifier",
+                                    "start_token": 54,
+                                    "end_token": 54,
+                                    "label": ",",
+                                    "children": []
+                                },
+                                {
+                                    "type": "identifier",
+                                    "start_token": 56,
+                                    "end_token": 56,
+                                    "label": "GithubCredentialsField",
+                                    "children": []
+                                },
+                                {
+                                    "type": "identifier",
+                                    "start_token": 58,
+                                    "end_token": 58,
+                                    "label": "\n",
+                                    "children": []
+                                },
+                                {
+                                    "type": "identifier",
+                                    "start_token": 60,
+                                    "end_token": 60,
+                                    "label": ",",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "identifier",
+                            "start_token": 45,
+                            "end_token": 45,
+                            "label": "(",
+                            "children": []
+                        },
+                        {
+                            "type": "block",
+                            "start_token": 62,
+                            "end_token": 62,
+                            "label": ")",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "class_definition",
+            "start_token": 66,
+            "end_token": 3662,
+            "label": "class GithubListTagsBlock(Block):\n    class Input(BlockSchema):\n        credentials: GithubCredentialsInput = GithubCredentialsField(\"repo\")\n        repo_url: str = SchemaField(\n            description=\"URL of the GitHub repository\",\n            placeholder=\"https://github.com/owner/repo\",\n        )\n\n    class Output(BlockSchema):\n        class TagItem(TypedDict):\n            name: str\n            url: str\n\n        tag: TagItem = SchemaField(\n            title=\"Tag\", description=\"Tags with their name and file tree browser URL\"\n        )\n        error: str = SchemaField(description=\"Error message if listing tags failed\")\n\n    def __init__(self):\n        super().__init__(\n            id=\"358924e7-9a11-4d1a-a0f2-13c67fe59e2e\",\n            description=\"This block lists all tags for a specified GitHub repository.\",\n            categories={BlockCategory.DEVELOPER_TOOLS},\n            input_schema=GithubListTagsBlock.Input,\n            output_schema=GithubListTagsBlock.Output,\n            test_input={\n                \"repo_url\": \"https://github.com/owner/repo\",\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[\n                (\n                    \"tag\",\n                    {\n                        \"name\": \"v1.0.0\",\n                        \"url\": \"https://github.com/owner/repo/tree/v1.0.0\",\n                    },\n                )\n            ],\n            test_mock={\n                \"list_tags\": lambda *args, **kwargs: [\n                    {\n                        \"name\": \"v1.0.0\",\n                        \"url\": \"https://github.com/owner/repo/tree/v1.0.0\",\n                    }\n                ]\n            },\n        )\n\n    @staticmethod\n    def list_tags(\n        credentials: GithubCredentials, repo_url: str\n    ) -> list[Output.TagItem]:\n        api = get_api(credentials)\n        tags_url = repo_url + \"/tags\"\n        response = api.get(tags_url)\n        data = response.json()\n        repo_path = repo_url.replace(\"https://github.com/\", \"\")\n        tags: list[GithubListTagsBlock.Output.TagItem] = [\n            {\n                \"name\": tag[\"name\"],\n                \"url\": f\"https://github.com/{repo_path}/tree/{tag['name']}\",\n            }\n            for tag in data\n        ]\n        return tags\n\n    def run(\n        self,\n        input_data: Input,\n        *,\n        credentials: GithubCredentials,\n        **kwargs,\n    ) -> BlockOutput:\n        tags = self.list_tags(\n            credentials,\n            input_data.repo_url,\n        )\n        yield from ((\"tag\", tag) for tag in tags)\n\n\nclass GithubListBranchesBlock(Block):\n    class Input(BlockSchema):\n        credentials: GithubCredentialsInput = GithubCredentialsField(\"repo\")\n        repo_url: str = SchemaField(\n            description=\"URL of the GitHub repository\",\n            placeholder=\"https://github.com/owner/repo\",\n        )\n\n    class Output(BlockSchema):\n        class BranchItem(TypedDict):\n            name: str\n            url: str\n\n        branch: BranchItem = SchemaField(\n            title=\"Branch\",\n            description=\"Branches with their name and file tree browser URL\",\n        )\n        error: str = SchemaField(description=\"Error message if listing branches failed\")\n\n    def __init__(self):\n        super().__init__(\n            id=\"74243e49-2bec-4916-8bf4-db43d44aead5\",\n            description=\"This block lists all branches for a specified GitHub repository.\",\n            categories={BlockCategory.DEVELOPER_TOOLS},\n            input_schema=GithubListBranchesBlock.Input,\n            output_schema=GithubListBranchesBlock.Output,\n            test_input={\n                \"repo_url\": \"https://github.com/owner/repo\",\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[\n                (\n                    \"branch\",\n                    {\n                        \"name\": \"main\",\n                        \"url\": \"https://github.com/owner/repo/tree/main\",\n                    },\n                )\n            ],\n            test_mock={\n                \"list_branches\": lambda *args, **kwargs: [\n                    {\n                        \"name\": \"main\",\n                        \"url\": \"https://github.com/owner/repo/tree/main\",\n                    }\n                ]\n            },\n        )\n\n    @staticmethod\n    def list_branches(\n        credentials: GithubCredentials, repo_url: str\n    ) -> list[Output.BranchItem]:\n        api = get_api(credentials)\n        branches_url = repo_url + \"/branches\"\n        response = api.get(branches_url)\n        data = response.json()\n        repo_path = repo_url.replace(\"https://github.com/\", \"\")\n        branches: list[GithubListBranchesBlock.Output.BranchItem] = [\n            {\n                \"name\": branch[\"name\"],\n                \"url\": f\"https://github.com/{repo_path}/tree/{branch['name']}\",\n            }\n            for branch in data\n        ]\n        return branches\n\n    def run(\n        self,\n        input_data: Input,\n        *,\n        credentials: GithubCredentials,\n        **kwargs,\n    ) -> BlockOutput:\n        branches = self.list_branches(\n            credentials,\n            input_data.repo_url,\n        )\n        yield from ((\"branch\", branch) for branch in branches)\n\n\nclass GithubListDiscussionsBlock(Block):\n    class Input(BlockSchema):\n        credentials: GithubCredentialsInput = GithubCredentialsField(\"repo\")\n        repo_url: str = SchemaField(\n            description=\"URL of the GitHub repository\",\n            placeholder=\"https://github.com/owner/repo\",\n        )\n        num_discussions: int = SchemaField(\n            description=\"Number of discussions to fetch\", default=5\n        )\n\n    class Output(BlockSchema):\n        class DiscussionItem(TypedDict):\n            title: str\n            url: str\n\n        discussion: DiscussionItem = SchemaField(\n            title=\"Discussion\", description=\"Discussions with their title and URL\"\n        )\n        error: str = SchemaField(\n            description=\"Error message if listing discussions failed\"\n        )\n\n    def __init__(self):\n        super().__init__(\n            id=\"3ef1a419-3d76-4e07-b761-de9dad4d51d7\",\n            description=\"This block lists recent discussions for a specified GitHub repository.\",\n            categories={BlockCategory.DEVELOPER_TOOLS},\n            input_schema=GithubListDiscussionsBlock.Input,\n            output_schema=GithubListDiscussionsBlock.Output,\n            test_input={\n                \"repo_url\": \"https://github.com/owner/repo\",\n                \"num_discussions\": 3,\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[\n                (\n                    \"discussion\",\n                    {\n                        \"title\": \"Discussion 1\",\n                        \"url\": \"https://github.com/owner/repo/discussions/1\",\n                    },\n                )\n            ],\n            test_mock={\n                \"list_discussions\": lambda *args, **kwargs: [\n                    {\n                        \"title\": \"Discussion 1\",\n                        \"url\": \"https://github.com/owner/repo/discussions/1\",\n                    }\n                ]\n            },\n        )\n\n    @staticmethod\n    def list_discussions(\n        credentials: GithubCredentials, repo_url: str, num_discussions: int\n    ) -> list[Output.DiscussionItem]:\n        api = get_api(credentials)\n        # GitHub GraphQL API endpoint is different; we'll use api.post with custom URL\n        repo_path = repo_url.replace(\"https://github.com/\", \"\")\n        owner, repo = repo_path.split(\"/\")\n        query = \"\"\"\n        query($owner: String!, $repo: String!, $num: Int!) {\n            repository(owner: $owner, name: $repo) {\n                discussions(first: $num) {\n                    nodes {\n                        title\n                        url\n                    }\n                }\n            }\n        }\n        \"\"\"\n        variables = {\"owner\": owner, \"repo\": repo, \"num\": num_discussions}\n        response = api.post(\n            \"https://api.github.com/graphql\",\n            json={\"query\": query, \"variables\": variables},\n        )\n        data = response.json()\n        discussions: list[GithubListDiscussionsBlock.Output.DiscussionItem] = [\n            {\"title\": discussion[\"title\"], \"url\": discussion[\"url\"]}\n            for discussion in data[\"data\"][\"repository\"][\"discussions\"][\"nodes\"]\n        ]\n        return discussions\n\n    def run(\n        self,\n        input_data: Input,\n        *,\n        credentials: GithubCredentials,\n        **kwargs,\n    ) -> BlockOutput:\n        discussions = self.list_discussions(\n            credentials, input_data.repo_url, input_data.num_discussions\n        )\n        yield from ((\"discussion\", discussion) for discussion in discussions)\n\n\nclass GithubListReleasesBlock(Block):\n    class Input(BlockSchema):\n        credentials: GithubCredentialsInput = GithubCredentialsField(\"repo\")\n        repo_url: str = SchemaField(\n            description=\"URL of the GitHub repository\",\n            placeholder=\"https://github.com/owner/repo\",\n        )\n\n    class Output(BlockSchema):\n        class ReleaseItem(TypedDict):\n            name: str\n            url: str\n\n        release: ReleaseItem = SchemaField(\n            title=\"Release\",\n            description=\"Releases with their name and file tree browser URL\",\n        )\n        error: str = SchemaField(description=\"Error message if listing releases failed\")\n\n    def __init__(self):\n        super().__init__(\n            id=\"3460367a-6ba7-4645-8ce6-47b05d040b92\",\n            description=\"This block lists all releases for a specified GitHub repository.\",\n            categories={BlockCategory.DEVELOPER_TOOLS},\n            input_schema=GithubListReleasesBlock.Input,\n            output_schema=GithubListReleasesBlock.Output,\n            test_input={\n                \"repo_url\": \"https://github.com/owner/repo\",\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[\n                (\n                    \"release\",\n                    {\n                        \"name\": \"v1.0.0\",\n                        \"url\": \"https://github.com/owner/repo/releases/tag/v1.0.0\",\n                    },\n                )\n            ],\n            test_mock={\n                \"list_releases\": lambda *args, **kwargs: [\n                    {\n                        \"name\": \"v1.0.0\",\n                        \"url\": \"https://github.com/owner/repo/releases/tag/v1.0.0\",\n                    }\n                ]\n            },\n        )\n\n    @staticmethod\n    def list_releases(\n        credentials: GithubCredentials, repo_url: str\n    ) -> list[Output.ReleaseItem]:\n        api = get_api(credentials)\n        releases_url = repo_url + \"/releases\"\n        response = api.get(releases_url)\n        data = response.json()\n        releases: list[GithubListReleasesBlock.Output.ReleaseItem] = [\n            {\"name\": release[\"name\"], \"url\": release[\"html_url\"]} for release in data\n        ]\n        return releases\n\n    def run(\n        self,\n        input_data: Input,\n        *,\n        credentials: GithubCredentials,\n        **kwargs,\n    ) -> BlockOutput:\n        releases = self.list_releases(\n            credentials,\n            input_data.repo_url,\n        )\n        yield from ((\"release\", release) for release in releases)\n\n\nclass GithubReadFileBlock(Block):\n    class Input(BlockSchema):\n        credentials: GithubCredentialsInput = GithubCredentialsField(\"repo\")\n        repo_url: str = SchemaField(\n            description=\"URL of the GitHub repository\",\n            placeholder=\"https://github.com/owner/repo\",\n        )\n        file_path: str = SchemaField(\n            description=\"Path to the file in the repository\",\n            placeholder=\"path/to/file\",\n        )\n        branch: str = SchemaField(\n            description=\"Branch to read from\",\n            placeholder=\"branch_name\",\n            default=\"master\",\n        )\n\n    class Output(BlockSchema):\n        text_content: str = SchemaField(\n            description=\"Content of the file (decoded as UTF-8 text)\"\n        )\n        raw_content: str = SchemaField(\n            description=\"Raw base64-encoded content of the file\"\n        )\n        size: int = SchemaField(description=\"The size of the file (in bytes)\")\n        error: str = SchemaField(description=\"Error message if the file reading failed\")\n\n    def __init__(self):\n        super().__init__(\n            id=\"87ce6c27-5752-4bbc-8e26-6da40a3dcfd3\",\n            description=\"This block reads the content of a specified file from a GitHub repository.\",\n            categories={BlockCategory.DEVELOPER_TOOLS},\n            input_schema=GithubReadFileBlock.Input,\n            output_schema=GithubReadFileBlock.Output,\n            test_input={\n                \"repo_url\": \"https://github.com/owner/repo\",\n                \"file_path\": \"path/to/file\",\n                \"branch\": \"master\",\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[\n                (\"raw_content\", \"RmlsZSBjb250ZW50\"),\n                (\"text_content\", \"File content\"),\n                (\"size\", 13),\n            ],\n            test_mock={\"read_file\": lambda *args, **kwargs: (\"RmlsZSBjb250ZW50\", 13)},\n        )\n\n    @staticmethod\n    def read_file(\n        credentials: GithubCredentials, repo_url: str, file_path: str, branch: str\n    ) -> tuple[str, int]:\n        api = get_api(credentials)\n        content_url = repo_url + f\"/contents/{file_path}?ref={branch}\"\n        response = api.get(content_url)\n        content = response.json()\n\n        if isinstance(content, list):\n            # Multiple entries of different types exist at this path\n            if not (file := next((f for f in content if f[\"type\"] == \"file\"), None)):\n                raise TypeError(\"Not a file\")\n            content = file\n\n        if content[\"type\"] != \"file\":\n            raise TypeError(\"Not a file\")\n\n        return content[\"content\"], content[\"size\"]\n\n    def run(\n        self,\n        input_data: Input,\n        *,\n        credentials: GithubCredentials,\n        **kwargs,\n    ) -> BlockOutput:\n        raw_content, size = self.read_file(\n            credentials,\n            input_data.repo_url,\n            input_data.file_path.lstrip(\"/\"),\n            input_data.branch,\n        )\n        yield \"raw_content\", raw_content\n        yield \"text_content\", base64.b64decode(raw_content).decode(\"utf-8\")\n        yield \"size\", size\n\n\nclass GithubReadFolderBlock(Block):\n    class Input(BlockSchema):\n        credentials: GithubCredentialsInput = GithubCredentialsField(\"repo\")\n        repo_url: str = SchemaField(\n            description=\"URL of the GitHub repository\",\n            placeholder=\"https://github.com/owner/repo\",\n        )\n        folder_path: str = SchemaField(\n            description=\"Path to the folder in the repository\",\n            placeholder=\"path/to/folder\",\n        )\n        branch: str = SchemaField(\n            description=\"Branch name to read from (defaults to master)\",\n            placeholder=\"branch_name\",\n            default=\"master\",\n        )\n\n    class Output(BlockSchema):\n        class DirEntry(TypedDict):\n            name: str\n            path: str\n\n        class FileEntry(TypedDict):\n            name: str\n            path: str\n            size: int\n\n        file: FileEntry = SchemaField(description=\"Files in the folder\")\n        dir: DirEntry = SchemaField(description=\"Directories in the folder\")\n        error: str = SchemaField(\n            description=\"Error message if reading the folder failed\"\n        )\n\n    def __init__(self):\n        super().__init__(\n            id=\"1355f863-2db3-4d75-9fba-f91e8a8ca400\",\n            description=\"This block reads the content of a specified folder from a GitHub repository.\",\n            categories={BlockCategory.DEVELOPER_TOOLS},\n            input_schema=GithubReadFolderBlock.Input,\n            output_schema=GithubReadFolderBlock.Output,\n            test_input={\n                \"repo_url\": \"https://github.com/owner/repo\",\n                \"folder_path\": \"path/to/folder\",\n                \"branch\": \"master\",\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[\n                (\n                    \"file\",\n                    {\n                        \"name\": \"file1.txt\",\n                        \"path\": \"path/to/folder/file1.txt\",\n                        \"size\": 1337,\n                    },\n                ),\n                (\"dir\", {\"name\": \"dir2\", \"path\": \"path/to/folder/dir2\"}),\n            ],\n            test_mock={\n                \"read_folder\": lambda *args, **kwargs: (\n                    [\n                        {\n                            \"name\": \"file1.txt\",\n                            \"path\": \"path/to/folder/file1.txt\",\n                            \"size\": 1337,\n                        }\n                    ],\n                    [{\"name\": \"dir2\", \"path\": \"path/to/folder/dir2\"}],\n                )\n            },\n        )\n\n    @staticmethod\n    def read_folder(\n        credentials: GithubCredentials, repo_url: str, folder_path: str, branch: str\n    ) -> tuple[list[Output.FileEntry], list[Output.DirEntry]]:\n        api = get_api(credentials)\n        contents_url = repo_url + f\"/contents/{folder_path}?ref={branch}\"\n        response = api.get(contents_url)\n        content = response.json()\n\n        if not isinstance(content, list):\n            raise TypeError(\"Not a folder\")\n\n        files = [\n            GithubReadFolderBlock.Output.FileEntry(\n                name=entry[\"name\"],\n                path=entry[\"path\"],\n                size=entry[\"size\"],\n            )\n            for entry in content\n            if entry[\"type\"] == \"file\"\n        ]\n        dirs = [\n            GithubReadFolderBlock.Output.DirEntry(\n                name=entry[\"name\"],\n                path=entry[\"path\"],\n            )\n            for entry in content\n            if entry[\"type\"] == \"dir\"\n        ]\n\n        return files, dirs\n\n    def run(\n        self,\n        input_data: Input,\n        *,\n        credentials: GithubCredentials,\n        **kwargs,\n    ) -> BlockOutput:\n        files, dirs = self.read_folder(\n            credentials,\n            input_data.repo_url,\n            input_data.folder_path.lstrip(\"/\"),\n            input_data.branch,\n        )\n        yield from ((\"file\", file) for file in files)\n        yield from ((\"dir\", dir) for dir in dirs)\n\n\nclass GithubMakeBranchBlock(Block):\n    class Input(BlockSchema):\n        credentials: GithubCredentialsInput = GithubCredentialsField(\"repo\")\n        repo_url: str = SchemaField(\n            description=\"URL of the GitHub repository\",\n            placeholder=\"https://github.com/owner/repo\",\n        )\n        new_branch: str = SchemaField(\n            description=\"Name of the new branch\",\n            placeholder=\"new_branch_name\",\n        )\n        source_branch: str = SchemaField(\n            description=\"Name of the source branch\",\n            placeholder=\"source_branch_name\",\n        )\n\n    class Output(BlockSchema):\n        status: str = SchemaField(description=\"Status of the branch creation operation\")\n        error: str = SchemaField(\n            description=\"Error message if the branch creation failed\"\n        )\n\n    def __init__(self):\n        super().__init__(\n            id=\"944cc076-95e7-4d1b-b6b6-b15d8ee5448d\",\n            description=\"This block creates a new branch from a specified source branch.\",\n            categories={BlockCategory.DEVELOPER_TOOLS},\n            input_schema=GithubMakeBranchBlock.Input,\n            output_schema=GithubMakeBranchBlock.Output,\n            test_input={\n                \"repo_url\": \"https://github.com/owner/repo\",\n                \"new_branch\": \"new_branch_name\",\n                \"source_branch\": \"source_branch_name\",\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[(\"status\", \"Branch created successfully\")],\n            test_mock={\n                \"create_branch\": lambda *args, **kwargs: \"Branch created successfully\"\n            },\n        )\n\n    @staticmethod\n    def create_branch(\n        credentials: GithubCredentials,\n        repo_url: str,\n        new_branch: str,\n        source_branch: str,\n    ) -> str:\n        api = get_api(credentials)\n        # Get the SHA of the source branch\n        ref_url = repo_url + f\"/git/refs/heads/{source_branch}\"\n        response = api.get(ref_url)\n        sha = response.json()[\"object\"][\"sha\"]\n\n        # Create the new branch\n        create_ref_url = repo_url + \"/git/refs\"\n        data = {\"ref\": f\"refs/heads/{new_branch}\", \"sha\": sha}\n        response = api.post(create_ref_url, json=data)\n        return \"Branch created successfully\"\n\n    def run(\n        self,\n        input_data: Input,\n        *,\n        credentials: GithubCredentials,\n        **kwargs,\n    ) -> BlockOutput:\n        status = self.create_branch(\n            credentials,\n            input_data.repo_url,\n            input_data.new_branch,\n            input_data.source_branch,\n        )\n        yield \"status\", status\n\n\nclass GithubDeleteBranchBlock(Block):\n    class Input(BlockSchema):\n        credentials: GithubCredentialsInput = GithubCredentialsField(\"repo\")\n        repo_url: str = SchemaField(\n            description=\"URL of the GitHub repository\",\n            placeholder=\"https://github.com/owner/repo\",\n        )\n        branch: str = SchemaField(\n            description=\"Name of the branch to delete\",\n            placeholder=\"branch_name\",\n        )\n\n    class Output(BlockSchema):\n        status: str = SchemaField(description=\"Status of the branch deletion operation\")\n        error: str = SchemaField(\n            description=\"Error message if the branch deletion failed\"\n        )\n\n    def __init__(self):\n        super().__init__(\n            id=\"0d4130f7-e0ab-4d55-adc3-0a40225e80f4\",\n            description=\"This block deletes a specified branch.\",\n            categories={BlockCategory.DEVELOPER_TOOLS},\n            input_schema=GithubDeleteBranchBlock.Input,\n            output_schema=GithubDeleteBranchBlock.Output,\n            test_input={\n                \"repo_url\": \"https://github.com/owner/repo\",\n                \"branch\": \"branch_name\",\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[(\"status\", \"Branch deleted successfully\")],\n            test_mock={\n                \"delete_branch\": lambda *args, **kwargs: \"Branch deleted successfully\"\n            },\n        )\n\n    @staticmethod\n    def delete_branch(\n        credentials: GithubCredentials, repo_url: str, branch: str\n    ) -> str:\n        api = get_api(credentials)\n        ref_url = repo_url + f\"/git/refs/heads/{branch}\"\n        api.delete(ref_url)\n        return \"Branch deleted successfully\"\n\n    def run(\n        self,\n        input_data: Input,\n        *,\n        credentials: GithubCredentials,\n        **kwargs,\n    ) -> BlockOutput:\n        status = self.delete_branch(\n            credentials,\n            input_data.repo_url,\n            input_data.branch,\n        )\n        yield \"status\", status\n",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 66,
+                    "end_token": 66,
+                    "label": "class",
+                    "children": []
+                },
+                {
+                    "type": "block",
+                    "start_token": 67,
+                    "end_token": 3662,
+                    "label": "GithubListTagsBlock(Block):\n    class Input(BlockSchema):\n        credentials: GithubCredentialsInput = GithubCredentialsField(\"repo\")\n        repo_url: str = SchemaField(\n            description=\"URL of the GitHub repository\",\n            placeholder=\"https://github.com/owner/repo\",\n        )\n\n    class Output(BlockSchema):\n        class TagItem(TypedDict):\n            name: str\n            url: str\n\n        tag: TagItem = SchemaField(\n            title=\"Tag\", description=\"Tags with their name and file tree browser URL\"\n        )\n        error: str = SchemaField(description=\"Error message if listing tags failed\")\n\n    def __init__(self):\n        super().__init__(\n            id=\"358924e7-9a11-4d1a-a0f2-13c67fe59e2e\",\n            description=\"This block lists all tags for a specified GitHub repository.\",\n            categories={BlockCategory.DEVELOPER_TOOLS},\n            input_schema=GithubListTagsBlock.Input,\n            output_schema=GithubListTagsBlock.Output,\n            test_input={\n                \"repo_url\": \"https://github.com/owner/repo\",\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[\n                (\n                    \"tag\",\n                    {\n                        \"name\": \"v1.0.0\",\n                        \"url\": \"https://github.com/owner/repo/tree/v1.0.0\",\n                    },\n                )\n            ],\n            test_mock={\n                \"list_tags\": lambda *args, **kwargs: [\n                    {\n                        \"name\": \"v1.0.0\",\n                        \"url\": \"https://github.com/owner/repo/tree/v1.0.0\",\n                    }\n                ]\n            },\n        )\n\n    @staticmethod\n    def list_tags(\n        credentials: GithubCredentials, repo_url: str\n    ) -> list[Output.TagItem]:\n        api = get_api(credentials)\n        tags_url = repo_url + \"/tags\"\n        response = api.get(tags_url)\n        data = response.json()\n        repo_path = repo_url.replace(\"https://github.com/\", \"\")\n        tags: list[GithubListTagsBlock.Output.TagItem] = [\n            {\n                \"name\": tag[\"name\"],\n                \"url\": f\"https://github.com/{repo_path}/tree/{tag['name']}\",\n            }\n            for tag in data\n        ]\n        return tags\n\n    def run(\n        self,\n        input_data: Input,\n        *,\n        credentials: GithubCredentials,\n        **kwargs,\n    ) -> BlockOutput:\n        tags = self.list_tags(\n            credentials,\n            input_data.repo_url,\n        )\n        yield from ((\"tag\", tag) for tag in tags)\n\n\nclass GithubListBranchesBlock(Block):\n    class Input(BlockSchema):\n        credentials: GithubCredentialsInput = GithubCredentialsField(\"repo\")\n        repo_url: str = SchemaField(\n            description=\"URL of the GitHub repository\",\n            placeholder=\"https://github.com/owner/repo\",\n        )\n\n    class Output(BlockSchema):\n        class BranchItem(TypedDict):\n            name: str\n            url: str\n\n        branch: BranchItem = SchemaField(\n            title=\"Branch\",\n            description=\"Branches with their name and file tree browser URL\",\n        )\n        error: str = SchemaField(description=\"Error message if listing branches failed\")\n\n    def __init__(self):\n        super().__init__(\n            id=\"74243e49-2bec-4916-8bf4-db43d44aead5\",\n            description=\"This block lists all branches for a specified GitHub repository.\",\n            categories={BlockCategory.DEVELOPER_TOOLS},\n            input_schema=GithubListBranchesBlock.Input,\n            output_schema=GithubListBranchesBlock.Output,\n            test_input={\n                \"repo_url\": \"https://github.com/owner/repo\",\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[\n                (\n                    \"branch\",\n                    {\n                        \"name\": \"main\",\n                        \"url\": \"https://github.com/owner/repo/tree/main\",\n                    },\n                )\n            ],\n            test_mock={\n                \"list_branches\": lambda *args, **kwargs: [\n                    {\n                        \"name\": \"main\",\n                        \"url\": \"https://github.com/owner/repo/tree/main\",\n                    }\n                ]\n            },\n        )\n\n    @staticmethod\n    def list_branches(\n        credentials: GithubCredentials, repo_url: str\n    ) -> list[Output.BranchItem]:\n        api = get_api(credentials)\n        branches_url = repo_url + \"/branches\"\n        response = api.get(branches_url)\n        data = response.json()\n        repo_path = repo_url.replace(\"https://github.com/\", \"\")\n        branches: list[GithubListBranchesBlock.Output.BranchItem] = [\n            {\n                \"name\": branch[\"name\"],\n                \"url\": f\"https://github.com/{repo_path}/tree/{branch['name']}\",\n            }\n            for branch in data\n        ]\n        return branches\n\n    def run(\n        self,\n        input_data: Input,\n        *,\n        credentials: GithubCredentials,\n        **kwargs,\n    ) -> BlockOutput:\n        branches = self.list_branches(\n            credentials,\n            input_data.repo_url,\n        )\n        yield from ((\"branch\", branch) for branch in branches)\n\n\nclass GithubListDiscussionsBlock(Block):\n    class Input(BlockSchema):\n        credentials: GithubCredentialsInput = GithubCredentialsField(\"repo\")\n        repo_url: str = SchemaField(\n            description=\"URL of the GitHub repository\",\n            placeholder=\"https://github.com/owner/repo\",\n        )\n        num_discussions: int = SchemaField(\n            description=\"Number of discussions to fetch\", default=5\n        )\n\n    class Output(BlockSchema):\n        class DiscussionItem(TypedDict):\n            title: str\n            url: str\n\n        discussion: DiscussionItem = SchemaField(\n            title=\"Discussion\", description=\"Discussions with their title and URL\"\n        )\n        error: str = SchemaField(\n            description=\"Error message if listing discussions failed\"\n        )\n\n    def __init__(self):\n        super().__init__(\n            id=\"3ef1a419-3d76-4e07-b761-de9dad4d51d7\",\n            description=\"This block lists recent discussions for a specified GitHub repository.\",\n            categories={BlockCategory.DEVELOPER_TOOLS},\n            input_schema=GithubListDiscussionsBlock.Input,\n            output_schema=GithubListDiscussionsBlock.Output,\n            test_input={\n                \"repo_url\": \"https://github.com/owner/repo\",\n                \"num_discussions\": 3,\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[\n                (\n                    \"discussion\",\n                    {\n                        \"title\": \"Discussion 1\",\n                        \"url\": \"https://github.com/owner/repo/discussions/1\",\n                    },\n                )\n            ],\n            test_mock={\n                \"list_discussions\": lambda *args, **kwargs: [\n                    {\n                        \"title\": \"Discussion 1\",\n                        \"url\": \"https://github.com/owner/repo/discussions/1\",\n                    }\n                ]\n            },\n        )\n\n    @staticmethod\n    def list_discussions(\n        credentials: GithubCredentials, repo_url: str, num_discussions: int\n    ) -> list[Output.DiscussionItem]:\n        api = get_api(credentials)\n        # GitHub GraphQL API endpoint is different; we'll use api.post with custom URL\n        repo_path = repo_url.replace(\"https://github.com/\", \"\")\n        owner, repo = repo_path.split(\"/\")\n        query = \"\"\"\n        query($owner: String!, $repo: String!, $num: Int!) {\n            repository(owner: $owner, name: $repo) {\n                discussions(first: $num) {\n                    nodes {\n                        title\n                        url\n                    }\n                }\n            }\n        }\n        \"\"\"\n        variables = {\"owner\": owner, \"repo\": repo, \"num\": num_discussions}\n        response = api.post(\n            \"https://api.github.com/graphql\",\n            json={\"query\": query, \"variables\": variables},\n        )\n        data = response.json()\n        discussions: list[GithubListDiscussionsBlock.Output.DiscussionItem] = [\n            {\"title\": discussion[\"title\"], \"url\": discussion[\"url\"]}\n            for discussion in data[\"data\"][\"repository\"][\"discussions\"][\"nodes\"]\n        ]\n        return discussions\n\n    def run(\n        self,\n        input_data: Input,\n        *,\n        credentials: GithubCredentials,\n        **kwargs,\n    ) -> BlockOutput:\n        discussions = self.list_discussions(\n            credentials, input_data.repo_url, input_data.num_discussions\n        )\n        yield from ((\"discussion\", discussion) for discussion in discussions)\n\n\nclass GithubListReleasesBlock(Block):\n    class Input(BlockSchema):\n        credentials: GithubCredentialsInput = GithubCredentialsField(\"repo\")\n        repo_url: str = SchemaField(\n            description=\"URL of the GitHub repository\",\n            placeholder=\"https://github.com/owner/repo\",\n        )\n\n    class Output(BlockSchema):\n        class ReleaseItem(TypedDict):\n            name: str\n            url: str\n\n        release: ReleaseItem = SchemaField(\n            title=\"Release\",\n            description=\"Releases with their name and file tree browser URL\",\n        )\n        error: str = SchemaField(description=\"Error message if listing releases failed\")\n\n    def __init__(self):\n        super().__init__(\n            id=\"3460367a-6ba7-4645-8ce6-47b05d040b92\",\n            description=\"This block lists all releases for a specified GitHub repository.\",\n            categories={BlockCategory.DEVELOPER_TOOLS},\n            input_schema=GithubListReleasesBlock.Input,\n            output_schema=GithubListReleasesBlock.Output,\n            test_input={\n                \"repo_url\": \"https://github.com/owner/repo\",\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[\n                (\n                    \"release\",\n                    {\n                        \"name\": \"v1.0.0\",\n                        \"url\": \"https://github.com/owner/repo/releases/tag/v1.0.0\",\n                    },\n                )\n            ],\n            test_mock={\n                \"list_releases\": lambda *args, **kwargs: [\n                    {\n                        \"name\": \"v1.0.0\",\n                        \"url\": \"https://github.com/owner/repo/releases/tag/v1.0.0\",\n                    }\n                ]\n            },\n        )\n\n    @staticmethod\n    def list_releases(\n        credentials: GithubCredentials, repo_url: str\n    ) -> list[Output.ReleaseItem]:\n        api = get_api(credentials)\n        releases_url = repo_url + \"/releases\"\n        response = api.get(releases_url)\n        data = response.json()\n        releases: list[GithubListReleasesBlock.Output.ReleaseItem] = [\n            {\"name\": release[\"name\"], \"url\": release[\"html_url\"]} for release in data\n        ]\n        return releases\n\n    def run(\n        self,\n        input_data: Input,\n        *,\n        credentials: GithubCredentials,\n        **kwargs,\n    ) -> BlockOutput:\n        releases = self.list_releases(\n            credentials,\n            input_data.repo_url,\n        )\n        yield from ((\"release\", release) for release in releases)\n\n\nclass GithubReadFileBlock(Block):\n    class Input(BlockSchema):\n        credentials: GithubCredentialsInput = GithubCredentialsField(\"repo\")\n        repo_url: str = SchemaField(\n            description=\"URL of the GitHub repository\",\n            placeholder=\"https://github.com/owner/repo\",\n        )\n        file_path: str = SchemaField(\n            description=\"Path to the file in the repository\",\n            placeholder=\"path/to/file\",\n        )\n        branch: str = SchemaField(\n            description=\"Branch to read from\",\n            placeholder=\"branch_name\",\n            default=\"master\",\n        )\n\n    class Output(BlockSchema):\n        text_content: str = SchemaField(\n            description=\"Content of the file (decoded as UTF-8 text)\"\n        )\n        raw_content: str = SchemaField(\n            description=\"Raw base64-encoded content of the file\"\n        )\n        size: int = SchemaField(description=\"The size of the file (in bytes)\")\n        error: str = SchemaField(description=\"Error message if the file reading failed\")\n\n    def __init__(self):\n        super().__init__(\n            id=\"87ce6c27-5752-4bbc-8e26-6da40a3dcfd3\",\n            description=\"This block reads the content of a specified file from a GitHub repository.\",\n            categories={BlockCategory.DEVELOPER_TOOLS},\n            input_schema=GithubReadFileBlock.Input,\n            output_schema=GithubReadFileBlock.Output,\n            test_input={\n                \"repo_url\": \"https://github.com/owner/repo\",\n                \"file_path\": \"path/to/file\",\n                \"branch\": \"master\",\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[\n                (\"raw_content\", \"RmlsZSBjb250ZW50\"),\n                (\"text_content\", \"File content\"),\n                (\"size\", 13),\n            ],\n            test_mock={\"read_file\": lambda *args, **kwargs: (\"RmlsZSBjb250ZW50\", 13)},\n        )\n\n    @staticmethod\n    def read_file(\n        credentials: GithubCredentials, repo_url: str, file_path: str, branch: str\n    ) -> tuple[str, int]:\n        api = get_api(credentials)\n        content_url = repo_url + f\"/contents/{file_path}?ref={branch}\"\n        response = api.get(content_url)\n        content = response.json()\n\n        if isinstance(content, list):\n            # Multiple entries of different types exist at this path\n            if not (file := next((f for f in content if f[\"type\"] == \"file\"), None)):\n                raise TypeError(\"Not a file\")\n            content = file\n\n        if content[\"type\"] != \"file\":\n            raise TypeError(\"Not a file\")\n\n        return content[\"content\"], content[\"size\"]\n\n    def run(\n        self,\n        input_data: Input,\n        *,\n        credentials: GithubCredentials,\n        **kwargs,\n    ) -> BlockOutput:\n        raw_content, size = self.read_file(\n            credentials,\n            input_data.repo_url,\n            input_data.file_path.lstrip(\"/\"),\n            input_data.branch,\n        )\n        yield \"raw_content\", raw_content\n        yield \"text_content\", base64.b64decode(raw_content).decode(\"utf-8\")\n        yield \"size\", size\n\n\nclass GithubReadFolderBlock(Block):\n    class Input(BlockSchema):\n        credentials: GithubCredentialsInput = GithubCredentialsField(\"repo\")\n        repo_url: str = SchemaField(\n            description=\"URL of the GitHub repository\",\n            placeholder=\"https://github.com/owner/repo\",\n        )\n        folder_path: str = SchemaField(\n            description=\"Path to the folder in the repository\",\n            placeholder=\"path/to/folder\",\n        )\n        branch: str = SchemaField(\n            description=\"Branch name to read from (defaults to master)\",\n            placeholder=\"branch_name\",\n            default=\"master\",\n        )\n\n    class Output(BlockSchema):\n        class DirEntry(TypedDict):\n            name: str\n            path: str\n\n        class FileEntry(TypedDict):\n            name: str\n            path: str\n            size: int\n\n        file: FileEntry = SchemaField(description=\"Files in the folder\")\n        dir: DirEntry = SchemaField(description=\"Directories in the folder\")\n        error: str = SchemaField(\n            description=\"Error message if reading the folder failed\"\n        )\n\n    def __init__(self):\n        super().__init__(\n            id=\"1355f863-2db3-4d75-9fba-f91e8a8ca400\",\n            description=\"This block reads the content of a specified folder from a GitHub repository.\",\n            categories={BlockCategory.DEVELOPER_TOOLS},\n            input_schema=GithubReadFolderBlock.Input,\n            output_schema=GithubReadFolderBlock.Output,\n            test_input={\n                \"repo_url\": \"https://github.com/owner/repo\",\n                \"folder_path\": \"path/to/folder\",\n                \"branch\": \"master\",\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[\n                (\n                    \"file\",\n                    {\n                        \"name\": \"file1.txt\",\n                        \"path\": \"path/to/folder/file1.txt\",\n                        \"size\": 1337,\n                    },\n                ),\n                (\"dir\", {\"name\": \"dir2\", \"path\": \"path/to/folder/dir2\"}),\n            ],\n            test_mock={\n                \"read_folder\": lambda *args, **kwargs: (\n                    [\n                        {\n                            \"name\": \"file1.txt\",\n                            \"path\": \"path/to/folder/file1.txt\",\n                            \"size\": 1337,\n                        }\n                    ],\n                    [{\"name\": \"dir2\", \"path\": \"path/to/folder/dir2\"}],\n                )\n            },\n        )\n\n    @staticmethod\n    def read_folder(\n        credentials: GithubCredentials, repo_url: str, folder_path: str, branch: str\n    ) -> tuple[list[Output.FileEntry], list[Output.DirEntry]]:\n        api = get_api(credentials)\n        contents_url = repo_url + f\"/contents/{folder_path}?ref={branch}\"\n        response = api.get(contents_url)\n        content = response.json()\n\n        if not isinstance(content, list):\n            raise TypeError(\"Not a folder\")\n\n        files = [\n            GithubReadFolderBlock.Output.FileEntry(\n                name=entry[\"name\"],\n                path=entry[\"path\"],\n                size=entry[\"size\"],\n            )\n            for entry in content\n            if entry[\"type\"] == \"file\"\n        ]\n        dirs = [\n            GithubReadFolderBlock.Output.DirEntry(\n                name=entry[\"name\"],\n                path=entry[\"path\"],\n            )\n            for entry in content\n            if entry[\"type\"] == \"dir\"\n        ]\n\n        return files, dirs\n\n    def run(\n        self,\n        input_data: Input,\n        *,\n        credentials: GithubCredentials,\n        **kwargs,\n    ) -> BlockOutput:\n        files, dirs = self.read_folder(\n            credentials,\n            input_data.repo_url,\n            input_data.folder_path.lstrip(\"/\"),\n            input_data.branch,\n        )\n        yield from ((\"file\", file) for file in files)\n        yield from ((\"dir\", dir) for dir in dirs)\n\n\nclass GithubMakeBranchBlock(Block):\n    class Input(BlockSchema):\n        credentials: GithubCredentialsInput = GithubCredentialsField(\"repo\")\n        repo_url: str = SchemaField(\n            description=\"URL of the GitHub repository\",\n            placeholder=\"https://github.com/owner/repo\",\n        )\n        new_branch: str = SchemaField(\n            description=\"Name of the new branch\",\n            placeholder=\"new_branch_name\",\n        )\n        source_branch: str = SchemaField(\n            description=\"Name of the source branch\",\n            placeholder=\"source_branch_name\",\n        )\n\n    class Output(BlockSchema):\n        status: str = SchemaField(description=\"Status of the branch creation operation\")\n        error: str = SchemaField(\n            description=\"Error message if the branch creation failed\"\n        )\n\n    def __init__(self):\n        super().__init__(\n            id=\"944cc076-95e7-4d1b-b6b6-b15d8ee5448d\",\n            description=\"This block creates a new branch from a specified source branch.\",\n            categories={BlockCategory.DEVELOPER_TOOLS},\n            input_schema=GithubMakeBranchBlock.Input,\n            output_schema=GithubMakeBranchBlock.Output,\n            test_input={\n                \"repo_url\": \"https://github.com/owner/repo\",\n                \"new_branch\": \"new_branch_name\",\n                \"source_branch\": \"source_branch_name\",\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[(\"status\", \"Branch created successfully\")],\n            test_mock={\n                \"create_branch\": lambda *args, **kwargs: \"Branch created successfully\"\n            },\n        )\n\n    @staticmethod\n    def create_branch(\n        credentials: GithubCredentials,\n        repo_url: str,\n        new_branch: str,\n        source_branch: str,\n    ) -> str:\n        api = get_api(credentials)\n        # Get the SHA of the source branch\n        ref_url = repo_url + f\"/git/refs/heads/{source_branch}\"\n        response = api.get(ref_url)\n        sha = response.json()[\"object\"][\"sha\"]\n\n        # Create the new branch\n        create_ref_url = repo_url + \"/git/refs\"\n        data = {\"ref\": f\"refs/heads/{new_branch}\", \"sha\": sha}\n        response = api.post(create_ref_url, json=data)\n        return \"Branch created successfully\"\n\n    def run(\n        self,\n        input_data: Input,\n        *,\n        credentials: GithubCredentials,\n        **kwargs,\n    ) -> BlockOutput:\n        status = self.create_branch(\n            credentials,\n            input_data.repo_url,\n            input_data.new_branch,\n            input_data.source_branch,\n        )\n        yield \"status\", status\n\n\nclass GithubDeleteBranchBlock(Block):\n    class Input(BlockSchema):\n        credentials: GithubCredentialsInput = GithubCredentialsField(\"repo\")\n        repo_url: str = SchemaField(\n            description=\"URL of the GitHub repository\",\n            placeholder=\"https://github.com/owner/repo\",\n        )\n        branch: str = SchemaField(\n            description=\"Name of the branch to delete\",\n            placeholder=\"branch_name\",\n        )\n\n    class Output(BlockSchema):\n        status: str = SchemaField(description=\"Status of the branch deletion operation\")\n        error: str = SchemaField(\n            description=\"Error message if the branch deletion failed\"\n        )\n\n    def __init__(self):\n        super().__init__(\n            id=\"0d4130f7-e0ab-4d55-adc3-0a40225e80f4\",\n            description=\"This block deletes a specified branch.\",\n            categories={BlockCategory.DEVELOPER_TOOLS},\n            input_schema=GithubDeleteBranchBlock.Input,\n            output_schema=GithubDeleteBranchBlock.Output,\n            test_input={\n                \"repo_url\": \"https://github.com/owner/repo\",\n                \"branch\": \"branch_name\",\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[(\"status\", \"Branch deleted successfully\")],\n            test_mock={\n                \"delete_branch\": lambda *args, **kwargs: \"Branch deleted successfully\"\n            },\n        )\n\n    @staticmethod\n    def delete_branch(\n        credentials: GithubCredentials, repo_url: str, branch: str\n    ) -> str:\n        api = get_api(credentials)\n        ref_url = repo_url + f\"/git/refs/heads/{branch}\"\n        api.delete(ref_url)\n        return \"Branch deleted successfully\"\n\n    def run(\n        self,\n        input_data: Input,\n        *,\n        credentials: GithubCredentials,\n        **kwargs,\n    ) -> BlockOutput:\n        status = self.delete_branch(\n            credentials,\n            input_data.repo_url,\n            input_data.branch,\n        )\n        yield \"status\", status\n",
+                    "children": [
+                        {
+                            "type": "class_definition",
+                            "start_token": 73,
+                            "end_token": 106,
+                            "label": "class Input(BlockSchema):\n        credentials: GithubCredentialsInput = GithubCredentialsField(\"repo\")\n        repo_url: str = SchemaField(\n            description=\"URL of the GitHub repository\",\n            placeholder=\"https://github.com/owner/repo\",\n        )",
+                            "children": [
+                                {
+                                    "type": "identifier",
+                                    "start_token": 74,
+                                    "end_token": 74,
+                                    "label": "Input",
+                                    "children": []
+                                },
+                                {
+                                    "type": "block",
+                                    "start_token": 78,
+                                    "end_token": 106,
+                                    "label": ":\n        credentials: GithubCredentialsInput = GithubCredentialsField(\"repo\")\n        repo_url: str = SchemaField(\n            description=\"URL of the GitHub repository\",\n            placeholder=\"https://github.com/owner/repo\",\n        )",
+                                    "children": [
+                                        {
+                                            "type": "assignment",
+                                            "start_token": 80,
+                                            "end_token": 87,
+                                            "label": "credentials: GithubCredentialsInput = GithubCredentialsField(\"repo\")",
+                                            "children": [
+                                                {
+                                                    "type": "identifier",
+                                                    "start_token": 80,
+                                                    "end_token": 80,
+                                                    "label": "credentials",
+                                                    "children": []
+                                                },
+                                                {
+                                                    "type": "identifier",
+                                                    "start_token": 82,
+                                                    "end_token": 82,
+                                                    "label": "GithubCredentialsInput",
+                                                    "children": []
+                                                },
+                                                {
+                                                    "type": "identifier",
+                                                    "start_token": 84,
+                                                    "end_token": 84,
+                                                    "label": "GithubCredentialsField",
+                                                    "children": []
+                                                },
+                                                {
+                                                    "type": "argument_list",
+                                                    "start_token": 85,
+                                                    "end_token": 87,
+                                                    "label": "(\"repo\")",
+                                                    "children": []
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "assignment",
+                                            "start_token": 89,
+                                            "end_token": 106,
+                                            "label": "repo_url: str = SchemaField(\n            description=\"URL of the GitHub repository\",\n            placeholder=\"https://github.com/owner/repo\",\n        )",
+                                            "children": [
+                                                {
+                                                    "type": "identifier",
+                                                    "start_token": 89,
+                                                    "end_token": 89,
+                                                    "label": "repo_url",
+                                                    "children": []
+                                                },
+                                                {
+                                                    "type": "identifier",
+                                                    "start_token": 91,
+                                                    "end_token": 91,
+                                                    "label": "str",
+                                                    "children": []
+                                                },
+                                                {
+                                                    "type": "identifier",
+                                                    "start_token": 93,
+                                                    "end_token": 94,
+                                                    "label": "SchemaField(",
+                                                    "children": []
+                                                },
+                                                {
+                                                    "type": "assignment",
+                                                    "start_token": 100,
+                                                    "end_token": 106,
+                                                    "label": "\n            placeholder=\"https://github.com/owner/repo\",\n        )",
+                                                    "children": [
+                                                        {
+                                                            "type": "identifier",
+                                                            "start_token": 101,
+                                                            "end_token": 101,
+                                                            "label": "placeholder",
+                                                            "children": []
+                                                        },
+                                                        {
+                                                            "type": "identifier",
+                                                            "start_token": 103,
+                                                            "end_token": 103,
+                                                            "label": "\"https://github.com/owner/repo\"",
+                                                            "children": []
+                                                        },
+                                                        {
+                                                            "type": "identifier",
+                                                            "start_token": 104,
+                                                            "end_token": 104,
+                                                            "label": ",",
+                                                            "children": []
+                                                        },
+                                                        {
+                                                            "type": "argument_list",
+                                                            "start_token": 105,
+                                                            "end_token": 106,
+                                                            "label": "\n        )",
+                                                            "children": []
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "class_definition",
+                            "start_token": 75,
+                            "end_token": 206,
+                            "label": "(BlockSchema):\n        credentials: GithubCredentialsInput = GithubCredentialsField(\"repo\")\n        repo_url: str = SchemaField(\n            description=\"URL of the GitHub repository\",\n            placeholder=\"https://github.com/owner/repo\",\n        )\n\n    class Output(BlockSchema):\n        class TagItem(TypedDict):\n            name: str\n            url: str\n\n        tag: TagItem = SchemaField(\n            title=\"Tag\", description=\"Tags with their name and file tree browser URL\"\n        )\n        error: str = SchemaField(description=\"Error message if listing tags failed\")\n\n    def __init__(self):\n        super().__init__(\n            id=\"358924e7-9a11-4d1a-a0f2-13c67fe59e2e\",\n            description=\"This block lists all tags for a specified GitHub repository.\",\n            categories={BlockCategory.DEVELOPER_TOOLS},\n            input_schema=GithubListTagsBlock.Input,\n            output_schema=GithubListTagsBlock.Output,",
+                            "children": [
+                                {
+                                    "type": "identifier",
+                                    "start_token": 109,
+                                    "end_token": 110,
+                                    "label": "class Output",
+                                    "children": []
+                                },
+                                {
+                                    "type": "block",
+                                    "start_token": 112,
+                                    "end_token": 206,
+                                    "label": "BlockSchema):\n        class TagItem(TypedDict):\n            name: str\n            url: str\n\n        tag: TagItem = SchemaField(\n            title=\"Tag\", description=\"Tags with their name and file tree browser URL\"\n        )\n        error: str = SchemaField(description=\"Error message if listing tags failed\")\n\n    def __init__(self):\n        super().__init__(\n            id=\"358924e7-9a11-4d1a-a0f2-13c67fe59e2e\",\n            description=\"This block lists all tags for a specified GitHub repository.\",\n            categories={BlockCategory.DEVELOPER_TOOLS},\n            input_schema=GithubListTagsBlock.Input,\n            output_schema=GithubListTagsBlock.Output,",
+                                    "children": [
+                                        {
+                                            "type": "class_definition",
+                                            "start_token": 116,
+                                            "end_token": 129,
+                                            "label": "class TagItem(TypedDict):\n            name: str\n            url: str",
+                                            "children": [
+                                                {
+                                                    "type": "identifier",
+                                                    "start_token": 117,
+                                                    "end_token": 118,
+                                                    "label": "TagItem(",
+                                                    "children": []
+                                                },
+                                                {
+                                                    "type": "block",
+                                                    "start_token": 120,
+                                                    "end_token": 129,
+                                                    "label": "):\n            name: str\n            url: str",
+                                                    "children": [
+                                                        {
+                                                            "type": "assignment",
+                                                            "start_token": 123,
+                                                            "end_token": 126,
+                                                            "label": "name: str\n",
+                                                            "children": [
+                                                                {
+                                                                    "type": "identifier",
+                                                                    "start_token": 123,
+                                                                    "end_token": 125,
+                                                                    "label": "name: str",
+                                                                    "children": []
+                                                                },
+                                                                {
+                                                                    "type": "identifier",
+                                                                    "start_token": 128,
+                                                                    "end_token": 129,
+                                                                    "label": ": str",
+                                                                    "children": []
+                                                                }
+                                                            ]
+                                                        },
+                                                        {
+                                                            "type": "assignment",
+                                                            "start_token": 127,
+                                                            "end_token": 131,
+                                                            "label": "url: str\n\n",
+                                                            "children": [
+                                                                {
+                                                                    "type": "identifier",
+                                                                    "start_token": 127,
+                                                                    "end_token": 128,
+                                                                    "label": "url:",
+                                                                    "children": []
+                                                                },
+                                                                {
+                                                                    "type": "identifier",
+                                                                    "start_token": 131,
+                                                                    "end_token": 143,
+                                                                    "label": "\n        tag: TagItem = SchemaField(\n            title=\"Tag\", description",
+                                                                    "children": []
+                                                                },
+                                                                {
+                                                                    "type": "identifier",
+                                                                    "start_token": 144,
+                                                                    "end_token": 146,
+                                                                    "label": "=\"Tags with their name and file tree browser URL\"\n",
+                                                                    "children": []
+                                                                }
+                                                            ]
+                                                        },
+                                                        {
+                                                            "type": "assignment",
+                                                            "start_token": 139,
+                                                            "end_token": 159,
+                                                            "label": "title=\"Tag\", description=\"Tags with their name and file tree browser URL\"\n        )\n        error: str = SchemaField(description=\"Error message if listing tags failed\")\n",
+                                                            "children": [
+                                                                {
+                                                                    "type": "identifier",
+                                                                    "start_token": 139,
+                                                                    "end_token": 140,
+                                                                    "label": "title=",
+                                                                    "children": []
+                                                                },
+                                                                {
+                                                                    "type": "identifier",
+                                                                    "start_token": 141,
+                                                                    "end_token": 143,
+                                                                    "label": "\"Tag\", description",
+                                                                    "children": []
+                                                                },
+                                                                {
+                                                                    "type": "identifier",
+                                                                    "start_token": 144,
+                                                                    "end_token": 146,
+                                                                    "label": "=\"Tags with their name and file tree browser URL\"\n",
+                                                                    "children": []
+                                                                },
+                                                                {
+                                                                    "type": "identifier",
+                                                                    "start_token": 153,
+                                                                    "end_token": 159,
+                                                                    "label": "SchemaField(description=\"Error message if listing tags failed\")\n",
+                                                                    "children": []
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "function_definition",
+                                            "start_token": 161,
+                                            "end_token": 294,
+                                            "label": "def __init__(self):\n        super().__init__(\n            id=\"358924e7-9a11-4d1a-a0f2-13c67fe59e2e\",\n            description=\"This block lists all tags for a specified GitHub repository.\",\n            categories={BlockCategory.DEVELOPER_TOOLS},\n            input_schema=GithubListTagsBlock.Input,\n            output_schema=GithubListTagsBlock.Output,\n            test_input={\n                \"repo_url\": \"https://github.com/owner/repo\",\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[\n                (\n                    \"tag\",\n                    {\n                        \"name\": \"v1.0.0\",\n                        \"url\": \"https://github.com/owner/repo/tree/v1.0.0\",\n                    },\n                )\n            ],\n            test_mock={\n                \"list_tags\": lambda *args, **kwargs: [\n                    {\n                        \"name\": \"v1.0.0\",\n                        \"url\": \"https://github.com/owner/repo/tree/v1.0.0\",\n                    }\n                ]\n            },\n        )",
+                                            "children": [
+                                                {
+                                                    "type": "identifier",
+                                                    "start_token": 163,
+                                                    "end_token": 164,
+                                                    "label": "(self",
+                                                    "children": []
+                                                },
+                                                {
+                                                    "type": "parameters",
+                                                    "start_token": 165,
+                                                    "end_token": 175,
+                                                    "label": "):\n        super().__init__(\n            id",
+                                                    "children": []
+                                                },
+                                                {
+                                                    "type": "block",
+                                                    "start_token": 165,
+                                                    "end_token": 166,
+                                                    "label": "):",
+                                                    "children": []
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

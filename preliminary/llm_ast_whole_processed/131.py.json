@@ -1,0 +1,312 @@
+{
+    "type": "module",
+    "start_token": 0,
+    "end_token": 1213,
+    "label": "import logging\nfrom typing import TYPE_CHECKING, AsyncGenerator, Optional\n\nfrom prisma import Json\nfrom prisma.models import IntegrationWebhook\nfrom pydantic import Field, computed_field\n\nfrom backend.data.includes import INTEGRATION_WEBHOOK_INCLUDE\nfrom backend.data.queue import AsyncRedisEventBus\nfrom backend.integrations.providers import ProviderName\nfrom backend.integrations.webhooks.utils import webhook_ingress_url\n\nfrom .db import BaseDbModel\n\nif TYPE_CHECKING:\n    from .graph import NodeModel\n\nlogger = logging.getLogger(__name__)\n\n\nclass Webhook(BaseDbModel):\n    user_id: str\n    provider: ProviderName\n    credentials_id: str\n    webhook_type: str\n    resource: str\n    events: list[str]\n    config: dict = Field(default_factory=dict)\n    secret: str\n\n    provider_webhook_id: str\n\n    attached_nodes: Optional[list[\"NodeModel\"]] = None\n\n    @computed_field\n    @property\n    def url(self) -> str:\n        return webhook_ingress_url(self.provider.value, self.id)\n\n    @staticmethod\n    def from_db(webhook: IntegrationWebhook):\n        from .graph import NodeModel\n\n        return Webhook(\n            id=webhook.id,\n            user_id=webhook.userId,\n            provider=ProviderName(webhook.provider),\n            credentials_id=webhook.credentialsId,\n            webhook_type=webhook.webhookType,\n            resource=webhook.resource,\n            events=webhook.events,\n            config=dict(webhook.config),\n            secret=webhook.secret,\n            provider_webhook_id=webhook.providerWebhookId,\n            attached_nodes=(\n                [NodeModel.from_db(node) for node in webhook.AgentNodes]\n                if webhook.AgentNodes is not None\n                else None\n            ),\n        )\n\n\n# --------------------- CRUD functions --------------------- #\n\n\nasync def create_webhook(webhook: Webhook) -> Webhook:\n    created_webhook = await IntegrationWebhook.prisma().create(\n        data={\n            \"id\": webhook.id,\n            \"userId\": webhook.user_id,\n            \"provider\": webhook.provider.value,\n            \"credentialsId\": webhook.credentials_id,\n            \"webhookType\": webhook.webhook_type,\n            \"resource\": webhook.resource,\n            \"events\": webhook.events,\n            \"config\": Json(webhook.config),\n            \"secret\": webhook.secret,\n            \"providerWebhookId\": webhook.provider_webhook_id,\n        }\n    )\n    return Webhook.from_db(created_webhook)\n\n\nasync def get_webhook(webhook_id: str) -> Webhook:\n    \"\"\"⚠️ No `user_id` check: DO NOT USE without check in user-facing endpoints.\"\"\"\n    webhook = await IntegrationWebhook.prisma().find_unique_or_raise(\n        where={\"id\": webhook_id},\n        include=INTEGRATION_WEBHOOK_INCLUDE,\n    )\n    return Webhook.from_db(webhook)\n\n\nasync def get_all_webhooks_by_creds(credentials_id: str) -> list[Webhook]:\n    \"\"\"⚠️ No `user_id` check: DO NOT USE without check in user-facing endpoints.\"\"\"\n    if not credentials_id:\n        raise ValueError(\"credentials_id must not be empty\")\n    webhooks = await IntegrationWebhook.prisma().find_many(\n        where={\"credentialsId\": credentials_id},\n        include=INTEGRATION_WEBHOOK_INCLUDE,\n    )\n    return [Webhook.from_db(webhook) for webhook in webhooks]\n\n\nasync def find_webhook_by_credentials_and_props(\n    credentials_id: str, webhook_type: str, resource: str, events: list[str]\n) -> Webhook | None:\n    \"\"\"⚠️ No `user_id` check: DO NOT USE without check in user-facing endpoints.\"\"\"\n    webhook = await IntegrationWebhook.prisma().find_first(\n        where={\n            \"credentialsId\": credentials_id,\n            \"webhookType\": webhook_type,\n            \"resource\": resource,\n            \"events\": {\"has_every\": events},\n        },\n        include=INTEGRATION_WEBHOOK_INCLUDE,\n    )\n    return Webhook.from_db(webhook) if webhook else None\n\n\nasync def find_webhook_by_graph_and_props(\n    graph_id: str, provider: str, webhook_type: str, events: list[str]\n) -> Webhook | None:\n    \"\"\"⚠️ No `user_id` check: DO NOT USE without check in user-facing endpoints.\"\"\"\n    webhook = await IntegrationWebhook.prisma().find_first(\n        where={\n            \"provider\": provider,\n            \"webhookType\": webhook_type,\n            \"events\": {\"has_every\": events},\n            \"AgentNodes\": {\"some\": {\"agentGraphId\": graph_id}},\n        },\n        include=INTEGRATION_WEBHOOK_INCLUDE,\n    )\n    return Webhook.from_db(webhook) if webhook else None\n\n\nasync def update_webhook_config(webhook_id: str, updated_config: dict) -> Webhook:\n    \"\"\"⚠️ No `user_id` check: DO NOT USE without check in user-facing endpoints.\"\"\"\n    _updated_webhook = await IntegrationWebhook.prisma().update(\n        where={\"id\": webhook_id},\n        data={\"config\": Json(updated_config)},\n        include=INTEGRATION_WEBHOOK_INCLUDE,\n    )\n    if _updated_webhook is None:\n        raise ValueError(f\"Webhook #{webhook_id} not found\")\n    return Webhook.from_db(_updated_webhook)\n\n\nasync def delete_webhook(webhook_id: str) -> None:\n    \"\"\"⚠️ No `user_id` check: DO NOT USE without check in user-facing endpoints.\"\"\"\n    deleted = await IntegrationWebhook.prisma().delete(where={\"id\": webhook_id})\n    if not deleted:\n        raise ValueError(f\"Webhook #{webhook_id} not found\")\n\n\n# --------------------- WEBHOOK EVENTS --------------------- #\n\n\nclass WebhookEvent(BaseDbModel):\n    provider: str\n    webhook_id: str\n    event_type: str\n    payload: dict\n\n\nclass WebhookEventBus(AsyncRedisEventBus[WebhookEvent]):\n    Model = WebhookEvent\n\n    @property\n    def event_bus_name(self) -> str:\n        return \"webhooks\"\n\n\n_webhook_event_bus = WebhookEventBus()\n\n\nasync def publish_webhook_event(event: WebhookEvent):\n    await _webhook_event_bus.publish_event(\n        event, f\"{event.webhook_id}/{event.event_type}\"\n    )\n\n\nasync def listen_for_webhook_events(\n    webhook_id: str, event_type: Optional[str] = None\n) -> AsyncGenerator[WebhookEvent, None]:\n    async for event in _webhook_event_bus.listen_events(\n        f\"{webhook_id}/{event_type or '*'}\"\n    ):\n        yield event\n\n\nasync def wait_for_webhook_event(\n    webhook_id: str, event_type: Optional[str] = None, timeout: Optional[float] = None\n) -> WebhookEvent | None:\n    return await _webhook_event_bus.wait_for_event(\n        f\"{webhook_id}/{event_type or '*'}\", timeout\n    )\n",
+    "children": [
+        {
+            "type": "import_statement",
+            "start_token": 0,
+            "end_token": 1,
+            "label": "import logging",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 3,
+            "end_token": 10,
+            "label": "from typing import TYPE_CHECKING, AsyncGenerator, Optional",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 13,
+            "end_token": 16,
+            "label": "from prisma import Json",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 18,
+            "end_token": 23,
+            "label": "from prisma.models import IntegrationWebhook",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 25,
+            "end_token": 30,
+            "label": "from pydantic import Field, computed_field",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 33,
+            "end_token": 40,
+            "label": "from backend.data.includes import INTEGRATION_WEBHOOK_INCLUDE",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 42,
+            "end_token": 49,
+            "label": "from backend.data.queue import AsyncRedisEventBus",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 51,
+            "end_token": 58,
+            "label": "from backend.integrations.providers import ProviderName",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 60,
+            "end_token": 69,
+            "label": "from backend.integrations.webhooks.utils import webhook_ingress_url",
+            "children": []
+        },
+        {
+            "type": "relative_import",
+            "start_token": 73,
+            "end_token": 76,
+            "label": ".db import BaseDbModel",
+            "children": []
+        },
+        {
+            "type": "block",
+            "start_token": 79,
+            "end_token": 88,
+            "label": "if TYPE_CHECKING:\n    from .graph import NodeModel\n",
+            "children": [
+                {
+                    "type": "if_statement",
+                    "start_token": 79,
+                    "end_token": 81,
+                    "label": "if TYPE_CHECKING:",
+                    "children": []
+                },
+                {
+                    "type": "relative_import",
+                    "start_token": 83,
+                    "end_token": 87,
+                    "label": "from .graph import NodeModel",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "assignment",
+            "start_token": 90,
+            "end_token": 97,
+            "label": "logger = logging.getLogger(__name__)",
+            "children": []
+        },
+        {
+            "type": "class_definition",
+            "start_token": 101,
+            "end_token": 196,
+            "label": "class Webhook(BaseDbModel):\n    user_id: str\n    provider: ProviderName\n    credentials_id: str\n    webhook_type: str\n    resource: str\n    events: list[str]\n    config: dict = Field(default_factory=dict)\n    secret: str\n\n    provider_webhook_id: str\n\n    attached_nodes: Optional[list[\"NodeModel\"]] = None\n\n    @computed_field\n    @property\n    def url(self) -> str:\n        return webhook_ingress_url(self.provider.value, self.id",
+            "children": [
+                {
+                    "type": "block",
+                    "start_token": 107,
+                    "end_token": 106,
+                    "label": "",
+                    "children": [
+                        {
+                            "type": "assignment",
+                            "start_token": 135,
+                            "end_token": 144,
+                            "label": "config: dict = Field(default_factory=dict)",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "decorated_definition",
+                    "start_token": 169,
+                    "end_token": 197,
+                    "label": "@computed_field\n    @property\n    def url(self) -> str:\n        return webhook_ingress_url(self.provider.value, self.id)",
+                    "children": [
+                        {
+                            "type": "decorator",
+                            "start_token": 169,
+                            "end_token": 172,
+                            "label": "@computed_field\n    @",
+                            "children": []
+                        },
+                        {
+                            "type": "function_definition",
+                            "start_token": 175,
+                            "end_token": 197,
+                            "label": "def url(self) -> str:\n        return webhook_ingress_url(self.provider.value, self.id)",
+                            "children": [
+                                {
+                                    "type": "block",
+                                    "start_token": 184,
+                                    "end_token": 197,
+                                    "label": "\n        return webhook_ingress_url(self.provider.value, self.id)",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "async",
+            "start_token": 385,
+            "end_token": 921,
+            "label": "async def create_webhook(webhook: Webhook) -> Webhook:\n    created_webhook = await IntegrationWebhook.prisma().create(\n        data={\n            \"id\": webhook.id,\n            \"userId\": webhook.user_id,\n            \"provider\": webhook.provider.value,\n            \"credentialsId\": webhook.credentials_id,\n            \"webhookType\": webhook.webhook_type,\n            \"resource\": webhook.resource,\n            \"events\": webhook.events,\n            \"config\": Json(webhook.config),\n            \"secret\": webhook.secret,\n            \"providerWebhookId\": webhook.provider_webhook_id,\n        }\n    )\n    return Webhook.from_db(created_webhook)\n\n\nasync def get_webhook(webhook_id: str) -> Webhook:\n    \"\"\"⚠️ No `user_id` check: DO NOT USE without check in user-facing endpoints.\"\"\"\n    webhook = await IntegrationWebhook.prisma().find_unique_or_raise(\n        where={\"id\": webhook_id},\n        include=INTEGRATION_WEBHOOK_INCLUDE,\n    )\n    return Webhook.from_db(webhook)\n\n\nasync def get_all_webhooks_by_creds(credentials_id: str) -> list[Webhook]:\n    \"\"\"⚠️ No `user_id` check: DO NOT USE without check in user-facing endpoints.\"\"\"\n    if not credentials_id:\n        raise ValueError(\"credentials_id must not be empty\")\n    webhooks = await IntegrationWebhook.prisma().find_many(\n        where={\"credentialsId\": credentials_id},\n        include=INTEGRATION_WEBHOOK_INCLUDE,\n    )\n    return [Webhook.from_db(webhook) for webhook in webhooks]\n\n\nasync def find_webhook_by_credentials_and_props(\n    credentials_id: str, webhook_type: str, resource: str, events: list[str]\n) -> Webhook | None:\n    \"\"\"⚠️ No `user_id` check: DO NOT USE without check in user-facing endpoints.\"\"\"\n    webhook = await IntegrationWebhook.prisma().find_first(\n        where={\n            \"credentialsId\": credentials_id,\n            \"webhookType\": webhook_type,\n            \"resource\": resource,\n            \"events\": {\"has_every\": events},\n        },\n        include=INTEGRATION_WEBHOOK_INCLUDE,\n    )\n    return Webhook.from_db(webhook) if webhook else None\n\n\nasync def find_webhook_by_graph_and_props(\n    graph_id: str, provider: str, webhook_type: str, events: list[str]\n) -> Webhook | None:\n    \"\"\"⚠️ No `user_id` check: DO NOT USE without check in user-facing endpoints.\"\"\"\n    webhook = await IntegrationWebhook.prisma().find_first(\n        where={\n            \"provider\": provider,\n            \"webhookType\": webhook_type,\n            \"events\": {\"has_every\": events},\n            \"AgentNodes\": {\"some\": {\"agentGraphId\": graph_id}},\n        },\n        include=INTEGRATION_WEBHOOK_INCLUDE,\n    )\n    return Webhook.from_db(webhook) if webhook else None\n\n\nasync def update_webhook_config(webhook_id: str, updated_config: dict) -> Webhook:\n    \"\"\"⚠️ No `user_id` check: DO NOT USE without check in user-facing endpoints.\"\"\"\n    _updated_webhook = await IntegrationWebhook.prisma().update(\n        where={\"id\": webhook_id},\n        data={\"config\": Json(updated_config)},\n        include=INTEGRATION_WEBHOOK_INCLUDE,\n    )\n    if _updated_webhook is None:\n        raise ValueError(f\"Webhook #{webhook_id} not found\")\n    return Webhook.from_db(_updated_webhook)",
+            "children": [
+                {
+                    "type": "function_definition",
+                    "start_token": 386,
+                    "end_token": 921,
+                    "label": "def create_webhook(webhook: Webhook) -> Webhook:\n    created_webhook = await IntegrationWebhook.prisma().create(\n        data={\n            \"id\": webhook.id,\n            \"userId\": webhook.user_id,\n            \"provider\": webhook.provider.value,\n            \"credentialsId\": webhook.credentials_id,\n            \"webhookType\": webhook.webhook_type,\n            \"resource\": webhook.resource,\n            \"events\": webhook.events,\n            \"config\": Json(webhook.config),\n            \"secret\": webhook.secret,\n            \"providerWebhookId\": webhook.provider_webhook_id,\n        }\n    )\n    return Webhook.from_db(created_webhook)\n\n\nasync def get_webhook(webhook_id: str) -> Webhook:\n    \"\"\"⚠️ No `user_id` check: DO NOT USE without check in user-facing endpoints.\"\"\"\n    webhook = await IntegrationWebhook.prisma().find_unique_or_raise(\n        where={\"id\": webhook_id},\n        include=INTEGRATION_WEBHOOK_INCLUDE,\n    )\n    return Webhook.from_db(webhook)\n\n\nasync def get_all_webhooks_by_creds(credentials_id: str) -> list[Webhook]:\n    \"\"\"⚠️ No `user_id` check: DO NOT USE without check in user-facing endpoints.\"\"\"\n    if not credentials_id:\n        raise ValueError(\"credentials_id must not be empty\")\n    webhooks = await IntegrationWebhook.prisma().find_many(\n        where={\"credentialsId\": credentials_id},\n        include=INTEGRATION_WEBHOOK_INCLUDE,\n    )\n    return [Webhook.from_db(webhook) for webhook in webhooks]\n\n\nasync def find_webhook_by_credentials_and_props(\n    credentials_id: str, webhook_type: str, resource: str, events: list[str]\n) -> Webhook | None:\n    \"\"\"⚠️ No `user_id` check: DO NOT USE without check in user-facing endpoints.\"\"\"\n    webhook = await IntegrationWebhook.prisma().find_first(\n        where={\n            \"credentialsId\": credentials_id,\n            \"webhookType\": webhook_type,\n            \"resource\": resource,\n            \"events\": {\"has_every\": events},\n        },\n        include=INTEGRATION_WEBHOOK_INCLUDE,\n    )\n    return Webhook.from_db(webhook) if webhook else None\n\n\nasync def find_webhook_by_graph_and_props(\n    graph_id: str, provider: str, webhook_type: str, events: list[str]\n) -> Webhook | None:\n    \"\"\"⚠️ No `user_id` check: DO NOT USE without check in user-facing endpoints.\"\"\"\n    webhook = await IntegrationWebhook.prisma().find_first(\n        where={\n            \"provider\": provider,\n            \"webhookType\": webhook_type,\n            \"events\": {\"has_every\": events},\n            \"AgentNodes\": {\"some\": {\"agentGraphId\": graph_id}},\n        },\n        include=INTEGRATION_WEBHOOK_INCLUDE,\n    )\n    return Webhook.from_db(webhook) if webhook else None\n\n\nasync def update_webhook_config(webhook_id: str, updated_config: dict) -> Webhook:\n    \"\"\"⚠️ No `user_id` check: DO NOT USE without check in user-facing endpoints.\"\"\"\n    _updated_webhook = await IntegrationWebhook.prisma().update(\n        where={\"id\": webhook_id},\n        data={\"config\": Json(updated_config)},\n        include=INTEGRATION_WEBHOOK_INCLUDE,\n    )\n    if _updated_webhook is None:\n        raise ValueError(f\"Webhook #{webhook_id} not found\")\n    return Webhook.from_db(_updated_webhook)",
+                    "children": [
+                        {
+                            "type": "block",
+                            "start_token": 397,
+                            "end_token": 921,
+                            "label": "\n    created_webhook = await IntegrationWebhook.prisma().create(\n        data={\n            \"id\": webhook.id,\n            \"userId\": webhook.user_id,\n            \"provider\": webhook.provider.value,\n            \"credentialsId\": webhook.credentials_id,\n            \"webhookType\": webhook.webhook_type,\n            \"resource\": webhook.resource,\n            \"events\": webhook.events,\n            \"config\": Json(webhook.config),\n            \"secret\": webhook.secret,\n            \"providerWebhookId\": webhook.provider_webhook_id,\n        }\n    )\n    return Webhook.from_db(created_webhook)\n\n\nasync def get_webhook(webhook_id: str) -> Webhook:\n    \"\"\"⚠️ No `user_id` check: DO NOT USE without check in user-facing endpoints.\"\"\"\n    webhook = await IntegrationWebhook.prisma().find_unique_or_raise(\n        where={\"id\": webhook_id},\n        include=INTEGRATION_WEBHOOK_INCLUDE,\n    )\n    return Webhook.from_db(webhook)\n\n\nasync def get_all_webhooks_by_creds(credentials_id: str) -> list[Webhook]:\n    \"\"\"⚠️ No `user_id` check: DO NOT USE without check in user-facing endpoints.\"\"\"\n    if not credentials_id:\n        raise ValueError(\"credentials_id must not be empty\")\n    webhooks = await IntegrationWebhook.prisma().find_many(\n        where={\"credentialsId\": credentials_id},\n        include=INTEGRATION_WEBHOOK_INCLUDE,\n    )\n    return [Webhook.from_db(webhook) for webhook in webhooks]\n\n\nasync def find_webhook_by_credentials_and_props(\n    credentials_id: str, webhook_type: str, resource: str, events: list[str]\n) -> Webhook | None:\n    \"\"\"⚠️ No `user_id` check: DO NOT USE without check in user-facing endpoints.\"\"\"\n    webhook = await IntegrationWebhook.prisma().find_first(\n        where={\n            \"credentialsId\": credentials_id,\n            \"webhookType\": webhook_type,\n            \"resource\": resource,\n            \"events\": {\"has_every\": events},\n        },\n        include=INTEGRATION_WEBHOOK_INCLUDE,\n    )\n    return Webhook.from_db(webhook) if webhook else None\n\n\nasync def find_webhook_by_graph_and_props(\n    graph_id: str, provider: str, webhook_type: str, events: list[str]\n) -> Webhook | None:\n    \"\"\"⚠️ No `user_id` check: DO NOT USE without check in user-facing endpoints.\"\"\"\n    webhook = await IntegrationWebhook.prisma().find_first(\n        where={\n            \"provider\": provider,\n            \"webhookType\": webhook_type,\n            \"events\": {\"has_every\": events},\n            \"AgentNodes\": {\"some\": {\"agentGraphId\": graph_id}},\n        },\n        include=INTEGRATION_WEBHOOK_INCLUDE,\n    )\n    return Webhook.from_db(webhook) if webhook else None\n\n\nasync def update_webhook_config(webhook_id: str, updated_config: dict) -> Webhook:\n    \"\"\"⚠️ No `user_id` check: DO NOT USE without check in user-facing endpoints.\"\"\"\n    _updated_webhook = await IntegrationWebhook.prisma().update(\n        where={\"id\": webhook_id},\n        data={\"config\": Json(updated_config)},\n        include=INTEGRATION_WEBHOOK_INCLUDE,\n    )\n    if _updated_webhook is None:\n        raise ValueError(f\"Webhook #{webhook_id} not found\")\n    return Webhook.from_db(_updated_webhook)",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "async",
+            "start_token": 925,
+            "end_token": 1212,
+            "label": "async def delete_webhook(webhook_id: str) -> None:\n    \"\"\"⚠️ No `user_id` check: DO NOT USE without check in user-facing endpoints.\"\"\"\n    deleted = await IntegrationWebhook.prisma().delete(where={\"id\": webhook_id})\n    if not deleted:\n        raise ValueError(f\"Webhook #{webhook_id} not found\")\n\n\n# --------------------- WEBHOOK EVENTS --------------------- #\n\n\nclass WebhookEvent(BaseDbModel):\n    provider: str\n    webhook_id: str\n    event_type: str\n    payload: dict\n\n\nclass WebhookEventBus(AsyncRedisEventBus[WebhookEvent]):\n    Model = WebhookEvent\n\n    @property\n    def event_bus_name(self) -> str:\n        return \"webhooks\"\n\n\n_webhook_event_bus = WebhookEventBus()\n\n\nasync def publish_webhook_event(event: WebhookEvent):\n    await _webhook_event_bus.publish_event(\n        event, f\"{event.webhook_id}/{event.event_type}\"\n    )\n\n\nasync def listen_for_webhook_events(\n    webhook_id: str, event_type: Optional[str] = None\n) -> AsyncGenerator[WebhookEvent, None]:\n    async for event in _webhook_event_bus.listen_events(\n        f\"{webhook_id}/{event_type or '*'}\"\n    ):\n        yield event\n\n\nasync def wait_for_webhook_event(\n    webhook_id: str, event_type: Optional[str] = None, timeout: Optional[float] = None\n) -> WebhookEvent | None:\n    return await _webhook_event_bus.wait_for_event(\n        f\"{webhook_id}/{event_type or '*'}\", timeout\n    )",
+            "children": [
+                {
+                    "type": "function_definition",
+                    "start_token": 926,
+                    "end_token": 921,
+                    "label": "",
+                    "children": [
+                        {
+                            "type": "block",
+                            "start_token": 937,
+                            "end_token": 921,
+                            "label": "",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "class_definition",
+            "start_token": 1025,
+            "end_token": 1049,
+            "label": "class WebhookEvent(BaseDbModel):\n    provider: str\n    webhook_id: str\n    event_type: str\n    payload: dict\n\n\n",
+            "children": [
+                {
+                    "type": "block",
+                    "start_token": 1031,
+                    "end_token": 1047,
+                    "label": "\n    provider: str\n    webhook_id: str\n    event_type: str\n    payload: dict\n",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "class_definition",
+            "start_token": 1050,
+            "end_token": 1087,
+            "label": "class WebhookEventBus(AsyncRedisEventBus[WebhookEvent]):\n    Model = WebhookEvent\n\n    @property\n    def event_bus_name(self) -> str:\n        return \"webhooks\"\n\n\n_webhook_event_bus = WebhookEventBus()",
+            "children": [
+                {
+                    "type": "block",
+                    "start_token": 1058,
+                    "end_token": 1087,
+                    "label": ":\n    Model = WebhookEvent\n\n    @property\n    def event_bus_name(self) -> str:\n        return \"webhooks\"\n\n\n_webhook_event_bus = WebhookEventBus()",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "assignment",
+            "start_token": 1083,
+            "end_token": 1087,
+            "label": "_webhook_event_bus = WebhookEventBus()",
+            "children": []
+        },
+        {
+            "type": "async",
+            "start_token": 1091,
+            "end_token": 1112,
+            "label": "async def publish_webhook_event(event: WebhookEvent):\n    await _webhook_event_bus.publish_event(\n        event, f\"{event.webhook_id}/{event.event_type}\"\n    )",
+            "children": [
+                {
+                    "type": "function_definition",
+                    "start_token": 1092,
+                    "end_token": 1112,
+                    "label": "def publish_webhook_event(event: WebhookEvent):\n    await _webhook_event_bus.publish_event(\n        event, f\"{event.webhook_id}/{event.event_type}\"\n    )",
+                    "children": [
+                        {
+                            "type": "block",
+                            "start_token": 1100,
+                            "end_token": 1112,
+                            "label": "\n    await _webhook_event_bus.publish_event(\n        event, f\"{event.webhook_id}/{event.event_type}\"\n    )",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "async",
+            "start_token": 1116,
+            "end_token": 1162,
+            "label": "async def listen_for_webhook_events(\n    webhook_id: str, event_type: Optional[str] = None\n) -> AsyncGenerator[WebhookEvent, None]:\n    async for event in _webhook_event_bus.listen_events(\n        f\"{webhook_id}/{event_type or '*'}\"\n    ):\n        yield event\n",
+            "children": [
+                {
+                    "type": "function_definition",
+                    "start_token": 1117,
+                    "end_token": 1156,
+                    "label": "def listen_for_webhook_events(\n    webhook_id: str, event_type: Optional[str] = None\n) -> AsyncGenerator[WebhookEvent, None]:\n    async for event in _webhook_event_bus.listen_events(\n        f\"{webhook_id}/{event_type or '*'}\"\n",
+                    "children": [
+                        {
+                            "type": "block",
+                            "start_token": 1144,
+                            "end_token": 1162,
+                            "label": "\n    async for event in _webhook_event_bus.listen_events(\n        f\"{webhook_id}/{event_type or '*'}\"\n    ):\n        yield event\n",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "async",
+            "start_token": 1165,
+            "end_token": 1212,
+            "label": "async def wait_for_webhook_event(\n    webhook_id: str, event_type: Optional[str] = None, timeout: Optional[float] = None\n) -> WebhookEvent | None:\n    return await _webhook_event_bus.wait_for_event(\n        f\"{webhook_id}/{event_type or '*'}\", timeout\n    )",
+            "children": [
+                {
+                    "type": "function_definition",
+                    "start_token": 1166,
+                    "end_token": 1212,
+                    "label": "def wait_for_webhook_event(\n    webhook_id: str, event_type: Optional[str] = None, timeout: Optional[float] = None\n) -> WebhookEvent | None:\n    return await _webhook_event_bus.wait_for_event(\n        f\"{webhook_id}/{event_type or '*'}\", timeout\n    )",
+                    "children": [
+                        {
+                            "type": "block",
+                            "start_token": 1199,
+                            "end_token": 1212,
+                            "label": "\n    return await _webhook_event_bus.wait_for_event(\n        f\"{webhook_id}/{event_type or '*'}\", timeout\n    )",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

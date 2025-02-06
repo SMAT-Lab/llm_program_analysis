@@ -1,0 +1,991 @@
+{
+    "type": "module",
+    "start_token": 0,
+    "end_token": 1008,
+    "label": "import logging\nimport os\nfrom urllib.parse import parse_qs, urlencode, urlparse, urlunparse\n\nfrom apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_EXECUTED\nfrom apscheduler.job import Job as JobObj\nfrom apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore\nfrom apscheduler.schedulers.blocking import BlockingScheduler\nfrom apscheduler.triggers.cron import CronTrigger\nfrom autogpt_libs.utils.cache import thread_cached\nfrom dotenv import load_dotenv\nfrom pydantic import BaseModel\nfrom sqlalchemy import MetaData, create_engine\n\nfrom backend.data.block import BlockInput\nfrom backend.executor.manager import ExecutionManager\nfrom backend.util.service import AppService, expose, get_service_client\nfrom backend.util.settings import Config\n\n\ndef _extract_schema_from_url(database_url) -> tuple[str, str]:\n    \"\"\"\n    Extracts the schema from the DATABASE_URL and returns the schema and cleaned URL.\n    \"\"\"\n    parsed_url = urlparse(database_url)\n    query_params = parse_qs(parsed_url.query)\n\n    # Extract the 'schema' parameter\n    schema_list = query_params.pop(\"schema\", None)\n    schema = schema_list[0] if schema_list else \"public\"\n\n    # Reconstruct the query string without the 'schema' parameter\n    new_query = urlencode(query_params, doseq=True)\n    new_parsed_url = parsed_url._replace(query=new_query)\n    database_url_clean = str(urlunparse(new_parsed_url))\n\n    return schema, database_url_clean\n\n\nlogger = logging.getLogger(__name__)\nconfig = Config()\n\n\ndef log(msg, **kwargs):\n    logger.info(\"[ExecutionScheduler] \" + msg, **kwargs)\n\n\ndef job_listener(event):\n    \"\"\"Logs job execution outcomes for better monitoring.\"\"\"\n    if event.exception:\n        log(f\"Job {event.job_id} failed.\")\n    else:\n        log(f\"Job {event.job_id} completed successfully.\")\n\n\n@thread_cached\ndef get_execution_client() -> ExecutionManager:\n    return get_service_client(ExecutionManager)\n\n\ndef execute_graph(**kwargs):\n    args = JobArgs(**kwargs)\n    try:\n        log(f\"Executing recurring job for graph #{args.graph_id}\")\n        get_execution_client().add_execution(\n            args.graph_id, args.input_data, args.user_id\n        )\n    except Exception as e:\n        logger.exception(f\"Error executing graph {args.graph_id}: {e}\")\n\n\nclass JobArgs(BaseModel):\n    graph_id: str\n    input_data: BlockInput\n    user_id: str\n    graph_version: int\n    cron: str\n\n\nclass JobInfo(JobArgs):\n    id: str\n    name: str\n    next_run_time: str\n\n    @staticmethod\n    def from_db(job_args: JobArgs, job_obj: JobObj) -> \"JobInfo\":\n        return JobInfo(\n            id=job_obj.id,\n            name=job_obj.name,\n            next_run_time=job_obj.next_run_time.isoformat(),\n            **job_args.model_dump(),\n        )\n\n\nclass ExecutionScheduler(AppService):\n    scheduler: BlockingScheduler\n\n    @classmethod\n    def get_port(cls) -> int:\n        return config.execution_scheduler_port\n\n    @property\n    @thread_cached\n    def execution_client(self) -> ExecutionManager:\n        return get_service_client(ExecutionManager)\n\n    def run_service(self):\n        load_dotenv()\n        db_schema, db_url = _extract_schema_from_url(os.getenv(\"DATABASE_URL\"))\n        self.scheduler = BlockingScheduler(\n            jobstores={\n                \"default\": SQLAlchemyJobStore(\n                    engine=create_engine(db_url),\n                    metadata=MetaData(schema=db_schema),\n                )\n            }\n        )\n        self.scheduler.add_listener(job_listener, EVENT_JOB_EXECUTED | EVENT_JOB_ERROR)\n        self.scheduler.start()\n\n    @expose\n    def add_execution_schedule(\n        self,\n        graph_id: str,\n        graph_version: int,\n        cron: str,\n        input_data: BlockInput,\n        user_id: str,\n    ) -> JobInfo:\n        job_args = JobArgs(\n            graph_id=graph_id,\n            input_data=input_data,\n            user_id=user_id,\n            graph_version=graph_version,\n            cron=cron,\n        )\n        job = self.scheduler.add_job(\n            execute_graph,\n            CronTrigger.from_crontab(cron),\n            kwargs=job_args.model_dump(),\n            replace_existing=True,\n        )\n        log(f\"Added job {job.id} with cron schedule '{cron}' input data: {input_data}\")\n        return JobInfo.from_db(job_args, job)\n\n    @expose\n    def delete_schedule(self, schedule_id: str, user_id: str) -> JobInfo:\n        job = self.scheduler.get_job(schedule_id)\n        if not job:\n            log(f\"Job {schedule_id} not found.\")\n            raise ValueError(f\"Job #{schedule_id} not found.\")\n\n        job_args = JobArgs(**job.kwargs)\n        if job_args.user_id != user_id:\n            raise ValueError(\"User ID does not match the job's user ID.\")\n\n        log(f\"Deleting job {schedule_id}\")\n        job.remove()\n\n        return JobInfo.from_db(job_args, job)\n\n    @expose\n    def get_execution_schedules(\n        self, graph_id: str | None = None, user_id: str | None = None\n    ) -> list[JobInfo]:\n        schedules = []\n        for job in self.scheduler.get_jobs():\n            job_args = JobArgs(**job.kwargs)\n            if (\n                job.next_run_time is not None\n                and (graph_id is None or job_args.graph_id == graph_id)\n                and (user_id is None or job_args.user_id == user_id)\n            ):\n                schedules.append(JobInfo.from_db(job_args, job))\n        return schedules\n",
+    "children": [
+        {
+            "type": "import_statement",
+            "start_token": 0,
+            "end_token": 1,
+            "label": "import logging",
+            "children": []
+        },
+        {
+            "type": "import_statement",
+            "start_token": 3,
+            "end_token": 4,
+            "label": "import os",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 6,
+            "end_token": 17,
+            "label": "from urllib.parse import parse_qs, urlencode, urlparse, urlunparse",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 20,
+            "end_token": 27,
+            "label": "from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_EXECUTED",
+            "children": []
+        },
+        {
+            "type": "aliased_import",
+            "start_token": 29,
+            "end_token": 36,
+            "label": "from apscheduler.job import Job as JobObj",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 38,
+            "end_token": 45,
+            "label": "from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 47,
+            "end_token": 54,
+            "label": "from apscheduler.schedulers.blocking import BlockingScheduler",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 56,
+            "end_token": 63,
+            "label": "from apscheduler.triggers.cron import CronTrigger",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 65,
+            "end_token": 72,
+            "label": "from autogpt_libs.utils.cache import thread_cached",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 74,
+            "end_token": 77,
+            "label": "from dotenv import load_dotenv",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 79,
+            "end_token": 82,
+            "label": "from pydantic import BaseModel",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 84,
+            "end_token": 89,
+            "label": "from sqlalchemy import MetaData, create_engine",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 92,
+            "end_token": 99,
+            "label": "from backend.data.block import BlockInput",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 101,
+            "end_token": 108,
+            "label": "from backend.executor.manager import ExecutionManager",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 110,
+            "end_token": 121,
+            "label": "from backend.util.service import AppService, expose, get_service_client",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 123,
+            "end_token": 130,
+            "label": "from backend.util.settings import Config",
+            "children": []
+        },
+        {
+            "type": "function_definition",
+            "start_token": 134,
+            "end_token": 245,
+            "label": "def _extract_schema_from_url(database_url) -> tuple[str, str]:\n    \"\"\"\n    Extracts the schema from the DATABASE_URL and returns the schema and cleaned URL.\n    \"\"\"\n    parsed_url = urlparse(database_url)\n    query_params = parse_qs(parsed_url.query)\n\n    # Extract the 'schema' parameter\n    schema_list = query_params.pop(\"schema\", None)\n    schema = schema_list[0] if schema_list else \"public\"\n\n    # Reconstruct the query string without the 'schema' parameter\n    new_query = urlencode(query_params, doseq=True)\n    new_parsed_url = parsed_url._replace(query=new_query)\n    database_url_clean = str(urlunparse(new_parsed_url))\n\n    return schema, database_url_clean",
+            "children": [
+                {
+                    "type": "parameters",
+                    "start_token": 136,
+                    "end_token": 138,
+                    "label": "(database_url)",
+                    "children": []
+                },
+                {
+                    "type": "block",
+                    "start_token": 148,
+                    "end_token": 245,
+                    "label": "\n    \"\"\"\n    Extracts the schema from the DATABASE_URL and returns the schema and cleaned URL.\n    \"\"\"\n    parsed_url = urlparse(database_url)\n    query_params = parse_qs(parsed_url.query)\n\n    # Extract the 'schema' parameter\n    schema_list = query_params.pop(\"schema\", None)\n    schema = schema_list[0] if schema_list else \"public\"\n\n    # Reconstruct the query string without the 'schema' parameter\n    new_query = urlencode(query_params, doseq=True)\n    new_parsed_url = parsed_url._replace(query=new_query)\n    database_url_clean = str(urlunparse(new_parsed_url))\n\n    return schema, database_url_clean",
+                    "children": [
+                        {
+                            "type": "assignment",
+                            "start_token": 153,
+                            "end_token": 158,
+                            "label": "parsed_url = urlparse(database_url)",
+                            "children": [
+                                {
+                                    "type": "call",
+                                    "start_token": 155,
+                                    "end_token": 158,
+                                    "label": "urlparse(database_url)",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 160,
+                            "end_token": 167,
+                            "label": "query_params = parse_qs(parsed_url.query)",
+                            "children": [
+                                {
+                                    "type": "call",
+                                    "start_token": 162,
+                                    "end_token": 167,
+                                    "label": "parse_qs(parsed_url.query)",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 176,
+                            "end_token": 196,
+                            "label": "schema_list = query_params.pop(\"schema\", None)\n    schema = schema_list[0] if schema_list else \"public\"",
+                            "children": [
+                                {
+                                    "type": "conditional_expression",
+                                    "start_token": 189,
+                                    "end_token": 196,
+                                    "label": "schema_list[0] if schema_list else \"public\"",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 209,
+                            "end_token": 218,
+                            "label": "new_query = urlencode(query_params, doseq=True)",
+                            "children": [
+                                {
+                                    "type": "call",
+                                    "start_token": 211,
+                                    "end_token": 218,
+                                    "label": "urlencode(query_params, doseq=True)",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 220,
+                            "end_token": 229,
+                            "label": "new_parsed_url = parsed_url._replace(query=new_query)",
+                            "children": [
+                                {
+                                    "type": "call",
+                                    "start_token": 225,
+                                    "end_token": 229,
+                                    "label": "(query=new_query)",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "return_statement",
+                            "start_token": 242,
+                            "end_token": 245,
+                            "label": "return schema, database_url_clean",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "assignment",
+            "start_token": 249,
+            "end_token": 256,
+            "label": "logger = logging.getLogger(__name__)",
+            "children": [
+                {
+                    "type": "call",
+                    "start_token": 251,
+                    "end_token": 256,
+                    "label": "logging.getLogger(__name__)",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "assignment",
+            "start_token": 258,
+            "end_token": 262,
+            "label": "config = Config()",
+            "children": [
+                {
+                    "type": "call",
+                    "start_token": 260,
+                    "end_token": 262,
+                    "label": "Config()",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "start_token": 266,
+            "end_token": 288,
+            "label": "def log(msg, **kwargs):\n    logger.info(\"[ExecutionScheduler] \" + msg, **kwargs)",
+            "children": [
+                {
+                    "type": "parameters",
+                    "start_token": 268,
+                    "end_token": 274,
+                    "label": "(msg, **kwargs)",
+                    "children": []
+                },
+                {
+                    "type": "block",
+                    "start_token": 275,
+                    "end_token": 288,
+                    "label": ":\n    logger.info(\"[ExecutionScheduler] \" + msg, **kwargs)",
+                    "children": [
+                        {
+                            "type": "call",
+                            "start_token": 277,
+                            "end_token": 288,
+                            "label": "logger.info(\"[ExecutionScheduler] \" + msg, **kwargs)",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "start_token": 292,
+            "end_token": 323,
+            "label": "def job_listener(event):\n    \"\"\"Logs job execution outcomes for better monitoring.\"\"\"\n    if event.exception:\n        log(f\"Job {event.job_id} failed.\")\n    else:\n        log(f\"Job {event.job_id} completed successfully.\")\n",
+            "children": [
+                {
+                    "type": "parameters",
+                    "start_token": 294,
+                    "end_token": 296,
+                    "label": "(event)",
+                    "children": []
+                },
+                {
+                    "type": "block",
+                    "start_token": 297,
+                    "end_token": 323,
+                    "label": ":\n    \"\"\"Logs job execution outcomes for better monitoring.\"\"\"\n    if event.exception:\n        log(f\"Job {event.job_id} failed.\")\n    else:\n        log(f\"Job {event.job_id} completed successfully.\")\n",
+                    "children": [
+                        {
+                            "type": "conditional_expression",
+                            "start_token": 303,
+                            "end_token": 313,
+                            "label": "if event.exception:\n        log(f\"Job {event.job_id} failed.\")",
+                            "children": []
+                        },
+                        {
+                            "type": "conditional_expression",
+                            "start_token": 315,
+                            "end_token": 322,
+                            "label": "else:\n        log(f\"Job {event.job_id} completed successfully.\")",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "decorated_definition",
+            "start_token": 326,
+            "end_token": 343,
+            "label": "@thread_cached\ndef get_execution_client() -> ExecutionManager:\n    return get_service_client(ExecutionManager)\n",
+            "children": [
+                {
+                    "type": "decorator",
+                    "start_token": 326,
+                    "end_token": 327,
+                    "label": "@thread_cached",
+                    "children": []
+                },
+                {
+                    "type": "function_definition",
+                    "start_token": 329,
+                    "end_token": 343,
+                    "label": "def get_execution_client() -> ExecutionManager:\n    return get_service_client(ExecutionManager)\n",
+                    "children": [
+                        {
+                            "type": "parameters",
+                            "start_token": 331,
+                            "end_token": 332,
+                            "label": "()",
+                            "children": []
+                        },
+                        {
+                            "type": "block",
+                            "start_token": 336,
+                            "end_token": 343,
+                            "label": ":\n    return get_service_client(ExecutionManager)\n",
+                            "children": [
+                                {
+                                    "type": "return_statement",
+                                    "start_token": 338,
+                                    "end_token": 343,
+                                    "label": "return get_service_client(ExecutionManager)\n",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "start_token": 346,
+            "end_token": 407,
+            "label": "def execute_graph(**kwargs):\n    args = JobArgs(**kwargs)\n    try:\n        log(f\"Executing recurring job for graph #{args.graph_id}\")\n        get_execution_client().add_execution(\n            args.graph_id, args.input_data, args.user_id\n        )\n    except Exception as e:\n        logger.exception(f\"Error executing graph {args.graph_id}: {e}\")\n",
+            "children": [
+                {
+                    "type": "parameters",
+                    "start_token": 348,
+                    "end_token": 352,
+                    "label": "(**kwargs)",
+                    "children": []
+                },
+                {
+                    "type": "block",
+                    "start_token": 353,
+                    "end_token": 407,
+                    "label": ":\n    args = JobArgs(**kwargs)\n    try:\n        log(f\"Executing recurring job for graph #{args.graph_id}\")\n        get_execution_client().add_execution(\n            args.graph_id, args.input_data, args.user_id\n        )\n    except Exception as e:\n        logger.exception(f\"Error executing graph {args.graph_id}: {e}\")\n",
+                    "children": [
+                        {
+                            "type": "assignment",
+                            "start_token": 355,
+                            "end_token": 362,
+                            "label": "args = JobArgs(**kwargs)",
+                            "children": [
+                                {
+                                    "type": "call",
+                                    "start_token": 357,
+                                    "end_token": 362,
+                                    "label": "JobArgs(**kwargs)",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "expression_statement",
+                            "start_token": 364,
+                            "end_token": 371,
+                            "label": "try:\n        log(f\"Executing recurring job for graph #{args.graph_id}\")",
+                            "children": [
+                                {
+                                    "type": "call",
+                                    "start_token": 367,
+                                    "end_token": 371,
+                                    "label": "log(f\"Executing recurring job for graph #{args.graph_id}\")",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "call",
+                            "start_token": 373,
+                            "end_token": 391,
+                            "label": "get_execution_client().add_execution(\n            args.graph_id, args.input_data, args.user_id\n",
+                            "children": [
+                                {
+                                    "type": "call",
+                                    "start_token": 375,
+                                    "end_token": 391,
+                                    "label": ").add_execution(\n            args.graph_id, args.input_data, args.user_id\n",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "except_clause",
+                            "start_token": 394,
+                            "end_token": 406,
+                            "label": "except Exception as e:\n        logger.exception(f\"Error executing graph {args.graph_id}: {e}\")",
+                            "children": [
+                                {
+                                    "type": "call",
+                                    "start_token": 400,
+                                    "end_token": 406,
+                                    "label": "logger.exception(f\"Error executing graph {args.graph_id}: {e}\")",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "class_definition",
+            "start_token": 410,
+            "end_token": 436,
+            "label": "class JobArgs(BaseModel):\n    graph_id: str\n    input_data: BlockInput\n    user_id: str\n    graph_version: int\n    cron: str\n",
+            "children": [
+                {
+                    "type": "parameters",
+                    "start_token": 412,
+                    "end_token": 414,
+                    "label": "(BaseModel)",
+                    "children": []
+                },
+                {
+                    "type": "block",
+                    "start_token": 415,
+                    "end_token": 436,
+                    "label": ":\n    graph_id: str\n    input_data: BlockInput\n    user_id: str\n    graph_version: int\n    cron: str\n",
+                    "children": [
+                        {
+                            "type": "attribute",
+                            "start_token": 417,
+                            "end_token": 419,
+                            "label": "graph_id: str",
+                            "children": []
+                        },
+                        {
+                            "type": "attribute",
+                            "start_token": 421,
+                            "end_token": 423,
+                            "label": "input_data: BlockInput",
+                            "children": []
+                        },
+                        {
+                            "type": "attribute",
+                            "start_token": 425,
+                            "end_token": 427,
+                            "label": "user_id: str",
+                            "children": []
+                        },
+                        {
+                            "type": "attribute",
+                            "start_token": 429,
+                            "end_token": 431,
+                            "label": "graph_version: int",
+                            "children": []
+                        },
+                        {
+                            "type": "attribute",
+                            "start_token": 433,
+                            "end_token": 435,
+                            "label": "cron: str",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "class_definition",
+            "start_token": 439,
+            "end_token": 506,
+            "label": "class JobInfo(JobArgs):\n    id: str\n    name: str\n    next_run_time: str\n\n    @staticmethod\n    def from_db(job_args: JobArgs, job_obj: JobObj) -> \"JobInfo\":\n        return JobInfo(\n            id=job_obj.id,\n            name=job_obj.name,\n            next_run_time=job_obj.next_run_time.isoformat(),\n",
+            "children": [
+                {
+                    "type": "parameters",
+                    "start_token": 441,
+                    "end_token": 443,
+                    "label": "(JobArgs)",
+                    "children": []
+                },
+                {
+                    "type": "block",
+                    "start_token": 444,
+                    "end_token": 506,
+                    "label": ":\n    id: str\n    name: str\n    next_run_time: str\n\n    @staticmethod\n    def from_db(job_args: JobArgs, job_obj: JobObj) -> \"JobInfo\":\n        return JobInfo(\n            id=job_obj.id,\n            name=job_obj.name,\n            next_run_time=job_obj.next_run_time.isoformat(),\n",
+                    "children": [
+                        {
+                            "type": "attribute",
+                            "start_token": 446,
+                            "end_token": 448,
+                            "label": "id: str",
+                            "children": []
+                        },
+                        {
+                            "type": "attribute",
+                            "start_token": 450,
+                            "end_token": 452,
+                            "label": "name: str",
+                            "children": []
+                        },
+                        {
+                            "type": "attribute",
+                            "start_token": 454,
+                            "end_token": 456,
+                            "label": "next_run_time: str",
+                            "children": []
+                        },
+                        {
+                            "type": "decorated_definition",
+                            "start_token": 459,
+                            "end_token": 516,
+                            "label": "@staticmethod\n    def from_db(job_args: JobArgs, job_obj: JobObj) -> \"JobInfo\":\n        return JobInfo(\n            id=job_obj.id,\n            name=job_obj.name,\n            next_run_time=job_obj.next_run_time.isoformat(),\n            **job_args.model_dump(),\n        )",
+                            "children": [
+                                {
+                                    "type": "decorator",
+                                    "start_token": 459,
+                                    "end_token": 461,
+                                    "label": "@staticmethod\n",
+                                    "children": []
+                                },
+                                {
+                                    "type": "function_definition",
+                                    "start_token": 463,
+                                    "end_token": 516,
+                                    "label": "from_db(job_args: JobArgs, job_obj: JobObj) -> \"JobInfo\":\n        return JobInfo(\n            id=job_obj.id,\n            name=job_obj.name,\n            next_run_time=job_obj.next_run_time.isoformat(),\n            **job_args.model_dump(),\n        )",
+                                    "children": [
+                                        {
+                                            "type": "parameters",
+                                            "start_token": 465,
+                                            "end_token": 471,
+                                            "label": "job_args: JobArgs, job_obj: JobObj",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "block",
+                                            "start_token": 476,
+                                            "end_token": 516,
+                                            "label": ":\n        return JobInfo(\n            id=job_obj.id,\n            name=job_obj.name,\n            next_run_time=job_obj.next_run_time.isoformat(),\n            **job_args.model_dump(),\n        )",
+                                            "children": [
+                                                {
+                                                    "type": "return_statement",
+                                                    "start_token": 478,
+                                                    "end_token": 516,
+                                                    "label": "return JobInfo(\n            id=job_obj.id,\n            name=job_obj.name,\n            next_run_time=job_obj.next_run_time.isoformat(),\n            **job_args.model_dump(),\n        )",
+                                                    "children": [
+                                                        {
+                                                            "type": "call",
+                                                            "start_token": 479,
+                                                            "end_token": 498,
+                                                            "label": "JobInfo(\n            id=job_obj.id,\n            name=job_obj.name,\n            next_run_time=job_obj",
+                                                            "children": []
+                                                        },
+                                                        {
+                                                            "type": "dictionary_splat",
+                                                            "start_token": 507,
+                                                            "end_token": 515,
+                                                            "label": "**job_args.model_dump(),\n",
+                                                            "children": []
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "class_definition",
+            "start_token": 520,
+            "end_token": 658,
+            "label": "class ExecutionScheduler(AppService):\n    scheduler: BlockingScheduler\n\n    @classmethod\n    def get_port(cls) -> int:\n        return config.execution_scheduler_port\n\n    @property\n    @thread_cached\n    def execution_client(self) -> ExecutionManager:\n        return get_service_client(ExecutionManager)\n\n    def run_service(self):\n        load_dotenv()\n        db_schema, db_url = _extract_schema_from_url(os.getenv(\"DATABASE_URL\"))\n        self.scheduler = BlockingScheduler(\n            jobstores={\n                \"default\": SQLAlchemyJobStore(\n                    engine=create_engine(db_url),\n                    metadata=MetaData(schema=db_schema),\n                )\n            }\n        )\n        self.scheduler.add_listener(job_listener, EVENT_JOB_EXECUTED | EVENT_JOB_ERROR)\n        self.scheduler.start()",
+            "children": [
+                {
+                    "type": "parameters",
+                    "start_token": 522,
+                    "end_token": 524,
+                    "label": "(AppService)",
+                    "children": []
+                },
+                {
+                    "type": "block",
+                    "start_token": 525,
+                    "end_token": 658,
+                    "label": ":\n    scheduler: BlockingScheduler\n\n    @classmethod\n    def get_port(cls) -> int:\n        return config.execution_scheduler_port\n\n    @property\n    @thread_cached\n    def execution_client(self) -> ExecutionManager:\n        return get_service_client(ExecutionManager)\n\n    def run_service(self):\n        load_dotenv()\n        db_schema, db_url = _extract_schema_from_url(os.getenv(\"DATABASE_URL\"))\n        self.scheduler = BlockingScheduler(\n            jobstores={\n                \"default\": SQLAlchemyJobStore(\n                    engine=create_engine(db_url),\n                    metadata=MetaData(schema=db_schema),\n                )\n            }\n        )\n        self.scheduler.add_listener(job_listener, EVENT_JOB_EXECUTED | EVENT_JOB_ERROR)\n        self.scheduler.start()",
+                    "children": [
+                        {
+                            "type": "attribute",
+                            "start_token": 527,
+                            "end_token": 529,
+                            "label": "scheduler: BlockingScheduler",
+                            "children": []
+                        },
+                        {
+                            "type": "decorated_definition",
+                            "start_token": 532,
+                            "end_token": 549,
+                            "label": "@classmethod\n    def get_port(cls) -> int:\n        return config.execution_scheduler_port\n",
+                            "children": [
+                                {
+                                    "type": "decorator",
+                                    "start_token": 532,
+                                    "end_token": 534,
+                                    "label": "@classmethod\n",
+                                    "children": []
+                                },
+                                {
+                                    "type": "function_definition",
+                                    "start_token": 536,
+                                    "end_token": 549,
+                                    "label": "get_port(cls) -> int:\n        return config.execution_scheduler_port\n",
+                                    "children": [
+                                        {
+                                            "type": "parameters",
+                                            "start_token": 538,
+                                            "end_token": 539,
+                                            "label": "cls)",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "block",
+                                            "start_token": 543,
+                                            "end_token": 549,
+                                            "label": ":\n        return config.execution_scheduler_port\n",
+                                            "children": [
+                                                {
+                                                    "type": "return_statement",
+                                                    "start_token": 545,
+                                                    "end_token": 549,
+                                                    "label": "return config.execution_scheduler_port\n",
+                                                    "children": []
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "decorated_definition",
+                            "start_token": 552,
+                            "end_token": 572,
+                            "label": "property\n    @thread_cached\n    def execution_client(self) -> ExecutionManager:\n        return get_service_client(ExecutionManager)\n",
+                            "children": [
+                                {
+                                    "type": "decorator",
+                                    "start_token": 552,
+                                    "end_token": 555,
+                                    "label": "property\n    @thread_cached",
+                                    "children": []
+                                },
+                                {
+                                    "type": "function_definition",
+                                    "start_token": 557,
+                                    "end_token": 572,
+                                    "label": "def execution_client(self) -> ExecutionManager:\n        return get_service_client(ExecutionManager)\n",
+                                    "children": [
+                                        {
+                                            "type": "parameters",
+                                            "start_token": 559,
+                                            "end_token": 561,
+                                            "label": "(self)",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "block",
+                                            "start_token": 565,
+                                            "end_token": 572,
+                                            "label": ":\n        return get_service_client(ExecutionManager)\n",
+                                            "children": [
+                                                {
+                                                    "type": "return_statement",
+                                                    "start_token": 567,
+                                                    "end_token": 572,
+                                                    "label": "return get_service_client(ExecutionManager)\n",
+                                                    "children": []
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "function_definition",
+                            "start_token": 574,
+                            "end_token": 657,
+                            "label": "def run_service(self):\n        load_dotenv()\n        db_schema, db_url = _extract_schema_from_url(os.getenv(\"DATABASE_URL\"))\n        self.scheduler = BlockingScheduler(\n            jobstores={\n                \"default\": SQLAlchemyJobStore(\n                    engine=create_engine(db_url),\n                    metadata=MetaData(schema=db_schema),\n                )\n            }\n        )\n        self.scheduler.add_listener(job_listener, EVENT_JOB_EXECUTED | EVENT_JOB_ERROR)\n        self.scheduler.start(",
+                            "children": [
+                                {
+                                    "type": "parameters",
+                                    "start_token": 576,
+                                    "end_token": 578,
+                                    "label": "(self)",
+                                    "children": []
+                                },
+                                {
+                                    "type": "block",
+                                    "start_token": 579,
+                                    "end_token": 657,
+                                    "label": ":\n        load_dotenv()\n        db_schema, db_url = _extract_schema_from_url(os.getenv(\"DATABASE_URL\"))\n        self.scheduler = BlockingScheduler(\n            jobstores={\n                \"default\": SQLAlchemyJobStore(\n                    engine=create_engine(db_url),\n                    metadata=MetaData(schema=db_schema),\n                )\n            }\n        )\n        self.scheduler.add_listener(job_listener, EVENT_JOB_EXECUTED | EVENT_JOB_ERROR)\n        self.scheduler.start(",
+                                    "children": [
+                                        {
+                                            "type": "expression_statement",
+                                            "start_token": 581,
+                                            "end_token": 583,
+                                            "label": "load_dotenv()",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "assignment",
+                                            "start_token": 585,
+                                            "end_token": 597,
+                                            "label": "db_schema, db_url = _extract_schema_from_url(os.getenv(\"DATABASE_URL\"))",
+                                            "children": [
+                                                {
+                                                    "type": "call",
+                                                    "start_token": 589,
+                                                    "end_token": 597,
+                                                    "label": "_extract_schema_from_url(os.getenv(\"DATABASE_URL\"))",
+                                                    "children": []
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "expression_list",
+                                            "start_token": 599,
+                                            "end_token": 659,
+                                            "label": "self.scheduler = BlockingScheduler(\n            jobstores={\n                \"default\": SQLAlchemyJobStore(\n                    engine=create_engine(db_url),\n                    metadata=MetaData(schema=db_schema),\n                )\n            }\n        )\n        self.scheduler.add_listener(job_listener, EVENT_JOB_EXECUTED | EVENT_JOB_ERROR)\n        self.scheduler.start()\n",
+                                            "children": [
+                                                {
+                                                    "type": "dictionary",
+                                                    "start_token": 606,
+                                                    "end_token": 634,
+                                                    "label": "jobstores={\n                \"default\": SQLAlchemyJobStore(\n                    engine=create_engine(db_url),\n                    metadata=MetaData(schema=db_schema),\n                )\n",
+                                                    "children": []
+                                                },
+                                                {
+                                                    "type": "call",
+                                                    "start_token": 640,
+                                                    "end_token": 659,
+                                                    "label": ".scheduler.add_listener(job_listener, EVENT_JOB_EXECUTED | EVENT_JOB_ERROR)\n        self.scheduler.start()\n",
+                                                    "children": []
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "decorated_definition",
+            "start_token": 661,
+            "end_token": 784,
+            "label": "@expose\n    def add_execution_schedule(\n        self,\n        graph_id: str,\n        graph_version: int,\n        cron: str,\n        input_data: BlockInput,\n        user_id: str,\n    ) -> JobInfo:\n        job_args = JobArgs(\n            graph_id=graph_id,\n            input_data=input_data,\n            user_id=user_id,\n            graph_version=graph_version,\n            cron=cron,\n        )\n        job = self.scheduler.add_job(\n            execute_graph,\n            CronTrigger.from_crontab(cron),\n            kwargs=job_args.model_dump(),\n            replace_existing=True,\n        )\n        log(f\"Added job {job.id} with cron schedule '{cron}' input data: {input_data}\")\n        return JobInfo.from_db(job_args, job)",
+            "children": [
+                {
+                    "type": "decorator",
+                    "start_token": 661,
+                    "end_token": 662,
+                    "label": "@expose",
+                    "children": []
+                },
+                {
+                    "type": "function_definition",
+                    "start_token": 664,
+                    "end_token": 784,
+                    "label": "def add_execution_schedule(\n        self,\n        graph_id: str,\n        graph_version: int,\n        cron: str,\n        input_data: BlockInput,\n        user_id: str,\n    ) -> JobInfo:\n        job_args = JobArgs(\n            graph_id=graph_id,\n            input_data=input_data,\n            user_id=user_id,\n            graph_version=graph_version,\n            cron=cron,\n        )\n        job = self.scheduler.add_job(\n            execute_graph,\n            CronTrigger.from_crontab(cron),\n            kwargs=job_args.model_dump(),\n            replace_existing=True,\n        )\n        log(f\"Added job {job.id} with cron schedule '{cron}' input data: {input_data}\")\n        return JobInfo.from_db(job_args, job)",
+                    "children": [
+                        {
+                            "type": "parameters",
+                            "start_token": 666,
+                            "end_token": 694,
+                            "label": "(\n        self,\n        graph_id: str,\n        graph_version: int,\n        cron: str,\n        input_data: BlockInput,\n        user_id: str,",
+                            "children": []
+                        },
+                        {
+                            "type": "block",
+                            "start_token": 700,
+                            "end_token": 784,
+                            "label": ":\n        job_args = JobArgs(\n            graph_id=graph_id,\n            input_data=input_data,\n            user_id=user_id,\n            graph_version=graph_version,\n            cron=cron,\n        )\n        job = self.scheduler.add_job(\n            execute_graph,\n            CronTrigger.from_crontab(cron),\n            kwargs=job_args.model_dump(),\n            replace_existing=True,\n        )\n        log(f\"Added job {job.id} with cron schedule '{cron}' input data: {input_data}\")\n        return JobInfo.from_db(job_args, job)",
+                            "children": [
+                                {
+                                    "type": "assignment",
+                                    "start_token": 702,
+                                    "end_token": 732,
+                                    "label": "job_args = JobArgs(\n            graph_id=graph_id,\n            input_data=input_data,\n            user_id=user_id,\n            graph_version=graph_version,\n            cron=cron,\n        )",
+                                    "children": []
+                                },
+                                {
+                                    "type": "call",
+                                    "start_token": 734,
+                                    "end_token": 774,
+                                    "label": "job = self.scheduler.add_job(\n            execute_graph,\n            CronTrigger.from_crontab(cron),\n            kwargs=job_args.model_dump(),\n            replace_existing=True,\n        )\n        log(f\"Added job {job.id} with cron schedule '{cron}' input data: {input_data}\")",
+                                    "children": []
+                                },
+                                {
+                                    "type": "return_statement",
+                                    "start_token": 776,
+                                    "end_token": 784,
+                                    "label": "return JobInfo.from_db(job_args, job)",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "decorated_definition",
+            "start_token": 787,
+            "end_token": 886,
+            "label": "@expose\n    def delete_schedule(self, schedule_id: str, user_id: str) -> JobInfo:\n        job = self.scheduler.get_job(schedule_id)\n        if not job:\n            log(f\"Job {schedule_id} not found.\")\n            raise ValueError(f\"Job #{schedule_id} not found.\")\n\n        job_args = JobArgs(**job.kwargs)\n        if job_args.user_id != user_id:\n            raise ValueError(\"User ID does not match the job's user ID.\")\n\n        log(f\"Deleting job {schedule_id}\")\n        job.remove()\n\n        return JobInfo.from_db(job_args, job)",
+            "children": [
+                {
+                    "type": "decorator",
+                    "start_token": 787,
+                    "end_token": 788,
+                    "label": "@expose",
+                    "children": []
+                },
+                {
+                    "type": "function_definition",
+                    "start_token": 790,
+                    "end_token": 886,
+                    "label": "def delete_schedule(self, schedule_id: str, user_id: str) -> JobInfo:\n        job = self.scheduler.get_job(schedule_id)\n        if not job:\n            log(f\"Job {schedule_id} not found.\")\n            raise ValueError(f\"Job #{schedule_id} not found.\")\n\n        job_args = JobArgs(**job.kwargs)\n        if job_args.user_id != user_id:\n            raise ValueError(\"User ID does not match the job's user ID.\")\n\n        log(f\"Deleting job {schedule_id}\")\n        job.remove()\n\n        return JobInfo.from_db(job_args, job)",
+                    "children": [
+                        {
+                            "type": "parameters",
+                            "start_token": 792,
+                            "end_token": 802,
+                            "label": "(self, schedule_id: str, user_id: str)",
+                            "children": []
+                        },
+                        {
+                            "type": "block",
+                            "start_token": 806,
+                            "end_token": 886,
+                            "label": ":\n        job = self.scheduler.get_job(schedule_id)\n        if not job:\n            log(f\"Job {schedule_id} not found.\")\n            raise ValueError(f\"Job #{schedule_id} not found.\")\n\n        job_args = JobArgs(**job.kwargs)\n        if job_args.user_id != user_id:\n            raise ValueError(\"User ID does not match the job's user ID.\")\n\n        log(f\"Deleting job {schedule_id}\")\n        job.remove()\n\n        return JobInfo.from_db(job_args, job)",
+                            "children": [
+                                {
+                                    "type": "conditional_expression",
+                                    "start_token": 819,
+                                    "end_token": 835,
+                                    "label": "if not job:\n            log(f\"Job {schedule_id} not found.\")\n            raise ValueError(f\"Job #{schedule_id} not found.\")",
+                                    "children": []
+                                },
+                                {
+                                    "type": "conditional_expression",
+                                    "start_token": 849,
+                                    "end_token": 862,
+                                    "label": "if job_args.user_id != user_id:\n            raise ValueError(\"User ID does not match the job's user ID.\")",
+                                    "children": []
+                                },
+                                {
+                                    "type": "call",
+                                    "start_token": 865,
+                                    "end_token": 869,
+                                    "label": "log(f\"Deleting job {schedule_id}\")",
+                                    "children": []
+                                },
+                                {
+                                    "type": "class_definition",
+                                    "start_token": 878,
+                                    "end_token": 886,
+                                    "label": "return JobInfo.from_db(job_args, job)",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "decorated_definition",
+            "start_token": 889,
+            "end_token": 1008,
+            "label": "@expose\n    def get_execution_schedules(\n        self, graph_id: str | None = None, user_id: str | None = None\n    ) -> list[JobInfo]:\n        schedules = []\n        for job in self.scheduler.get_jobs():\n            job_args = JobArgs(**job.kwargs)\n            if (\n                job.next_run_time is not None\n                and (graph_id is None or job_args.graph_id == graph_id)\n                and (user_id is None or job_args.user_id == user_id)\n            ):\n                schedules.append(JobInfo.from_db(job_args, job))\n        return schedules\n",
+            "children": [
+                {
+                    "type": "decorator",
+                    "start_token": 889,
+                    "end_token": 890,
+                    "label": "@expose",
+                    "children": []
+                },
+                {
+                    "type": "function_definition",
+                    "start_token": 892,
+                    "end_token": 1008,
+                    "label": "def get_execution_schedules(\n        self, graph_id: str | None = None, user_id: str | None = None\n    ) -> list[JobInfo]:\n        schedules = []\n        for job in self.scheduler.get_jobs():\n            job_args = JobArgs(**job.kwargs)\n            if (\n                job.next_run_time is not None\n                and (graph_id is None or job_args.graph_id == graph_id)\n                and (user_id is None or job_args.user_id == user_id)\n            ):\n                schedules.append(JobInfo.from_db(job_args, job))\n        return schedules\n",
+                    "children": [
+                        {
+                            "type": "parameters",
+                            "start_token": 894,
+                            "end_token": 912,
+                            "label": "(\n        self, graph_id: str | None = None, user_id: str | None = None",
+                            "children": []
+                        },
+                        {
+                            "type": "block",
+                            "start_token": 914,
+                            "end_token": 1008,
+                            "label": ") -> list[JobInfo]:\n        schedules = []\n        for job in self.scheduler.get_jobs():\n            job_args = JobArgs(**job.kwargs)\n            if (\n                job.next_run_time is not None\n                and (graph_id is None or job_args.graph_id == graph_id)\n                and (user_id is None or job_args.user_id == user_id)\n            ):\n                schedules.append(JobInfo.from_db(job_args, job))\n        return schedules\n",
+                            "children": [
+                                {
+                                    "type": "assignment",
+                                    "start_token": 923,
+                                    "end_token": 928,
+                                    "label": "schedules = []\n        for",
+                                    "children": []
+                                },
+                                {
+                                    "type": "for_statement",
+                                    "start_token": 928,
+                                    "end_token": 1007,
+                                    "label": "for job in self.scheduler.get_jobs():\n            job_args = JobArgs(**job.kwargs)\n            if (\n                job.next_run_time is not None\n                and (graph_id is None or job_args.graph_id == graph_id)\n                and (user_id is None or job_args.user_id == user_id)\n            ):\n                schedules.append(JobInfo.from_db(job_args, job))\n        return schedules",
+                                    "children": [
+                                        {
+                                            "type": "for_in_clause",
+                                            "start_token": 928,
+                                            "end_token": 938,
+                                            "label": "for job in self.scheduler.get_jobs():",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "block",
+                                            "start_token": 939,
+                                            "end_token": 1007,
+                                            "label": "\n            job_args = JobArgs(**job.kwargs)\n            if (\n                job.next_run_time is not None\n                and (graph_id is None or job_args.graph_id == graph_id)\n                and (user_id is None or job_args.user_id == user_id)\n            ):\n                schedules.append(JobInfo.from_db(job_args, job))\n        return schedules",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

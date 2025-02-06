@@ -1,0 +1,218 @@
+{
+    "type": "module",
+    "code": "",
+    "children": [
+        {
+            "type": "import_statement",
+            "code": "import logging",
+            "children": []
+        },
+        {
+            "type": "import_statement",
+            "code": "import requests",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "code": "from fastapi import Request",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "code": "from backend.data import integrations",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "code": "from backend.data.model import APIKeyCredentials, Credentials",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "code": "from backend.integrations.providers import ProviderName",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "code": "from backend.integrations.webhooks._base import BaseWebhooksManager",
+            "children": []
+        },
+        {
+            "type": "assignment",
+            "code": "logger = logging.getLogger(__name__)",
+            "children": []
+        },
+        {
+            "type": "class_definition",
+            "code": "class Slant3DWebhooksManager(BaseWebhooksManager):",
+            "children": [
+                {
+                    "type": "string",
+                    "code": "\"\"\"Manager for Slant3D webhooks\"\"\"",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "code": "PROVIDER_NAME = ProviderName.SLANT3D",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "code": "BASE_URL = \"https://www.slant3dapi.com/api\"",
+                    "children": []
+                },
+                {
+                    "type": "function_definition",
+                    "code": "async def _register_webhook(self, credentials: Credentials, webhook_type: str, resource: str, events: list[str], ingress_url: str, secret: str) -> tuple[str, dict]:",
+                    "children": [
+                        {
+                            "type": "string",
+                            "code": "\"\"\"Register a new webhook with Slant3D\"\"\"",
+                            "children": []
+                        },
+                        {
+                            "type": "if_statement",
+                            "code": "if not isinstance(credentials, APIKeyCredentials):",
+                            "children": [
+                                {
+                                    "type": "raise_statement",
+                                    "code": "raise ValueError(\"API key is required to register a webhook\")",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "assignment",
+                            "code": "headers = {\"api-key\": credentials.api_key.get_secret_value(), \"Content-Type\": \"application/json\"}",
+                            "children": []
+                        },
+                        {
+                            "type": "comment",
+                            "code": "# Slant3D's API doesn't use events list, just register for all order updates",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "code": "payload = {\"endPoint\": ingress_url}",
+                            "children": []
+                        },
+                        {
+                            "type": "call",
+                            "code": "response = requests.post(f\"{self.BASE_URL}/customer/webhookSubscribe\", headers=headers, json=payload)",
+                            "children": []
+                        },
+                        {
+                            "type": "if_statement",
+                            "code": "if not response.ok:",
+                            "children": [
+                                {
+                                    "type": "assignment",
+                                    "code": "error = response.json().get(\"error\", \"Unknown error\")",
+                                    "children": []
+                                },
+                                {
+                                    "type": "raise_statement",
+                                    "code": "raise RuntimeError(f\"Failed to register webhook: {error}\")",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "assignment",
+                            "code": "webhook_config = {\"endpoint\": ingress_url, \"provider\": self.PROVIDER_NAME, \"events\": [\"order.shipped\"], \"type\": webhook_type}",
+                            "children": []
+                        },
+                        {
+                            "type": "return_statement",
+                            "code": "return \"\", webhook_config",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "function_definition",
+                    "code": "async def validate_payload(cls, webhook: integrations.Webhook, request: Request) -> tuple[dict, str]:",
+                    "children": [
+                        {
+                            "type": "string",
+                            "code": "\"\"\"Validate incoming webhook payload from Slant3D\"\"\"",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "code": "payload = await request.json()",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "code": "required_fields = [\"orderId\", \"status\", \"trackingNumber\", \"carrierCode\"]",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "code": "missing_fields = [field for field in required_fields if field not in payload]",
+                            "children": []
+                        },
+                        {
+                            "type": "if_statement",
+                            "code": "if missing_fields:",
+                            "children": [
+                                {
+                                    "type": "raise_statement",
+                                    "code": "raise ValueError(f\"Missing required fields: {', '.join(missing_fields)}\")",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "assignment",
+                            "code": "normalized_payload = {\"orderId\": payload[\"orderId\"], \"status\": payload[\"status\"], \"trackingNumber\": payload[\"trackingNumber\"], \"carrierCode\": payload[\"carrierCode\"]}",
+                            "children": []
+                        },
+                        {
+                            "type": "comment",
+                            "code": "# Currently Slant3D only sends shipping notifications",
+                            "children": []
+                        },
+                        {
+                            "type": "comment",
+                            "code": "# Convert status to lowercase for event format compatibility",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "code": "event_type = f\"order.{payload['status'].lower()}\"",
+                            "children": []
+                        },
+                        {
+                            "type": "return_statement",
+                            "code": "return normalized_payload, event_type",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "function_definition",
+                    "code": "async def _deregister_webhook(self, webhook: integrations.Webhook, credentials: Credentials) -> None:",
+                    "children": [
+                        {
+                            "type": "string",
+                            "code": "\"\"\"\nNote: Slant3D API currently doesn't provide a deregistration endpoint.\nThis would need to be handled through support.\n\"\"\"",
+                            "children": []
+                        },
+                        {
+                            "type": "call",
+                            "code": "logger.warning(f\"Warning: Manual deregistration required for webhook {webhook.id}\")",
+                            "children": []
+                        },
+                        {
+                            "type": "pass_statement",
+                            "code": "pass",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

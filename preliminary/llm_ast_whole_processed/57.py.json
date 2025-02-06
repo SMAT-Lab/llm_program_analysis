@@ -1,0 +1,455 @@
+{
+    "type": "module",
+    "start_token": 0,
+    "end_token": 925,
+    "label": "import logging\nfrom contextlib import contextmanager\nfrom datetime import datetime\nfrom typing import TYPE_CHECKING\n\nfrom autogpt_libs.utils.synchronize import RedisKeyedMutex\nfrom redis.lock import Lock as RedisLock\n\nfrom backend.data import redis\nfrom backend.data.model import Credentials\nfrom backend.integrations.credentials_store import IntegrationCredentialsStore\nfrom backend.integrations.oauth import HANDLERS_BY_NAME\nfrom backend.util.exceptions import MissingConfigError\nfrom backend.util.settings import Settings\n\nif TYPE_CHECKING:\n    from backend.integrations.oauth import BaseOAuthHandler\n\nlogger = logging.getLogger(__name__)\nsettings = Settings()\n\n\nclass IntegrationCredentialsManager:\n    \"\"\"\n    Handles the lifecycle of integration credentials.\n    - Automatically refreshes requested credentials if needed.\n    - Uses locking mechanisms to ensure system-wide consistency and\n      prevent invalidation of in-use tokens.\n\n    ### ⚠️ Gotcha\n    With `acquire(..)`, credentials can only be in use in one place at a time (e.g. one\n    block execution).\n\n    ### Locking mechanism\n    - Because *getting* credentials can result in a refresh (= *invalidation* +\n      *replacement*) of the stored credentials, *getting* is an operation that\n      potentially requires read/write access.\n    - Checking whether a token has to be refreshed is subject to an additional `refresh`\n      scoped lock to prevent unnecessary sequential refreshes when multiple executions\n      try to access the same credentials simultaneously.\n    - We MUST lock credentials while in use to prevent them from being invalidated while\n      they are in use, e.g. because they are being refreshed by a different part\n      of the system.\n    - The `!time_sensitive` lock in `acquire(..)` is part of a two-tier locking\n      mechanism in which *updating* gets priority over *getting* credentials.\n      This is to prevent a long queue of waiting *get* requests from blocking essential\n      credential refreshes or user-initiated updates.\n\n    It is possible to implement a reader/writer locking system where either multiple\n    readers or a single writer can have simultaneous access, but this would add a lot of\n    complexity to the mechanism. I don't expect the current (\"simple\") mechanism to\n    cause so much latency that it's worth implementing.\n    \"\"\"\n\n    def __init__(self):\n        redis_conn = redis.get_redis()\n        self._locks = RedisKeyedMutex(redis_conn)\n        self.store = IntegrationCredentialsStore()\n\n    def create(self, user_id: str, credentials: Credentials) -> None:\n        return self.store.add_creds(user_id, credentials)\n\n    def exists(self, user_id: str, credentials_id: str) -> bool:\n        return self.store.get_creds_by_id(user_id, credentials_id) is not None\n\n    def get(\n        self, user_id: str, credentials_id: str, lock: bool = True\n    ) -> Credentials | None:\n        credentials = self.store.get_creds_by_id(user_id, credentials_id)\n        if not credentials:\n            return None\n\n        # Refresh OAuth credentials if needed\n        if credentials.type == \"oauth2\" and credentials.access_token_expires_at:\n            logger.debug(\n                f\"Credentials #{credentials.id} expire at \"\n                f\"{datetime.fromtimestamp(credentials.access_token_expires_at)}; \"\n                f\"current time is {datetime.now()}\"\n            )\n\n            with self._locked(user_id, credentials_id, \"refresh\"):\n                oauth_handler = _get_provider_oauth_handler(credentials.provider)\n                if oauth_handler.needs_refresh(credentials):\n                    logger.debug(\n                        f\"Refreshing '{credentials.provider}' \"\n                        f\"credentials #{credentials.id}\"\n                    )\n                    _lock = None\n                    if lock:\n                        # Wait until the credentials are no longer in use anywhere\n                        _lock = self._acquire_lock(user_id, credentials_id)\n\n                    fresh_credentials = oauth_handler.refresh_tokens(credentials)\n                    self.store.update_creds(user_id, fresh_credentials)\n                    if _lock and _lock.locked():\n                        _lock.release()\n\n                    credentials = fresh_credentials\n        else:\n            logger.debug(f\"Credentials #{credentials.id} never expire\")\n\n        return credentials\n\n    def acquire(\n        self, user_id: str, credentials_id: str\n    ) -> tuple[Credentials, RedisLock]:\n        \"\"\"\n        ⚠️ WARNING: this locks credentials system-wide and blocks both acquiring\n        and updating them elsewhere until the lock is released.\n        See the class docstring for more info.\n        \"\"\"\n        # Use a low-priority (!time_sensitive) locking queue on top of the general lock\n        # to allow priority access for refreshing/updating the tokens.\n        with self._locked(user_id, credentials_id, \"!time_sensitive\"):\n            lock = self._acquire_lock(user_id, credentials_id)\n        credentials = self.get(user_id, credentials_id, lock=False)\n        if not credentials:\n            raise ValueError(\n                f\"Credentials #{credentials_id} for user #{user_id} not found\"\n            )\n        return credentials, lock\n\n    def update(self, user_id: str, updated: Credentials) -> None:\n        with self._locked(user_id, updated.id):\n            self.store.update_creds(user_id, updated)\n\n    def delete(self, user_id: str, credentials_id: str) -> None:\n        with self._locked(user_id, credentials_id):\n            self.store.delete_creds_by_id(user_id, credentials_id)\n\n    # -- Locking utilities -- #\n\n    def _acquire_lock(self, user_id: str, credentials_id: str, *args: str) -> RedisLock:\n        key = (\n            f\"user:{user_id}\",\n            f\"credentials:{credentials_id}\",\n            *args,\n        )\n        return self._locks.acquire(key)\n\n    @contextmanager\n    def _locked(self, user_id: str, credentials_id: str, *args: str):\n        lock = self._acquire_lock(user_id, credentials_id, *args)\n        try:\n            yield\n        finally:\n            if lock.locked():\n                lock.release()\n\n    def release_all_locks(self):\n        \"\"\"Call this on process termination to ensure all locks are released\"\"\"\n        self._locks.release_all_locks()\n        self.store.locks.release_all_locks()\n\n\ndef _get_provider_oauth_handler(provider_name: str) -> \"BaseOAuthHandler\":\n    if provider_name not in HANDLERS_BY_NAME:\n        raise KeyError(f\"Unknown provider '{provider_name}'\")\n\n    client_id = getattr(settings.secrets, f\"{provider_name}_client_id\")\n    client_secret = getattr(settings.secrets, f\"{provider_name}_client_secret\")\n    if not (client_id and client_secret):\n        raise MissingConfigError(\n            f\"Integration with provider '{provider_name}' is not configured\",\n        )\n\n    handler_class = HANDLERS_BY_NAME[provider_name]\n    frontend_base_url = (\n        settings.config.frontend_base_url or settings.config.platform_base_url\n    )\n    return handler_class(\n        client_id=client_id,\n        client_secret=client_secret,\n        redirect_uri=f\"{frontend_base_url}/auth/integrations/oauth_callback\",\n    )\n",
+    "children": [
+        {
+            "type": "import_statement",
+            "start_token": 0,
+            "end_token": 1,
+            "label": "import logging",
+            "children": []
+        },
+        {
+            "type": "import_statement",
+            "start_token": 3,
+            "end_token": 6,
+            "label": "from contextlib import contextmanager",
+            "children": []
+        },
+        {
+            "type": "import_statement",
+            "start_token": 8,
+            "end_token": 11,
+            "label": "from datetime import datetime",
+            "children": []
+        },
+        {
+            "type": "import_statement",
+            "start_token": 13,
+            "end_token": 16,
+            "label": "from typing import TYPE_CHECKING",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 19,
+            "end_token": 26,
+            "label": "from autogpt_libs.utils.synchronize import RedisKeyedMutex",
+            "children": []
+        },
+        {
+            "type": "aliased_import",
+            "start_token": 28,
+            "end_token": 35,
+            "label": "from redis.lock import Lock as RedisLock",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 38,
+            "end_token": 43,
+            "label": "from backend.data import redis",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 45,
+            "end_token": 52,
+            "label": "from backend.data.model import Credentials",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 54,
+            "end_token": 61,
+            "label": "from backend.integrations.credentials_store import IntegrationCredentialsStore",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 63,
+            "end_token": 70,
+            "label": "from backend.integrations.oauth import HANDLERS_BY_NAME",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 72,
+            "end_token": 79,
+            "label": "from backend.util.exceptions import MissingConfigError",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 81,
+            "end_token": 88,
+            "label": "from backend.util.settings import Settings",
+            "children": []
+        },
+        {
+            "type": "if_statement",
+            "start_token": 91,
+            "end_token": 93,
+            "label": "if TYPE_CHECKING:",
+            "children": [
+                {
+                    "type": "import_from_statement",
+                    "start_token": 95,
+                    "end_token": 102,
+                    "label": "from backend.integrations.oauth import BaseOAuthHandler",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "assignment",
+            "start_token": 105,
+            "end_token": 112,
+            "label": "logger = logging.getLogger(__name__)",
+            "children": [
+                {
+                    "type": "call",
+                    "start_token": 107,
+                    "end_token": 112,
+                    "label": "logging.getLogger(__name__)",
+                    "children": [
+                        {
+                            "type": "attribute",
+                            "start_token": 107,
+                            "end_token": 109,
+                            "label": "logging.getLogger",
+                            "children": []
+                        },
+                        {
+                            "type": "argument_list",
+                            "start_token": 110,
+                            "end_token": 112,
+                            "label": "(__name__)",
+                            "children": [
+                                {
+                                    "type": "dotted_name",
+                                    "start_token": 111,
+                                    "end_token": 111,
+                                    "label": "__name__",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "assignment",
+            "start_token": 114,
+            "end_token": 118,
+            "label": "settings = Settings()",
+            "children": [
+                {
+                    "type": "call",
+                    "start_token": 116,
+                    "end_token": 118,
+                    "label": "Settings()",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "class_definition",
+            "start_token": 122,
+            "end_token": 925,
+            "label": "class IntegrationCredentialsManager:\n    \"\"\"\n    Handles the lifecycle of integration credentials.\n    - Automatically refreshes requested credentials if needed.\n    - Uses locking mechanisms to ensure system-wide consistency and\n      prevent invalidation of in-use tokens.\n\n    ### ⚠️ Gotcha\n    With `acquire(..)`, credentials can only be in use in one place at a time (e.g. one\n    block execution).\n\n    ### Locking mechanism\n    - Because *getting* credentials can result in a refresh (= *invalidation* +\n      *replacement*) of the stored credentials, *getting* is an operation that\n      potentially requires read/write access.\n    - Checking whether a token has to be refreshed is subject to an additional `refresh`\n      scoped lock to prevent unnecessary sequential refreshes when multiple executions\n      try to access the same credentials simultaneously.\n    - We MUST lock credentials while in use to prevent them from being invalidated while\n      they are in use, e.g. because they are being refreshed by a different part\n      of the system.\n    - The `!time_sensitive` lock in `acquire(..)` is part of a two-tier locking\n      mechanism in which *updating* gets priority over *getting* credentials.\n      This is to prevent a long queue of waiting *get* requests from blocking essential\n      credential refreshes or user-initiated updates.\n\n    It is possible to implement a reader/writer locking system where either multiple\n    readers or a single writer can have simultaneous access, but this would add a lot of\n    complexity to the mechanism. I don't expect the current (\"simple\") mechanism to\n    cause so much latency that it's worth implementing.\n    \"\"\"\n\n    def __init__(self):\n        redis_conn = redis.get_redis()\n        self._locks = RedisKeyedMutex(redis_conn)\n        self.store = IntegrationCredentialsStore()\n\n    def create(self, user_id: str, credentials: Credentials) -> None:\n        return self.store.add_creds(user_id, credentials)\n\n    def exists(self, user_id: str, credentials_id: str) -> bool:\n        return self.store.get_creds_by_id(user_id, credentials_id) is not None\n\n    def get(\n        self, user_id: str, credentials_id: str, lock: bool = True\n    ) -> Credentials | None:\n        credentials = self.store.get_creds_by_id(user_id, credentials_id)\n        if not credentials:\n            return None\n\n        # Refresh OAuth credentials if needed\n        if credentials.type == \"oauth2\" and credentials.access_token_expires_at:\n            logger.debug(\n                f\"Credentials #{credentials.id} expire at \"\n                f\"{datetime.fromtimestamp(credentials.access_token_expires_at)}; \"\n                f\"current time is {datetime.now()}\"\n            )\n\n            with self._locked(user_id, credentials_id, \"refresh\"):\n                oauth_handler = _get_provider_oauth_handler(credentials.provider)\n                if oauth_handler.needs_refresh(credentials):\n                    logger.debug(\n                        f\"Refreshing '{credentials.provider}' \"\n                        f\"credentials #{credentials.id}\"\n                    )\n                    _lock = None\n                    if lock:\n                        # Wait until the credentials are no longer in use anywhere\n                        _lock = self._acquire_lock(user_id, credentials_id)\n\n                    fresh_credentials = oauth_handler.refresh_tokens(credentials)\n                    self.store.update_creds(user_id, fresh_credentials)\n                    if _lock and _lock.locked():\n                        _lock.release()\n\n                    credentials = fresh_credentials\n        else:\n            logger.debug(f\"Credentials #{credentials.id} never expire\")\n\n        return credentials\n\n    def acquire(\n        self, user_id: str, credentials_id: str\n    ) -> tuple[Credentials, RedisLock]:\n        \"\"\"\n        ⚠️ WARNING: this locks credentials system-wide and blocks both acquiring\n        and updating them elsewhere until the lock is released.\n        See the class docstring for more info.\n        \"\"\"\n        # Use a low-priority (!time_sensitive) locking queue on top of the general lock\n        # to allow priority access for refreshing/updating the tokens.\n        with self._locked(user_id, credentials_id, \"!time_sensitive\"):\n            lock = self._acquire_lock(user_id, credentials_id)\n        credentials = self.get(user_id, credentials_id, lock=False)\n        if not credentials:\n            raise ValueError(\n                f\"Credentials #{credentials_id} for user #{user_id} not found\"\n            )\n        return credentials, lock\n\n    def update(self, user_id: str, updated: Credentials) -> None:\n        with self._locked(user_id, updated.id):\n            self.store.update_creds(user_id, updated)\n\n    def delete(self, user_id: str, credentials_id: str) -> None:\n        with self._locked(user_id, credentials_id):\n            self.store.delete_creds_by_id(user_id, credentials_id)\n\n    # -- Locking utilities -- #\n\n    def _acquire_lock(self, user_id: str, credentials_id: str, *args: str) -> RedisLock:\n        key = (\n            f\"user:{user_id}\",\n            f\"credentials:{credentials_id}\",\n            *args,\n        )\n        return self._locks.acquire(key)\n\n    @contextmanager\n    def _locked(self, user_id: str, credentials_id: str, *args: str):\n        lock = self._acquire_lock(user_id, credentials_id, *args)\n        try:\n            yield\n        finally:\n            if lock.locked():\n                lock.release()\n\n    def release_all_locks(self):\n        \"\"\"Call this on process termination to ensure all locks are released\"\"\"\n        self._locks.release_all_locks()\n        self.store.locks.release_all_locks()\n\n\ndef _get_provider_oauth_handler(provider_name: str) -> \"BaseOAuthHandler\":\n    if provider_name not in HANDLERS_BY_NAME:\n        raise KeyError(f\"Unknown provider '{provider_name}'\")\n\n    client_id = getattr(settings.secrets, f\"{provider_name}_client_id\")\n    client_secret = getattr(settings.secrets, f\"{provider_name}_client_secret\")\n    if not (client_id and client_secret):\n        raise MissingConfigError(\n            f\"Integration with provider '{provider_name}' is not configured\",\n        )\n\n    handler_class = HANDLERS_BY_NAME[provider_name]\n    frontend_base_url = (\n        settings.config.frontend_base_url or settings.config.platform_base_url\n    )\n    return handler_class(\n        client_id=client_id,\n        client_secret=client_secret,\n        redirect_uri=f\"{frontend_base_url}/auth/integrations/oauth_callback\",\n    )\n",
+            "children": [
+                {
+                    "type": "string",
+                    "start_token": 126,
+                    "end_token": 129,
+                    "label": "\"\"\"\n    Handles the lifecycle of integration credentials.\n    - Automatically refreshes requested credentials if needed.\n    - Uses locking mechanisms to ensure system-wide consistency and\n      prevent invalidation of in-use tokens.\n\n    ### ⚠️ Gotcha\n    With `acquire(..)`, credentials can only be in use in one place at a time (e.g. one\n    block execution).\n\n    ### Locking mechanism\n    - Because *getting* credentials can result in a refresh (= *invalidation* +\n      *replacement*) of the stored credentials, *getting* is an operation that\n      potentially requires read/write access.\n    - Checking whether a token has to be refreshed is subject to an additional `refresh`\n      scoped lock to prevent unnecessary sequential refreshes when multiple executions\n      try to access the same credentials simultaneously.\n    - We MUST lock credentials while in use to prevent them from being invalidated while\n      they are in use, e.g. because they are being refreshed by a different part\n      of the system.\n    - The `!time_sensitive` lock in `acquire(..)` is part of a two-tier locking\n      mechanism in which *updating* gets priority over *getting* credentials.\n      This is to prevent a long queue of waiting *get* requests from blocking essential\n      credential refreshes or user-initiated updates.\n\n    It is possible to implement a reader/writer locking system where either multiple\n    readers or a single writer can have simultaneous access, but this would add a lot of\n    complexity to the mechanism. I don't expect the current (\"simple\") mechanism to\n    cause so much latency that it's worth implementing.\n    \"",
+                    "children": []
+                },
+                {
+                    "type": "block",
+                    "start_token": 133,
+                    "end_token": 925,
+                    "label": "def __init__(self):\n        redis_conn = redis.get_redis()\n        self._locks = RedisKeyedMutex(redis_conn)\n        self.store = IntegrationCredentialsStore()\n\n    def create(self, user_id: str, credentials: Credentials) -> None:\n        return self.store.add_creds(user_id, credentials)\n\n    def exists(self, user_id: str, credentials_id: str) -> bool:\n        return self.store.get_creds_by_id(user_id, credentials_id) is not None\n\n    def get(\n        self, user_id: str, credentials_id: str, lock: bool = True\n    ) -> Credentials | None:\n        credentials = self.store.get_creds_by_id(user_id, credentials_id)\n        if not credentials:\n            return None\n\n        # Refresh OAuth credentials if needed\n        if credentials.type == \"oauth2\" and credentials.access_token_expires_at:\n            logger.debug(\n                f\"Credentials #{credentials.id} expire at \"\n                f\"{datetime.fromtimestamp(credentials.access_token_expires_at)}; \"\n                f\"current time is {datetime.now()}\"\n            )\n\n            with self._locked(user_id, credentials_id, \"refresh\"):\n                oauth_handler = _get_provider_oauth_handler(credentials.provider)\n                if oauth_handler.needs_refresh(credentials):\n                    logger.debug(\n                        f\"Refreshing '{credentials.provider}' \"\n                        f\"credentials #{credentials.id}\"\n                    )\n                    _lock = None\n                    if lock:\n                        # Wait until the credentials are no longer in use anywhere\n                        _lock = self._acquire_lock(user_id, credentials_id)\n\n                    fresh_credentials = oauth_handler.refresh_tokens(credentials)\n                    self.store.update_creds(user_id, fresh_credentials)\n                    if _lock and _lock.locked():\n                        _lock.release()\n\n                    credentials = fresh_credentials\n        else:\n            logger.debug(f\"Credentials #{credentials.id} never expire\")\n\n        return credentials\n\n    def acquire(\n        self, user_id: str, credentials_id: str\n    ) -> tuple[Credentials, RedisLock]:\n        \"\"\"\n        ⚠️ WARNING: this locks credentials system-wide and blocks both acquiring\n        and updating them elsewhere until the lock is released.\n        See the class docstring for more info.\n        \"\"\"\n        # Use a low-priority (!time_sensitive) locking queue on top of the general lock\n        # to allow priority access for refreshing/updating the tokens.\n        with self._locked(user_id, credentials_id, \"!time_sensitive\"):\n            lock = self._acquire_lock(user_id, credentials_id)\n        credentials = self.get(user_id, credentials_id, lock=False)\n        if not credentials:\n            raise ValueError(\n                f\"Credentials #{credentials_id} for user #{user_id} not found\"\n            )\n        return credentials, lock\n\n    def update(self, user_id: str, updated: Credentials) -> None:\n        with self._locked(user_id, updated.id):\n            self.store.update_creds(user_id, updated)\n\n    def delete(self, user_id: str, credentials_id: str) -> None:\n        with self._locked(user_id, credentials_id):\n            self.store.delete_creds_by_id(user_id, credentials_id)\n\n    # -- Locking utilities -- #\n\n    def _acquire_lock(self, user_id: str, credentials_id: str, *args: str) -> RedisLock:\n        key = (\n            f\"user:{user_id}\",\n            f\"credentials:{credentials_id}\",\n            *args,\n        )\n        return self._locks.acquire(key)\n\n    @contextmanager\n    def _locked(self, user_id: str, credentials_id: str, *args: str):\n        lock = self._acquire_lock(user_id, credentials_id, *args)\n        try:\n            yield\n        finally:\n            if lock.locked():\n                lock.release()\n\n    def release_all_locks(self):\n        \"\"\"Call this on process termination to ensure all locks are released\"\"\"\n        self._locks.release_all_locks()\n        self.store.locks.release_all_locks()\n\n\ndef _get_provider_oauth_handler(provider_name: str) -> \"BaseOAuthHandler\":\n    if provider_name not in HANDLERS_BY_NAME:\n        raise KeyError(f\"Unknown provider '{provider_name}'\")\n\n    client_id = getattr(settings.secrets, f\"{provider_name}_client_id\")\n    client_secret = getattr(settings.secrets, f\"{provider_name}_client_secret\")\n    if not (client_id and client_secret):\n        raise MissingConfigError(\n            f\"Integration with provider '{provider_name}' is not configured\",\n        )\n\n    handler_class = HANDLERS_BY_NAME[provider_name]\n    frontend_base_url = (\n        settings.config.frontend_base_url or settings.config.platform_base_url\n    )\n    return handler_class(\n        client_id=client_id,\n        client_secret=client_secret,\n        redirect_uri=f\"{frontend_base_url}/auth/integrations/oauth_callback\",\n    )\n",
+                    "children": [
+                        {
+                            "type": "function_definition",
+                            "start_token": 133,
+                            "end_token": 138,
+                            "label": "def __init__(self):",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 140,
+                            "end_token": 155,
+                            "label": "redis_conn = redis.get_redis()\n        self._locks = RedisKeyedMutex(redis_conn)",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 157,
+                            "end_token": 163,
+                            "label": "self.store = IntegrationCredentialsStore()",
+                            "children": []
+                        },
+                        {
+                            "type": "function_definition",
+                            "start_token": 166,
+                            "end_token": 195,
+                            "label": "def create(self, user_id: str, credentials: Credentials) -> None:\n        return self.store.add_creds(user_id, credentials)\n",
+                            "children": [
+                                {
+                                    "type": "parameters",
+                                    "start_token": 168,
+                                    "end_token": 174,
+                                    "label": "(self, user_id: str,",
+                                    "children": []
+                                },
+                                {
+                                    "type": "return_statement",
+                                    "start_token": 184,
+                                    "end_token": 194,
+                                    "label": "return self.store.add_creds(user_id, credentials)",
+                                    "children": [
+                                        {
+                                            "type": "call",
+                                            "start_token": 185,
+                                            "end_token": 194,
+                                            "label": "self.store.add_creds(user_id, credentials)",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "function_definition",
+                            "start_token": 197,
+                            "end_token": 229,
+                            "label": "def exists(self, user_id: str, credentials_id: str) -> bool:\n        return self.store.get_creds_by_id(user_id, credentials_id) is not None\n",
+                            "children": [
+                                {
+                                    "type": "parameters",
+                                    "start_token": 199,
+                                    "end_token": 209,
+                                    "label": "(self, user_id: str, credentials_id: str)",
+                                    "children": []
+                                },
+                                {
+                                    "type": "return_statement",
+                                    "start_token": 215,
+                                    "end_token": 228,
+                                    "label": "return self.store.get_creds_by_id(user_id, credentials_id) is not None",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "function_definition",
+                            "start_token": 231,
+                            "end_token": 449,
+                            "label": "def get(\n        self, user_id: str, credentials_id: str, lock: bool = True\n    ) -> Credentials | None:\n        credentials = self.store.get_creds_by_id(user_id, credentials_id)\n        if not credentials:\n            return None\n\n        # Refresh OAuth credentials if needed\n        if credentials.type == \"oauth2\" and credentials.access_token_expires_at:\n            logger.debug(\n                f\"Credentials #{credentials.id} expire at \"\n                f\"{datetime.fromtimestamp(credentials.access_token_expires_at)}; \"\n                f\"current time is {datetime.now()}\"\n            )\n\n            with self._locked(user_id, credentials_id, \"refresh\"):\n                oauth_handler = _get_provider_oauth_handler(credentials.provider)\n                if oauth_handler.needs_refresh(credentials):\n                    logger.debug(\n                        f\"Refreshing '{credentials.provider}' \"\n                        f\"credentials #{credentials.id}\"\n                    )\n                    _lock = None\n                    if lock:\n                        # Wait until the credentials are no longer in use anywhere\n                        _lock = self._acquire_lock(user_id, credentials_id)\n\n                    fresh_credentials = oauth_handler.refresh_tokens(credentials)\n                    self.store.update_creds(user_id, fresh_credentials)\n                    if _lock and _lock.locked():\n                        _lock.release()\n\n                    credentials = fresh_credentials\n        else:\n            logger.debug(f\"Credentials #{credentials.id} never expire\")\n\n        return credentials\n",
+                            "children": [
+                                {
+                                    "type": "parameters",
+                                    "start_token": 233,
+                                    "end_token": 250,
+                                    "label": "(\n        self, user_id: str, credentials_id: str, lock: bool = True\n",
+                                    "children": []
+                                },
+                                {
+                                    "type": "assignment",
+                                    "start_token": 259,
+                                    "end_token": 270,
+                                    "label": "credentials = self.store.get_creds_by_id(user_id, credentials_id)",
+                                    "children": []
+                                },
+                                {
+                                    "type": "if_statement",
+                                    "start_token": 272,
+                                    "end_token": 278,
+                                    "label": "if not credentials:\n            return None",
+                                    "children": []
+                                },
+                                {
+                                    "type": "if_statement",
+                                    "start_token": 288,
+                                    "end_token": 419,
+                                    "label": "if credentials.type == \"oauth2\" and credentials.access_token_expires_at:\n            logger.debug(\n                f\"Credentials #{credentials.id} expire at \"\n                f\"{datetime.fromtimestamp(credentials.access_token_expires_at)}; \"\n                f\"current time is {datetime.now()}\"\n            )\n\n            with self._locked(user_id, credentials_id, \"refresh\"):\n                oauth_handler = _get_provider_oauth_handler(credentials.provider)\n                if oauth_handler.needs_refresh(credentials):\n                    logger.debug(\n                        f\"Refreshing '{credentials.provider}' \"\n                        f\"credentials #{credentials.id}\"\n                    )\n                    _lock = None\n                    if lock:\n                        # Wait until the credentials are no longer in use anywhere\n                        _lock = self._acquire_lock(user_id, credentials_id)\n\n                    fresh_credentials = oauth_handler.refresh_tokens(credentials)\n                    self.store.update_creds(user_id, fresh_credentials)\n                    if _lock and _lock.locked",
+                                    "children": [
+                                        {
+                                            "type": "block",
+                                            "start_token": 318,
+                                            "end_token": 438,
+                                            "label": "with self._locked(user_id, credentials_id, \"refresh\"):\n                oauth_handler = _get_provider_oauth_handler(credentials.provider)\n                if oauth_handler.needs_refresh(credentials):\n                    logger.debug(\n                        f\"Refreshing '{credentials.provider}' \"\n                        f\"credentials #{credentials.id}\"\n                    )\n                    _lock = None\n                    if lock:\n                        # Wait until the credentials are no longer in use anywhere\n                        _lock = self._acquire_lock(user_id, credentials_id)\n\n                    fresh_credentials = oauth_handler.refresh_tokens(credentials)\n                    self.store.update_creds(user_id, fresh_credentials)\n                    if _lock and _lock.locked():\n                        _lock.release()\n\n                    credentials = fresh_credentials\n        else:\n            logger",
+                                            "children": [
+                                                {
+                                                    "type": "if_statement",
+                                                    "start_token": 340,
+                                                    "end_token": 434,
+                                                    "label": "if oauth_handler.needs_refresh(credentials):\n                    logger.debug(\n                        f\"Refreshing '{credentials.provider}' \"\n                        f\"credentials #{credentials.id}\"\n                    )\n                    _lock = None\n                    if lock:\n                        # Wait until the credentials are no longer in use anywhere\n                        _lock = self._acquire_lock(user_id, credentials_id)\n\n                    fresh_credentials = oauth_handler.refresh_tokens(credentials)\n                    self.store.update_creds(user_id, fresh_credentials)\n                    if _lock and _lock.locked():\n                        _lock.release()\n\n                    credentials = fresh_credentials\n",
+                                                    "children": [
+                                                        {
+                                                            "type": "if_statement",
+                                                            "start_token": 414,
+                                                            "end_token": 429,
+                                                            "label": "if _lock and _lock.locked():\n                        _lock.release()\n",
+                                                            "children": []
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "function_definition",
+                            "start_token": 451,
+                            "end_token": 569,
+                            "label": "def acquire(\n        self, user_id: str, credentials_id: str\n    ) -> tuple[Credentials, RedisLock]:\n        \"\"\"\n        ⚠️ WARNING: this locks credentials system-wide and blocks both acquiring\n        and updating them elsewhere until the lock is released.\n        See the class docstring for more info.\n        \"\"\"\n        # Use a low-priority (!time_sensitive) locking queue on top of the general lock\n        # to allow priority access for refreshing/updating the tokens.\n        with self._locked(user_id, credentials_id, \"!time_sensitive\"):\n            lock = self._acquire_lock(user_id, credentials_id)\n        credentials = self.get(user_id, credentials_id, lock=False)\n        if not credentials:\n            raise ValueError(\n                f\"Credentials #{credentials_id} for user #{user_id} not found\"\n            )\n        return credentials, lock\n",
+                            "children": [
+                                {
+                                    "type": "parameters",
+                                    "start_token": 453,
+                                    "end_token": 464,
+                                    "label": "(\n        self, user_id: str, credentials_id: str\n",
+                                    "children": []
+                                },
+                                {
+                                    "type": "block",
+                                    "start_token": 512,
+                                    "end_token": 568,
+                                    "label": "with self._locked(user_id, credentials_id, \"!time_sensitive\"):\n            lock = self._acquire_lock(user_id, credentials_id)\n        credentials = self.get(user_id, credentials_id, lock=False)\n        if not credentials:\n            raise ValueError(\n                f\"Credentials #{credentials_id} for user #{user_id} not found\"\n            )\n        return credentials, lock",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "function_definition",
+                            "start_token": 571,
+                            "end_token": 612,
+                            "label": "def update(self, user_id: str, updated: Credentials) -> None:\n        with self._locked(user_id, updated.id):\n            self.store.update_creds(user_id, updated)\n",
+                            "children": [
+                                {
+                                    "type": "parameters",
+                                    "start_token": 573,
+                                    "end_token": 583,
+                                    "label": "(self, user_id: str, updated: Credentials)",
+                                    "children": []
+                                },
+                                {
+                                    "type": "block",
+                                    "start_token": 589,
+                                    "end_token": 611,
+                                    "label": "with self._locked(user_id, updated.id):\n            self.store.update_creds(user_id, updated)",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "function_definition",
+                            "start_token": 614,
+                            "end_token": 652,
+                            "label": "def delete(self, user_id: str, credentials_id: str) -> None:\n        with self._locked(user_id, credentials_id):\n            self.store.delete_creds_by_id(user_id, credentials_id)",
+                            "children": [
+                                {
+                                    "type": "parameters",
+                                    "start_token": 616,
+                                    "end_token": 626,
+                                    "label": "(self, user_id: str, credentials_id: str)",
+                                    "children": []
+                                },
+                                {
+                                    "type": "block",
+                                    "start_token": 632,
+                                    "end_token": 651,
+                                    "label": "with self._locked(user_id, credentials_id):\n            self.store.delete_creds_by_id(user_id, credentials_id",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "function_definition",
+                            "start_token": 665,
+                            "end_token": 715,
+                            "label": "def _acquire_lock(self, user_id: str, credentials_id: str, *args: str) -> RedisLock:\n        key = (\n            f\"user:{user_id}\",\n            f\"credentials:{credentials_id}\",\n            *args,\n        )\n        return self._locks.acquire(key)\n",
+                            "children": [
+                                {
+                                    "type": "parameters",
+                                    "start_token": 667,
+                                    "end_token": 682,
+                                    "label": "(self, user_id: str, credentials_id: str, *args: str)",
+                                    "children": []
+                                },
+                                {
+                                    "type": "block",
+                                    "start_token": 688,
+                                    "end_token": 714,
+                                    "label": "key = (\n            f\"user:{user_id}\",\n            f\"credentials:{credentials_id}\",\n            *args,\n        )\n        return self._locks.acquire(key)",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "function_definition",
+                            "start_token": 717,
+                            "end_token": 775,
+                            "label": "@contextmanager\n    def _locked(self, user_id: str, credentials_id: str, *args: str):\n        lock = self._acquire_lock(user_id, credentials_id, *args)\n        try:\n            yield\n        finally:\n            if lock.locked():\n                lock.release()\n",
+                            "children": [
+                                {
+                                    "type": "parameters",
+                                    "start_token": 722,
+                                    "end_token": 737,
+                                    "label": "(self, user_id: str, credentials_id: str, *args: str)",
+                                    "children": []
+                                },
+                                {
+                                    "type": "block",
+                                    "start_token": 740,
+                                    "end_token": 774,
+                                    "label": "lock = self._acquire_lock(user_id, credentials_id, *args)\n        try:\n            yield\n        finally:\n            if lock.locked():\n                lock.release()",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "function_definition",
+                            "start_token": 777,
+                            "end_token": 805,
+                            "label": "def release_all_locks(self):\n        \"\"\"Call this on process termination to ensure all locks are released\"\"\"\n        self._locks.release_all_locks()\n        self.store.locks.release_all_locks()\n",
+                            "children": []
+                        },
+                        {
+                            "type": "function_definition",
+                            "start_token": 808,
+                            "end_token": 924,
+                            "label": "def _get_provider_oauth_handler(provider_name: str) -> \"BaseOAuthHandler\":\n    if provider_name not in HANDLERS_BY_NAME:\n        raise KeyError(f\"Unknown provider '{provider_name}'\")\n\n    client_id = getattr(settings.secrets, f\"{provider_name}_client_id\")\n    client_secret = getattr(settings.secrets, f\"{provider_name}_client_secret\")\n    if not (client_id and client_secret):\n        raise MissingConfigError(\n            f\"Integration with provider '{provider_name}' is not configured\",\n        )\n\n    handler_class = HANDLERS_BY_NAME[provider_name]\n    frontend_base_url = (\n        settings.config.frontend_base_url or settings.config.platform_base_url\n    )\n    return handler_class(\n        client_id=client_id,\n        client_secret=client_secret,\n        redirect_uri=f\"{frontend_base_url}/auth/integrations/oauth_callback\",\n    )",
+                            "children": [
+                                {
+                                    "type": "parameters",
+                                    "start_token": 810,
+                                    "end_token": 813,
+                                    "label": "(provider_name: str",
+                                    "children": []
+                                },
+                                {
+                                    "type": "block",
+                                    "start_token": 820,
+                                    "end_token": 923,
+                                    "label": "if provider_name not in HANDLERS_BY_NAME:\n        raise KeyError(f\"Unknown provider '{provider_name}'\")\n\n    client_id = getattr(settings.secrets, f\"{provider_name}_client_id\")\n    client_secret = getattr(settings.secrets, f\"{provider_name}_client_secret\")\n    if not (client_id and client_secret):\n        raise MissingConfigError(\n            f\"Integration with provider '{provider_name}' is not configured\",\n        )\n\n    handler_class = HANDLERS_BY_NAME[provider_name]\n    frontend_base_url = (\n        settings.config.frontend_base_url or settings.config.platform_base_url\n    )\n    return handler_class(\n        client_id=client_id,\n        client_secret=client_secret,\n        redirect_uri=f\"{frontend_base_url}/auth/integrations/oauth_callback\",\n",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

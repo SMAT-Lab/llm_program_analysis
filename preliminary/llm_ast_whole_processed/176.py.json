@@ -1,0 +1,645 @@
+{
+    "type": "module",
+    "start_token": 0,
+    "end_token": 1072,
+    "label": "import asyncio\nimport logging\nfrom contextlib import asynccontextmanager\n\nimport uvicorn\nfrom autogpt_libs.auth import parse_jwt_token\nfrom fastapi import Depends, FastAPI, WebSocket, WebSocketDisconnect\nfrom starlette.middleware.cors import CORSMiddleware\n\nfrom backend.data import redis\nfrom backend.data.execution import AsyncRedisExecutionEventBus\nfrom backend.data.user import DEFAULT_USER_ID\nfrom backend.server.conn_manager import ConnectionManager\nfrom backend.server.model import ExecutionSubscription, Methods, WsMessage\nfrom backend.util.service import AppProcess\nfrom backend.util.settings import AppEnvironment, Config, Settings\n\nlogger = logging.getLogger(__name__)\nsettings = Settings()\n\n\n@asynccontextmanager\nasync def lifespan(app: FastAPI):\n    manager = get_connection_manager()\n    fut = asyncio.create_task(event_broadcaster(manager))\n    fut.add_done_callback(lambda _: logger.info(\"Event broadcaster stopped\"))\n    yield\n\n\ndocs_url = \"/docs\" if settings.config.app_env == AppEnvironment.LOCAL else None\napp = FastAPI(lifespan=lifespan, docs_url=docs_url)\n_connection_manager = None\n\n\ndef get_connection_manager():\n    global _connection_manager\n    if _connection_manager is None:\n        _connection_manager = ConnectionManager()\n    return _connection_manager\n\n\nasync def event_broadcaster(manager: ConnectionManager):\n    try:\n        redis.connect()\n        event_queue = AsyncRedisExecutionEventBus()\n        async for event in event_queue.listen():\n            await manager.send_execution_result(event)\n    except Exception as e:\n        logger.exception(f\"Event broadcaster error: {e}\")\n        raise\n    finally:\n        redis.disconnect()\n\n\nasync def authenticate_websocket(websocket: WebSocket) -> str:\n    if not settings.config.enable_auth:\n        return DEFAULT_USER_ID\n\n    token = websocket.query_params.get(\"token\")\n    if not token:\n        await websocket.close(code=4001, reason=\"Missing authentication token\")\n        return \"\"\n\n    try:\n        payload = parse_jwt_token(token)\n        user_id = payload.get(\"sub\")\n        if not user_id:\n            await websocket.close(code=4002, reason=\"Invalid token\")\n            return \"\"\n        return user_id\n    except ValueError:\n        await websocket.close(code=4003, reason=\"Invalid token\")\n        return \"\"\n\n\nasync def handle_subscribe(\n    websocket: WebSocket, manager: ConnectionManager, message: WsMessage\n):\n    if not message.data:\n        await websocket.send_text(\n            WsMessage(\n                method=Methods.ERROR,\n                success=False,\n                error=\"Subscription data missing\",\n            ).model_dump_json()\n        )\n    else:\n        ex_sub = ExecutionSubscription.model_validate(message.data)\n        await manager.subscribe(ex_sub.graph_id, websocket)\n        logger.debug(f\"New execution subscription for graph {ex_sub.graph_id}\")\n        await websocket.send_text(\n            WsMessage(\n                method=Methods.SUBSCRIBE,\n                success=True,\n                channel=ex_sub.graph_id,\n            ).model_dump_json()\n        )\n\n\nasync def handle_unsubscribe(\n    websocket: WebSocket, manager: ConnectionManager, message: WsMessage\n):\n    if not message.data:\n        await websocket.send_text(\n            WsMessage(\n                method=Methods.ERROR,\n                success=False,\n                error=\"Subscription data missing\",\n            ).model_dump_json()\n        )\n    else:\n        ex_sub = ExecutionSubscription.model_validate(message.data)\n        await manager.unsubscribe(ex_sub.graph_id, websocket)\n        logger.debug(f\"Removed execution subscription for graph {ex_sub.graph_id}\")\n        await websocket.send_text(\n            WsMessage(\n                method=Methods.UNSUBSCRIBE,\n                success=True,\n                channel=ex_sub.graph_id,\n            ).model_dump_json()\n        )\n\n\n@app.get(\"/\")\nasync def health():\n    return {\"status\": \"healthy\"}\n\n\n@app.websocket(\"/ws\")\nasync def websocket_router(\n    websocket: WebSocket, manager: ConnectionManager = Depends(get_connection_manager)\n):\n    user_id = await authenticate_websocket(websocket)\n    if not user_id:\n        return\n    await manager.connect(websocket)\n    try:\n        while True:\n            data = await websocket.receive_text()\n            message = WsMessage.model_validate_json(data)\n\n            if message.method == Methods.HEARTBEAT:\n                await websocket.send_json(\n                    {\"method\": Methods.HEARTBEAT.value, \"data\": \"pong\", \"success\": True}\n                )\n                continue\n\n            if message.method == Methods.SUBSCRIBE:\n                await handle_subscribe(websocket, manager, message)\n\n            elif message.method == Methods.UNSUBSCRIBE:\n                await handle_unsubscribe(websocket, manager, message)\n\n            elif message.method == Methods.ERROR:\n                logger.error(f\"WebSocket Error message received: {message.data}\")\n\n            else:\n                logger.warning(\n                    f\"Unknown WebSocket message type {message.method} received: \"\n                    f\"{message.data}\"\n                )\n                await websocket.send_text(\n                    WsMessage(\n                        method=Methods.ERROR,\n                        success=False,\n                        error=\"Message type is not processed by the server\",\n                    ).model_dump_json()\n                )\n\n    except WebSocketDisconnect:\n        manager.disconnect(websocket)\n        logger.debug(\"WebSocket client disconnected\")\n\n\nclass WebsocketServer(AppProcess):\n    def run(self):\n        logger.info(f\"CORS allow origins: {settings.config.backend_cors_allow_origins}\")\n        server_app = CORSMiddleware(\n            app=app,\n            allow_origins=settings.config.backend_cors_allow_origins,\n            allow_credentials=True,\n            allow_methods=[\"*\"],\n            allow_headers=[\"*\"],\n        )\n        uvicorn.run(\n            server_app,\n            host=Config().websocket_server_host,\n            port=Config().websocket_server_port,\n        )\n",
+    "children": [
+        {
+            "type": "aliased_import",
+            "start_token": 0,
+            "end_token": 1,
+            "label": "import asyncio",
+            "children": []
+        },
+        {
+            "type": "aliased_import",
+            "start_token": 3,
+            "end_token": 4,
+            "label": "import logging",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 6,
+            "end_token": 9,
+            "label": "from contextlib import asynccontextmanager",
+            "children": [
+                {
+                    "type": "import_prefix",
+                    "start_token": 6,
+                    "end_token": 7,
+                    "label": "from contextlib",
+                    "children": []
+                },
+                {
+                    "type": "identifier",
+                    "start_token": 8,
+                    "end_token": 9,
+                    "label": "import asynccontextmanager",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "import_statement",
+            "start_token": 12,
+            "end_token": 13,
+            "label": "import uvicorn",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 15,
+            "end_token": 20,
+            "label": "from autogpt_libs.auth import parse_jwt_token",
+            "children": [
+                {
+                    "type": "import_prefix",
+                    "start_token": 15,
+                    "end_token": 19,
+                    "label": "from autogpt_libs.auth import",
+                    "children": []
+                },
+                {
+                    "type": "identifier",
+                    "start_token": 20,
+                    "end_token": 20,
+                    "label": "parse_jwt_token",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 22,
+            "end_token": 31,
+            "label": "from fastapi import Depends, FastAPI, WebSocket, WebSocketDisconnect",
+            "children": [
+                {
+                    "type": "import_prefix",
+                    "start_token": 22,
+                    "end_token": 25,
+                    "label": "from fastapi import Depends",
+                    "children": []
+                },
+                {
+                    "type": "identifier",
+                    "start_token": 26,
+                    "end_token": 26,
+                    "label": ",",
+                    "children": []
+                },
+                {
+                    "type": "identifier",
+                    "start_token": 27,
+                    "end_token": 27,
+                    "label": "FastAPI",
+                    "children": []
+                },
+                {
+                    "type": "identifier",
+                    "start_token": 28,
+                    "end_token": 28,
+                    "label": ",",
+                    "children": []
+                },
+                {
+                    "type": "identifier",
+                    "start_token": 29,
+                    "end_token": 29,
+                    "label": "WebSocket",
+                    "children": []
+                },
+                {
+                    "type": "identifier",
+                    "start_token": 30,
+                    "end_token": 31,
+                    "label": ", WebSocketDisconnect",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 33,
+            "end_token": 40,
+            "label": "from starlette.middleware.cors import CORSMiddleware",
+            "children": [
+                {
+                    "type": "import_prefix",
+                    "start_token": 33,
+                    "end_token": 37,
+                    "label": "from starlette.middleware.",
+                    "children": []
+                },
+                {
+                    "type": "identifier",
+                    "start_token": 38,
+                    "end_token": 40,
+                    "label": "cors import CORSMiddleware",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 43,
+            "end_token": 48,
+            "label": "from backend.data import redis",
+            "children": [
+                {
+                    "type": "import_prefix",
+                    "start_token": 43,
+                    "end_token": 44,
+                    "label": "from backend",
+                    "children": []
+                },
+                {
+                    "type": "identifier",
+                    "start_token": 47,
+                    "end_token": 48,
+                    "label": "import redis",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 50,
+            "end_token": 57,
+            "label": "from backend.data.execution import AsyncRedisExecutionEventBus",
+            "children": [
+                {
+                    "type": "import_prefix",
+                    "start_token": 50,
+                    "end_token": 53,
+                    "label": "from backend.data",
+                    "children": []
+                },
+                {
+                    "type": "identifier",
+                    "start_token": 54,
+                    "end_token": 57,
+                    "label": ".execution import AsyncRedisExecutionEventBus",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 59,
+            "end_token": 66,
+            "label": "from backend.data.user import DEFAULT_USER_ID",
+            "children": [
+                {
+                    "type": "import_prefix",
+                    "start_token": 59,
+                    "end_token": 65,
+                    "label": "from backend.data.user import",
+                    "children": []
+                },
+                {
+                    "type": "identifier",
+                    "start_token": 66,
+                    "end_token": 66,
+                    "label": "DEFAULT_USER_ID",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 68,
+            "end_token": 75,
+            "label": "from backend.server.conn_manager import ConnectionManager",
+            "children": [
+                {
+                    "type": "import_prefix",
+                    "start_token": 68,
+                    "end_token": 73,
+                    "label": "from backend.server.conn_manager",
+                    "children": []
+                },
+                {
+                    "type": "identifier",
+                    "start_token": 74,
+                    "end_token": 75,
+                    "label": "import ConnectionManager",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 77,
+            "end_token": 89,
+            "label": "from backend.server.model import ExecutionSubscription, Methods, WsMessage\n",
+            "children": [
+                {
+                    "type": "import_prefix",
+                    "start_token": 77,
+                    "end_token": 83,
+                    "label": "from backend.server.model import",
+                    "children": []
+                },
+                {
+                    "type": "identifier",
+                    "start_token": 84,
+                    "end_token": 88,
+                    "label": "ExecutionSubscription, Methods, WsMessage",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 90,
+            "end_token": 97,
+            "label": "from backend.util.service import AppProcess",
+            "children": [
+                {
+                    "type": "import_prefix",
+                    "start_token": 90,
+                    "end_token": 87,
+                    "label": "",
+                    "children": []
+                },
+                {
+                    "type": "identifier",
+                    "start_token": 96,
+                    "end_token": 97,
+                    "label": "import AppProcess",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 99,
+            "end_token": 110,
+            "label": "from backend.util.settings import AppEnvironment, Config, Settings",
+            "children": [
+                {
+                    "type": "import_prefix",
+                    "start_token": 99,
+                    "end_token": 104,
+                    "label": "from backend.util.settings",
+                    "children": []
+                },
+                {
+                    "type": "identifier",
+                    "start_token": 106,
+                    "end_token": 110,
+                    "label": "AppEnvironment, Config, Settings",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "assignment",
+            "start_token": 113,
+            "end_token": 120,
+            "label": "logger = logging.getLogger(__name__)",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 0,
+                    "end_token": 1,
+                    "label": "import asyncio",
+                    "children": []
+                },
+                {
+                    "type": "call",
+                    "start_token": 114,
+                    "end_token": 119,
+                    "label": "= logging.getLogger(__name__",
+                    "children": [
+                        {
+                            "type": "attribute",
+                            "start_token": 115,
+                            "end_token": 117,
+                            "label": "logging.getLogger",
+                            "children": [
+                                {
+                                    "type": "identifier",
+                                    "start_token": 1,
+                                    "end_token": 1,
+                                    "label": "asyncio",
+                                    "children": []
+                                },
+                                {
+                                    "type": "identifier",
+                                    "start_token": 1,
+                                    "end_token": 1,
+                                    "label": "asyncio",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "assignment",
+            "start_token": 122,
+            "end_token": 126,
+            "label": "settings = Settings()",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 0,
+                    "end_token": 102,
+                    "label": "import asyncio\nimport logging\nfrom contextlib import asynccontextmanager\n\nimport uvicorn\nfrom autogpt_libs.auth import parse_jwt_token\nfrom fastapi import Depends, FastAPI, WebSocket, WebSocketDisconnect\nfrom starlette.middleware.cors import CORSMiddleware\n\nfrom backend.data import redis\nfrom backend.data.execution import AsyncRedisExecutionEventBus\nfrom backend.data.user import DEFAULT_USER_ID\nfrom backend.server.conn_manager import ConnectionManager\nfrom backend.server.model import ExecutionSubscription, Methods, WsMessage\nfrom backend.util.service import AppProcess\nfrom backend.util",
+                    "children": []
+                },
+                {
+                    "type": "call",
+                    "start_token": 124,
+                    "end_token": 126,
+                    "label": "Settings()",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 1,
+                            "end_token": 66,
+                            "label": "asyncio\nimport logging\nfrom contextlib import asynccontextmanager\n\nimport uvicorn\nfrom autogpt_libs.auth import parse_jwt_token\nfrom fastapi import Depends, FastAPI, WebSocket, WebSocketDisconnect\nfrom starlette.middleware.cors import CORSMiddleware\n\nfrom backend.data import redis\nfrom backend.data.execution import AsyncRedisExecutionEventBus\nfrom backend.data.user import DEFAULT_USER_ID",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "decorated_definition",
+            "start_token": 130,
+            "end_token": 176,
+            "label": "@asynccontextmanager\nasync def lifespan(app: FastAPI):\n    manager = get_connection_manager()\n    fut = asyncio.create_task(event_broadcaster(manager))\n    fut.add_done_callback(lambda _: logger.info(\"Event broadcaster stopped\"))\n    yield",
+            "children": [
+                {
+                    "type": "decorator",
+                    "start_token": 130,
+                    "end_token": 131,
+                    "label": "@asynccontextmanager",
+                    "children": []
+                },
+                {
+                    "type": "function_definition",
+                    "start_token": 133,
+                    "end_token": 176,
+                    "label": "async def lifespan(app: FastAPI):\n    manager = get_connection_manager()\n    fut = asyncio.create_task(event_broadcaster(manager))\n    fut.add_done_callback(lambda _: logger.info(\"Event broadcaster stopped\"))\n    yield",
+                    "children": [
+                        {
+                            "type": "parameters",
+                            "start_token": 136,
+                            "end_token": 140,
+                            "label": "(app: FastAPI)",
+                            "children": [
+                                {
+                                    "type": "identifier",
+                                    "start_token": 137,
+                                    "end_token": 139,
+                                    "label": "app: FastAPI",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "block",
+                            "start_token": 141,
+                            "end_token": 176,
+                            "label": ":\n    manager = get_connection_manager()\n    fut = asyncio.create_task(event_broadcaster(manager))\n    fut.add_done_callback(lambda _: logger.info(\"Event broadcaster stopped\"))\n    yield",
+                            "children": [
+                                {
+                                    "type": "assignment",
+                                    "start_token": 143,
+                                    "end_token": 148,
+                                    "label": "manager = get_connection_manager()\n",
+                                    "children": [
+                                        {
+                                            "type": "identifier",
+                                            "start_token": 75,
+                                            "end_token": 5,
+                                            "label": "",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "call",
+                                            "start_token": 77,
+                                            "end_token": 143,
+                                            "label": "from backend.server.model import ExecutionSubscription, Methods, WsMessage\nfrom backend.util.service import AppProcess\nfrom backend.util.settings import AppEnvironment, Config, Settings\n\nlogger = logging.getLogger(__name__)\nsettings = Settings()\n\n\n@asynccontextmanager\nasync def lifespan(app: FastAPI):\n    manager",
+                                            "children": [
+                                                {
+                                                    "type": "call",
+                                                    "start_token": 124,
+                                                    "end_token": 126,
+                                                    "label": "Settings()",
+                                                    "children": []
+                                                },
+                                                {
+                                                    "type": "call",
+                                                    "start_token": 126,
+                                                    "end_token": 176,
+                                                    "label": ")\n\n\n@asynccontextmanager\nasync def lifespan(app: FastAPI):\n    manager = get_connection_manager()\n    fut = asyncio.create_task(event_broadcaster(manager))\n    fut.add_done_callback(lambda _: logger.info(\"Event broadcaster stopped\"))\n    yield",
+                                                    "children": []
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "assignment",
+            "start_token": 180,
+            "end_token": 195,
+            "label": "docs_url = \"/docs\" if settings.config.app_env == AppEnvironment.LOCAL else None",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 0,
+                    "end_token": 0,
+                    "label": "import",
+                    "children": []
+                },
+                {
+                    "type": "block",
+                    "start_token": 0,
+                    "end_token": 76,
+                    "label": "import asyncio\nimport logging\nfrom contextlib import asynccontextmanager\n\nimport uvicorn\nfrom autogpt_libs.auth import parse_jwt_token\nfrom fastapi import Depends, FastAPI, WebSocket, WebSocketDisconnect\nfrom starlette.middleware.cors import CORSMiddleware\n\nfrom backend.data import redis\nfrom backend.data.execution import AsyncRedisExecutionEventBus\nfrom backend.data.user import DEFAULT_USER_ID\nfrom backend.server.conn_manager import ConnectionManager\n",
+                    "children": [
+                        {
+                            "type": "call",
+                            "start_token": 191,
+                            "end_token": 193,
+                            "label": "AppEnvironment.LOCAL",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "assignment",
+            "start_token": 197,
+            "end_token": 208,
+            "label": "app = FastAPI(lifespan=lifespan, docs_url=docs_url)",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 0,
+                    "end_token": 0,
+                    "label": "import",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "assignment",
+            "start_token": 210,
+            "end_token": 212,
+            "label": "_connection_manager = None",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 0,
+                    "end_token": 0,
+                    "label": "import",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "start_token": 216,
+            "end_token": 239,
+            "label": "def get_connection_manager():\n    global _connection_manager\n    if _connection_manager is None:\n        _connection_manager = ConnectionManager()\n    return _connection_manager\n",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 124,
+                    "end_token": 209,
+                    "label": "Settings()\n\n\n@asynccontextmanager\nasync def lifespan(app: FastAPI):\n    manager = get_connection_manager()\n    fut = asyncio.create_task(event_broadcaster(manager))\n    fut.add_done_callback(lambda _: logger.info(\"Event broadcaster stopped\"))\n    yield\n\n\ndocs_url = \"/docs\" if settings.config.app_env == AppEnvironment.LOCAL else None\napp = FastAPI(lifespan=lifespan, docs_url=docs_url)\n",
+                    "children": []
+                },
+                {
+                    "type": "block",
+                    "start_token": 1,
+                    "end_token": 64,
+                    "label": "asyncio\nimport logging\nfrom contextlib import asynccontextmanager\n\nimport uvicorn\nfrom autogpt_libs.auth import parse_jwt_token\nfrom fastapi import Depends, FastAPI, WebSocket, WebSocketDisconnect\nfrom starlette.middleware.cors import CORSMiddleware\n\nfrom backend.data import redis\nfrom backend.data.execution import AsyncRedisExecutionEventBus\nfrom backend.data.user",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "async",
+            "start_token": 242,
+            "end_token": 308,
+            "label": "async def event_broadcaster(manager: ConnectionManager):\n    try:\n        redis.connect()\n        event_queue = AsyncRedisExecutionEventBus()\n        async for event in event_queue.listen():\n            await manager.send_execution_result(event)\n    except Exception as e:\n        logger.exception(f\"Event broadcaster error: {e}\")\n        raise\n    finally:\n        redis.disconnect(",
+            "children": [
+                {
+                    "type": "call",
+                    "start_token": 5,
+                    "end_token": 49,
+                    "label": "\nfrom contextlib import asynccontextmanager\n\nimport uvicorn\nfrom autogpt_libs.auth import parse_jwt_token\nfrom fastapi import Depends, FastAPI, WebSocket, WebSocketDisconnect\nfrom starlette.middleware.cors import CORSMiddleware\n\nfrom backend.data import redis\n",
+                    "children": [
+                        {
+                            "type": "assignment",
+                            "start_token": 180,
+                            "end_token": 180,
+                            "label": "docs_url",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "async",
+            "start_token": 313,
+            "end_token": 436,
+            "label": "async def authenticate_websocket(websocket: WebSocket) -> str:\n    if not settings.config.enable_auth:\n        return DEFAULT_USER_ID\n\n    token = websocket.query_params.get(\"token\")\n    if not token:\n        await websocket.close(code=4001, reason=\"Missing authentication token\")\n        return \"\"\n\n    try:\n        payload = parse_jwt_token(token)\n        user_id = payload.get(\"sub\")\n        if not user_id:\n            await websocket.close(code=4002, reason=\"Invalid token\")\n            return \"\"\n        return user_id\n    except ValueError:\n        await websocket.close(code=4003, reason=\"Invalid token\")\n        return \"\"",
+            "children": [
+                {
+                    "type": "assignment",
+                    "start_token": 216,
+                    "end_token": 245,
+                    "label": "def get_connection_manager():\n    global _connection_manager\n    if _connection_manager is None:\n        _connection_manager = ConnectionManager()\n    return _connection_manager\n\n\nasync def event_broadcaster(",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 78,
+                            "end_token": 88,
+                            "label": "backend.server.model import ExecutionSubscription, Methods, WsMessage",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "async",
+            "start_token": 440,
+            "end_token": 459,
+            "label": "async def handle_subscribe(\n    websocket: WebSocket, manager: ConnectionManager, message: WsMessage\n):\n",
+            "children": [
+                {
+                    "type": "call",
+                    "start_token": 6,
+                    "end_token": 93,
+                    "label": "from contextlib import asynccontextmanager\n\nimport uvicorn\nfrom autogpt_libs.auth import parse_jwt_token\nfrom fastapi import Depends, FastAPI, WebSocket, WebSocketDisconnect\nfrom starlette.middleware.cors import CORSMiddleware\n\nfrom backend.data import redis\nfrom backend.data.execution import AsyncRedisExecutionEventBus\nfrom backend.data.user import DEFAULT_USER_ID\nfrom backend.server.conn_manager import ConnectionManager\nfrom backend.server.model import ExecutionSubscription, Methods, WsMessage\nfrom backend.util",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 216,
+                            "end_token": 245,
+                            "label": "def get_connection_manager():\n    global _connection_manager\n    if _connection_manager is None:\n        _connection_manager = ConnectionManager()\n    return _connection_manager\n\n\nasync def event_broadcaster(",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "assignment",
+            "start_token": 5,
+            "end_token": 4,
+            "label": "",
+            "children": []
+        },
+        {
+            "type": "async",
+            "start_token": 354,
+            "end_token": 785,
+            "label": "\n        await websocket.close(code=4001, reason=\"Missing authentication token\")\n        return \"\"\n\n    try:\n        payload = parse_jwt_token(token)\n        user_id = payload.get(\"sub\")\n        if not user_id:\n            await websocket.close(code=4002, reason=\"Invalid token\")\n            return \"\"\n        return user_id\n    except ValueError:\n        await websocket.close(code=4003, reason=\"Invalid token\")\n        return \"\"\n\n\nasync def handle_subscribe(\n    websocket: WebSocket, manager: ConnectionManager, message: WsMessage\n):\n    if not message.data:\n        await websocket.send_text(\n            WsMessage(\n                method=Methods.ERROR,\n                success=False,\n                error=\"Subscription data missing\",\n            ).model_dump_json()\n        )\n    else:\n        ex_sub = ExecutionSubscription.model_validate(message.data)\n        await manager.subscribe(ex_sub.graph_id, websocket)\n        logger.debug(f\"New execution subscription for graph {ex_sub.graph_id}\")\n        await websocket.send_text(\n            WsMessage(\n                method=Methods.SUBSCRIBE,\n                success=True,\n                channel=ex_sub.graph_id,\n            ).model_dump_json()\n        )\n\n\nasync def handle_unsubscribe(\n    websocket: WebSocket, manager: ConnectionManager, message: WsMessage\n):\n    if not message.data:\n        await websocket.send_text(\n            WsMessage(\n                method=Methods.ERROR,\n                success=False,\n                error=\"Subscription data missing\",\n            ).model_dump_json()\n        )\n    else:\n        ex_sub = ExecutionSubscription.model_validate(message.data)\n        await manager.unsubscribe(ex_sub.graph_id, websocket)\n        logger.debug(f\"Removed execution subscription for graph {ex_sub.graph_id}\")\n        await websocket.send_text(\n            WsMessage(\n                method=Methods.UNSUBSCRIBE,\n                success=True,\n                channel=ex_sub.graph_id,\n            ).model_dump_json()\n        )\n\n\n@app.get(\"/\")\nasync def health():\n    return {\"status\": \"healthy\"}\n\n\n@app.websocket(\"/ws\")\nasync def websocket_router(\n    websocket: WebSocket, manager: ConnectionManager = Depends(get_connection_manager)\n):\n    user_id = await authenticate_websocket(websocket)\n    if not user_id:\n        return\n    await manager.connect(websocket)\n    try:\n        while",
+            "children": [
+                {
+                    "type": "block",
+                    "start_token": 195,
+                    "end_token": 7,
+                    "label": "",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "class_definition",
+            "start_token": 5,
+            "end_token": 3,
+            "label": "",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 8,
+                    "end_token": 1,
+                    "label": "",
+                    "children": []
+                }
+            ]
+        }
+    ]
+}

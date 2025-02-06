@@ -1,0 +1,605 @@
+{
+    "type": "module",
+    "start_token": 0,
+    "end_token": 1195,
+    "label": "import logging\nimport time\nfrom enum import Enum\nfrom typing import Any\n\nimport httpx\n\nfrom backend.blocks.fal._auth import (\n    TEST_CREDENTIALS,\n    TEST_CREDENTIALS_INPUT,\n    FalCredentials,\n    FalCredentialsField,\n    FalCredentialsInput,\n)\nfrom backend.data.block import Block, BlockCategory, BlockOutput, BlockSchema\nfrom backend.data.model import SchemaField\n\nlogger = logging.getLogger(__name__)\n\n\nclass FalModel(str, Enum):\n    MOCHI = \"fal-ai/mochi-v1\"\n    LUMA = \"fal-ai/luma-dream-machine\"\n\n\nclass AIVideoGeneratorBlock(Block):\n    class Input(BlockSchema):\n        prompt: str = SchemaField(\n            description=\"Description of the video to generate.\",\n            placeholder=\"A dog running in a field.\",\n        )\n        model: FalModel = SchemaField(\n            title=\"FAL Model\",\n            default=FalModel.MOCHI,\n            description=\"The FAL model to use for video generation.\",\n        )\n        credentials: FalCredentialsInput = FalCredentialsField()\n\n    class Output(BlockSchema):\n        video_url: str = SchemaField(description=\"The URL of the generated video.\")\n        error: str = SchemaField(\n            description=\"Error message if video generation failed.\"\n        )\n        logs: list[str] = SchemaField(\n            description=\"Generation progress logs.\", optional=True\n        )\n\n    def __init__(self):\n        super().__init__(\n            id=\"530cf046-2ce0-4854-ae2c-659db17c7a46\",\n            description=\"Generate videos using FAL AI models.\",\n            categories={BlockCategory.AI},\n            input_schema=self.Input,\n            output_schema=self.Output,\n            test_input={\n                \"prompt\": \"A dog running in a field.\",\n                \"model\": FalModel.MOCHI,\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[(\"video_url\", \"https://fal.media/files/example/video.mp4\")],\n            test_mock={\n                \"generate_video\": lambda *args, **kwargs: \"https://fal.media/files/example/video.mp4\"\n            },\n        )\n\n    def _get_headers(self, api_key: str) -> dict[str, str]:\n        \"\"\"Get headers for FAL API requests.\"\"\"\n        return {\n            \"Authorization\": f\"Key {api_key}\",\n            \"Content-Type\": \"application/json\",\n        }\n\n    def _submit_request(\n        self, url: str, headers: dict[str, str], data: dict[str, Any]\n    ) -> dict[str, Any]:\n        \"\"\"Submit a request to the FAL API.\"\"\"\n        try:\n            response = httpx.post(url, headers=headers, json=data)\n            response.raise_for_status()\n            return response.json()\n        except httpx.HTTPError as e:\n            logger.error(f\"FAL API request failed: {str(e)}\")\n            raise RuntimeError(f\"Failed to submit request: {str(e)}\")\n\n    def _poll_status(self, status_url: str, headers: dict[str, str]) -> dict[str, Any]:\n        \"\"\"Poll the status endpoint until completion or failure.\"\"\"\n        try:\n            response = httpx.get(status_url, headers=headers)\n            response.raise_for_status()\n            return response.json()\n        except httpx.HTTPError as e:\n            logger.error(f\"Failed to get status: {str(e)}\")\n            raise RuntimeError(f\"Failed to get status: {str(e)}\")\n\n    def generate_video(self, input_data: Input, credentials: FalCredentials) -> str:\n        \"\"\"Generate video using the specified FAL model.\"\"\"\n        base_url = \"https://queue.fal.run\"\n        api_key = credentials.api_key.get_secret_value()\n        headers = self._get_headers(api_key)\n\n        # Submit generation request\n        submit_url = f\"{base_url}/{input_data.model.value}\"\n        submit_data = {\"prompt\": input_data.prompt}\n\n        seen_logs = set()\n\n        try:\n            # Submit request to queue\n            submit_response = httpx.post(submit_url, headers=headers, json=submit_data)\n            submit_response.raise_for_status()\n            request_data = submit_response.json()\n\n            # Get request_id and urls from initial response\n            request_id = request_data.get(\"request_id\")\n            status_url = request_data.get(\"status_url\")\n            result_url = request_data.get(\"response_url\")\n\n            if not all([request_id, status_url, result_url]):\n                raise ValueError(\"Missing required data in submission response\")\n\n            # Poll for status with exponential backoff\n            max_attempts = 30\n            attempt = 0\n            base_wait_time = 5\n\n            while attempt < max_attempts:\n                status_response = httpx.get(f\"{status_url}?logs=1\", headers=headers)\n                status_response.raise_for_status()\n                status_data = status_response.json()\n\n                # Process new logs only\n                logs = status_data.get(\"logs\", [])\n                if logs and isinstance(logs, list):\n                    for log in logs:\n                        if isinstance(log, dict):\n                            # Create a unique key for this log entry\n                            log_key = (\n                                f\"{log.get('timestamp', '')}-{log.get('message', '')}\"\n                            )\n                            if log_key not in seen_logs:\n                                seen_logs.add(log_key)\n                                message = log.get(\"message\", \"\")\n                                if message:\n                                    logger.debug(\n                                        f\"[FAL Generation] [{log.get('level', 'INFO')}] [{log.get('source', '')}] [{log.get('timestamp', '')}] {message}\"\n                                    )\n\n                status = status_data.get(\"status\")\n                if status == \"COMPLETED\":\n                    # Get the final result\n                    result_response = httpx.get(result_url, headers=headers)\n                    result_response.raise_for_status()\n                    result_data = result_response.json()\n\n                    if \"video\" not in result_data or not isinstance(\n                        result_data[\"video\"], dict\n                    ):\n                        raise ValueError(\"Invalid response format - missing video data\")\n\n                    video_url = result_data[\"video\"].get(\"url\")\n                    if not video_url:\n                        raise ValueError(\"No video URL in response\")\n\n                    return video_url\n\n                elif status == \"FAILED\":\n                    error_msg = status_data.get(\"error\", \"No error details provided\")\n                    raise RuntimeError(f\"Video generation failed: {error_msg}\")\n                elif status == \"IN_QUEUE\":\n                    position = status_data.get(\"queue_position\", \"unknown\")\n                    logger.debug(\n                        f\"[FAL Generation] Status: In queue, position: {position}\"\n                    )\n                elif status == \"IN_PROGRESS\":\n                    logger.debug(\n                        \"[FAL Generation] Status: Request is being processed...\"\n                    )\n                else:\n                    logger.info(f\"[FAL Generation] Status: Unknown status: {status}\")\n\n                wait_time = min(base_wait_time * (2**attempt), 60)  # Cap at 60 seconds\n                time.sleep(wait_time)\n                attempt += 1\n\n            raise RuntimeError(\"Maximum polling attempts reached\")\n\n        except httpx.HTTPError as e:\n            raise RuntimeError(f\"API request failed: {str(e)}\")\n\n    def run(\n        self, input_data: Input, *, credentials: FalCredentials, **kwargs\n    ) -> BlockOutput:\n        try:\n            video_url = self.generate_video(input_data, credentials)\n            yield \"video_url\", video_url\n        except Exception as e:\n            error_message = str(e)\n            yield \"error\", error_message\n",
+    "children": [
+        {
+            "type": "import_statement",
+            "start_token": 0,
+            "end_token": 1,
+            "label": "import logging",
+            "children": []
+        },
+        {
+            "type": "import_statement",
+            "start_token": 3,
+            "end_token": 4,
+            "label": "import time",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 6,
+            "end_token": 9,
+            "label": "from enum import Enum",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 11,
+            "end_token": 14,
+            "label": "from typing import Any",
+            "children": []
+        },
+        {
+            "type": "import_statement",
+            "start_token": 17,
+            "end_token": 18,
+            "label": "import httpx",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 21,
+            "end_token": 47,
+            "label": "from backend.blocks.fal._auth import (\n    TEST_CREDENTIALS,\n    TEST_CREDENTIALS_INPUT,\n    FalCredentials,\n    FalCredentialsField,\n    FalCredentialsInput,\n)",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 49,
+            "end_token": 62,
+            "label": "from backend.data.block import Block, BlockCategory, BlockOutput, BlockSchema",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 64,
+            "end_token": 71,
+            "label": "from backend.data.model import SchemaField",
+            "children": []
+        },
+        {
+            "type": "assignment",
+            "start_token": 74,
+            "end_token": 81,
+            "label": "logger = logging.getLogger(__name__)",
+            "children": [
+                {
+                    "type": "attribute",
+                    "start_token": 76,
+                    "end_token": 78,
+                    "label": "logging.getLogger",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "class_definition",
+            "start_token": 85,
+            "end_token": 102,
+            "label": "class FalModel(str, Enum):\n    MOCHI = \"fal-ai/mochi-v1\"\n    LUMA = \"fal-ai/luma-dream-machine\"\n\n",
+            "children": [
+                {
+                    "type": "alias",
+                    "start_token": 86,
+                    "end_token": 88,
+                    "label": "FalModel(str",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 89,
+                            "end_token": 89,
+                            "label": ",",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "attribute",
+                    "start_token": 90,
+                    "end_token": 90,
+                    "label": "Enum",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "start_token": 94,
+                    "end_token": 96,
+                    "label": "MOCHI = \"fal-ai/mochi-v1\"",
+                    "children": [
+                        {
+                            "type": "string",
+                            "start_token": 96,
+                            "end_token": 96,
+                            "label": "\"fal-ai/mochi-v1\"",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "assignment",
+                    "start_token": 98,
+                    "end_token": 100,
+                    "label": "LUMA = \"fal-ai/luma-dream-machine\"",
+                    "children": [
+                        {
+                            "type": "string",
+                            "start_token": 100,
+                            "end_token": 100,
+                            "label": "\"fal-ai/luma-dream-machine\"",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "class_definition",
+            "start_token": 104,
+            "end_token": 1188,
+            "label": "class AIVideoGeneratorBlock(Block):\n    class Input(BlockSchema):\n        prompt: str = SchemaField(\n            description=\"Description of the video to generate.\",\n            placeholder=\"A dog running in a field.\",\n        )\n        model: FalModel = SchemaField(\n            title=\"FAL Model\",\n            default=FalModel.MOCHI,\n            description=\"The FAL model to use for video generation.\",\n        )\n        credentials: FalCredentialsInput = FalCredentialsField()\n\n    class Output(BlockSchema):\n        video_url: str = SchemaField(description=\"The URL of the generated video.\")\n        error: str = SchemaField(\n            description=\"Error message if video generation failed.\"\n        )\n        logs: list[str] = SchemaField(\n            description=\"Generation progress logs.\", optional=True\n        )\n\n    def __init__(self):\n        super().__init__(\n            id=\"530cf046-2ce0-4854-ae2c-659db17c7a46\",\n            description=\"Generate videos using FAL AI models.\",\n            categories={BlockCategory.AI},\n            input_schema=self.Input,\n            output_schema=self.Output,\n            test_input={\n                \"prompt\": \"A dog running in a field.\",\n                \"model\": FalModel.MOCHI,\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[(\"video_url\", \"https://fal.media/files/example/video.mp4\")],\n            test_mock={\n                \"generate_video\": lambda *args, **kwargs: \"https://fal.media/files/example/video.mp4\"\n            },\n        )\n\n    def _get_headers(self, api_key: str) -> dict[str, str]:\n        \"\"\"Get headers for FAL API requests.\"\"\"\n        return {\n            \"Authorization\": f\"Key {api_key}\",\n            \"Content-Type\": \"application/json\",\n        }\n\n    def _submit_request(\n        self, url: str, headers: dict[str, str], data: dict[str, Any]\n    ) -> dict[str, Any]:\n        \"\"\"Submit a request to the FAL API.\"\"\"\n        try:\n            response = httpx.post(url, headers=headers, json=data)\n            response.raise_for_status()\n            return response.json()\n        except httpx.HTTPError as e:\n            logger.error(f\"FAL API request failed: {str(e)}\")\n            raise RuntimeError(f\"Failed to submit request: {str(e)}\")\n\n    def _poll_status(self, status_url: str, headers: dict[str, str]) -> dict[str, Any]:\n        \"\"\"Poll the status endpoint until completion or failure.\"\"\"\n        try:\n            response = httpx.get(status_url, headers=headers)\n            response.raise_for_status()\n            return response.json()\n        except httpx.HTTPError as e:\n            logger.error(f\"Failed to get status: {str(e)}\")\n            raise RuntimeError(f\"Failed to get status: {str(e)}\")\n\n    def generate_video(self, input_data: Input, credentials: FalCredentials) -> str:\n        \"\"\"Generate video using the specified FAL model.\"\"\"\n        base_url = \"https://queue.fal.run\"\n        api_key = credentials.api_key.get_secret_value()\n        headers = self._get_headers(api_key)\n\n        # Submit generation request\n        submit_url = f\"{base_url}/{input_data.model.value}\"\n        submit_data = {\"prompt\": input_data.prompt}\n\n        seen_logs = set()\n\n        try:\n            # Submit request to queue\n            submit_response = httpx.post(submit_url, headers=headers, json=submit_data)\n            submit_response.raise_for_status()\n            request_data = submit_response.json()\n\n            # Get request_id and urls from initial response\n            request_id = request_data.get(\"request_id\")\n            status_url = request_data.get(\"status_url\")\n            result_url = request_data.get(\"response_url\")\n\n            if not all([request_id, status_url, result_url]):\n                raise ValueError(\"Missing required data in submission response\")\n\n            # Poll for status with exponential backoff\n            max_attempts = 30\n            attempt = 0\n            base_wait_time = 5\n\n            while attempt < max_attempts:\n                status_response = httpx.get(f\"{status_url}?logs=1\", headers=headers)\n                status_response.raise_for_status()\n                status_data = status_response.json()\n\n                # Process new logs only\n                logs = status_data.get(\"logs\", [])\n                if logs and isinstance(logs, list):\n                    for log in logs:\n                        if isinstance(log, dict):\n                            # Create a unique key for this log entry\n                            log_key = (\n                                f\"{log.get('timestamp', '')}-{log.get('message', '')}\"\n                            )\n                            if log_key not in seen_logs:\n                                seen_logs.add(log_key)\n                                message = log.get(\"message\", \"\")\n                                if message:\n                                    logger.debug(\n                                        f\"[FAL Generation] [{log.get('level', 'INFO')}] [{log.get('source', '')}] [{log.get('timestamp', '')}] {message}\"\n                                    )\n\n                status = status_data.get(\"status\")\n                if status == \"COMPLETED\":\n                    # Get the final result\n                    result_response = httpx.get(result_url, headers=headers)\n                    result_response.raise_for_status()\n                    result_data = result_response.json()\n\n                    if \"video\" not in result_data or not isinstance(\n                        result_data[\"video\"], dict\n                    ):\n                        raise ValueError(\"Invalid response format - missing video data\")\n\n                    video_url = result_data[\"video\"].get(\"url\")\n                    if not video_url:\n                        raise ValueError(\"No video URL in response\")\n\n                    return video_url\n\n                elif status == \"FAILED\":\n                    error_msg = status_data.get(\"error\", \"No error details provided\")\n                    raise RuntimeError(f\"Video generation failed: {error_msg}\")\n                elif status == \"IN_QUEUE\":\n                    position = status_data.get(\"queue_position\", \"unknown\")\n                    logger.debug(\n                        f\"[FAL Generation] Status: In queue, position: {position}\"\n                    )\n                elif status == \"IN_PROGRESS\":\n                    logger.debug(\n                        \"[FAL Generation] Status: Request is being processed...\"\n                    )\n                else:\n                    logger.info(f\"[FAL Generation] Status: Unknown status: {status}\")\n\n                wait_time = min(base_wait_time * (2**attempt), 60)  # Cap at 60 seconds\n                time.sleep(wait_time)\n                attempt += 1\n\n            raise RuntimeError(\"Maximum polling attempts reached\")\n\n        except httpx.HTTPError as e:\n            raise RuntimeError(f\"API request failed: {str(e)}\")\n\n    def run(\n        self, input_data: Input, *, credentials: FalCredentials, **kwargs\n    ) -> BlockOutput:\n        try:\n            video_url = self.generate_video(input_data, credentials)\n            yield \"video_url\", video_url\n        except Exception as e:\n            error_message = str(e",
+            "children": [
+                {
+                    "type": "alias",
+                    "start_token": 105,
+                    "end_token": 107,
+                    "label": "AIVideoGeneratorBlock(Block",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 107,
+                            "end_token": 107,
+                            "label": "Block",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "class_definition",
+                    "start_token": 111,
+                    "end_token": 169,
+                    "label": "class Input(BlockSchema):\n        prompt: str = SchemaField(\n            description=\"Description of the video to generate.\",\n            placeholder=\"A dog running in a field.\",\n        )\n        model: FalModel = SchemaField(\n            title=\"FAL Model\",\n            default=FalModel.MOCHI,\n            description=\"The FAL model to use for video generation.\",\n        )\n        credentials: FalCredentialsInput = FalCredentialsField()",
+                    "children": [
+                        {
+                            "type": "alias",
+                            "start_token": 112,
+                            "end_token": 115,
+                            "label": "Input(BlockSchema)",
+                            "children": [
+                                {
+                                    "type": "identifier",
+                                    "start_token": 115,
+                                    "end_token": 115,
+                                    "label": ")",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 118,
+                            "end_token": 135,
+                            "label": "prompt: str = SchemaField(\n            description=\"Description of the video to generate.\",\n            placeholder=\"A dog running in a field.\",\n        )",
+                            "children": [
+                                {
+                                    "type": "string",
+                                    "start_token": 126,
+                                    "end_token": 133,
+                                    "label": "=\"Description of the video to generate.\",\n            placeholder=\"A dog running in a field.\",",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 137,
+                            "end_token": 161,
+                            "label": "model: FalModel = SchemaField(\n            title=\"FAL Model\",\n            default=FalModel.MOCHI,\n            description=\"The FAL model to use for video generation.\",\n        )",
+                            "children": [
+                                {
+                                    "type": "attribute",
+                                    "start_token": 141,
+                                    "end_token": 155,
+                                    "label": "SchemaField(\n            title=\"FAL Model\",\n            default=FalModel.MOCHI,\n",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 163,
+                            "end_token": 169,
+                            "label": "credentials: FalCredentialsInput = FalCredentialsField()",
+                            "children": [
+                                {
+                                    "type": "call",
+                                    "start_token": 167,
+                                    "end_token": 167,
+                                    "label": "FalCredentialsField",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "type": "class_definition",
+                    "start_token": 172,
+                    "end_token": 221,
+                    "label": "class Output(BlockSchema):\n        video_url: str = SchemaField(description=\"The URL of the generated video.\")\n        error: str = SchemaField(\n            description=\"Error message if video generation failed.\"\n        )\n        logs: list[str] = SchemaField(\n            description=\"Generation progress logs.\", optional=True\n        )",
+                    "children": [
+                        {
+                            "type": "alias",
+                            "start_token": 173,
+                            "end_token": 176,
+                            "label": "Output(BlockSchema)",
+                            "children": [
+                                {
+                                    "type": "identifier",
+                                    "start_token": 176,
+                                    "end_token": 176,
+                                    "label": ")",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 179,
+                            "end_token": 188,
+                            "label": "video_url: str = SchemaField(description=\"The URL of the generated video.\")",
+                            "children": [
+                                {
+                                    "type": "string",
+                                    "start_token": 187,
+                                    "end_token": 187,
+                                    "label": "\"The URL of the generated video.\"",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 190,
+                            "end_token": 201,
+                            "label": "error: str = SchemaField(\n            description=\"Error message if video generation failed.\"\n        )",
+                            "children": [
+                                {
+                                    "type": "string",
+                                    "start_token": 199,
+                                    "end_token": 199,
+                                    "label": "\"Error message if video generation failed.\"",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 203,
+                            "end_token": 221,
+                            "label": "logs: list[str] = SchemaField(\n            description=\"Generation progress logs.\", optional=True\n        )",
+                            "children": [
+                                {
+                                    "type": "list",
+                                    "start_token": 205,
+                                    "end_token": 208,
+                                    "label": "list[str]",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "type": "function_definition",
+                    "start_token": 224,
+                    "end_token": 330,
+                    "label": "def __init__(self):\n        super().__init__(\n            id=\"530cf046-2ce0-4854-ae2c-659db17c7a46\",\n            description=\"Generate videos using FAL AI models.\",\n            categories={BlockCategory.AI},\n            input_schema=self.Input,\n            output_schema=self.Output,\n            test_input={\n                \"prompt\": \"A dog running in a field.\",\n                \"model\": FalModel.MOCHI,\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[(\"video_url\", \"https://fal.media/files/example/video.mp4\")],\n            test_mock={\n                \"generate_video\": lambda *args, **kwargs: \"https://fal.media/files/example/video.mp4\"\n            },\n        )",
+                    "children": [
+                        {
+                            "type": "parameters",
+                            "start_token": 225,
+                            "end_token": 233,
+                            "label": "__init__(self):\n        super()",
+                            "children": []
+                        },
+                        {
+                            "type": "call",
+                            "start_token": 230,
+                            "end_token": 331,
+                            "label": "\n        super().__init__(\n            id=\"530cf046-2ce0-4854-ae2c-659db17c7a46\",\n            description=\"Generate videos using FAL AI models.\",\n            categories={BlockCategory.AI},\n            input_schema=self.Input,\n            output_schema=self.Output,\n            test_input={\n                \"prompt\": \"A dog running in a field.\",\n                \"model\": FalModel.MOCHI,\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[(\"video_url\", \"https://fal.media/files/example/video.mp4\")],\n            test_mock={\n                \"generate_video\": lambda *args, **kwargs: \"https://fal.media/files/example/video.mp4\"\n            },\n        )\n",
+                            "children": [
+                                {
+                                    "type": "argument_list",
+                                    "start_token": 238,
+                                    "end_token": 330,
+                                    "label": "id=\"530cf046-2ce0-4854-ae2c-659db17c7a46\",\n            description=\"Generate videos using FAL AI models.\",\n            categories={BlockCategory.AI},\n            input_schema=self.Input,\n            output_schema=self.Output,\n            test_input={\n                \"prompt\": \"A dog running in a field.\",\n                \"model\": FalModel.MOCHI,\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[(\"video_url\", \"https://fal.media/files/example/video.mp4\")],\n            test_mock={\n                \"generate_video\": lambda *args, **kwargs: \"https://fal.media/files/example/video.mp4\"\n            },\n        )",
+                                    "children": [
+                                        {
+                                            "type": "assignment",
+                                            "start_token": 239,
+                                            "end_token": 241,
+                                            "label": "=\"530cf046-2ce0-4854-ae2c-659db17c7a46\",",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "string",
+                                            "start_token": 245,
+                                            "end_token": 245,
+                                            "label": "\"Generate videos using FAL AI models.\"",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "dictionary",
+                                            "start_token": 249,
+                                            "end_token": 255,
+                                            "label": "={BlockCategory.AI},",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "attribute",
+                                            "start_token": 261,
+                                            "end_token": 268,
+                                            "label": "Input,\n            output_schema=self.Output",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "attribute",
+                                            "start_token": 266,
+                                            "end_token": 269,
+                                            "label": "self.Output,",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "dictionary",
+                                            "start_token": 273,
+                                            "end_token": 292,
+                                            "label": "{\n                \"prompt\": \"A dog running in a field.\",\n                \"model\": FalModel.MOCHI,\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n            }",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "assignment",
+                                            "start_token": 295,
+                                            "end_token": 297,
+                                            "label": "test_credentials=TEST_CREDENTIALS",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "list",
+                                            "start_token": 302,
+                                            "end_token": 308,
+                                            "label": "[(\"video_url\", \"https://fal.media/files/example/video.mp4\")]",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "tuple",
+                                            "start_token": 303,
+                                            "end_token": 307,
+                                            "label": "(\"video_url\", \"https://fal.media/files/example/video.mp4\")",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "dictionary",
+                                            "start_token": 313,
+                                            "end_token": 327,
+                                            "label": "{\n                \"generate_video\": lambda *args, **kwargs: \"https://fal.media/files/example/video.mp4\"\n            }",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "type": "function_definition",
+                    "start_token": 333,
+                    "end_token": 370,
+                    "label": "def _get_headers(self, api_key: str) -> dict[str, str]:\n        \"\"\"Get headers for FAL API requests.\"\"\"\n        return {\n            \"Authorization\": f\"Key {api_key}\",\n            \"Content-Type\": \"application/json\",\n        }",
+                    "children": [
+                        {
+                            "type": "parameters",
+                            "start_token": 334,
+                            "end_token": 341,
+                            "label": "_get_headers(self, api_key: str)",
+                            "children": []
+                        },
+                        {
+                            "type": "argument_list",
+                            "start_token": 345,
+                            "end_token": 369,
+                            "label": "[str, str]:\n        \"\"\"Get headers for FAL API requests.\"\"\"\n        return {\n            \"Authorization\": f\"Key {api_key}\",\n            \"Content-Type\": \"application/json\",\n",
+                            "children": []
+                        },
+                        {
+                            "type": "dictionary",
+                            "start_token": 359,
+                            "end_token": 368,
+                            "label": "\"Authorization\": f\"Key {api_key}\",\n            \"Content-Type\": \"application/json\",",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "function_definition",
+                    "start_token": 373,
+                    "end_token": 470,
+                    "label": "def _submit_request(\n        self, url: str, headers: dict[str, str], data: dict[str, Any]\n    ) -> dict[str, Any]:\n        \"\"\"Submit a request to the FAL API.\"\"\"\n        try:\n            response = httpx.post(url, headers=headers, json=data)\n            response.raise_for_status()\n            return response.json()\n        except httpx.HTTPError as e:\n            logger.error(f\"FAL API request failed: {str(e)}\")\n            raise RuntimeError(f\"Failed to submit request: {str(e)}\")",
+                    "children": [
+                        {
+                            "type": "parameters",
+                            "start_token": 374,
+                            "end_token": 400,
+                            "label": "_submit_request(\n        self, url: str, headers: dict[str, str], data: dict[str, Any]\n",
+                            "children": []
+                        },
+                        {
+                            "type": "dictionary",
+                            "start_token": 386,
+                            "end_token": 399,
+                            "label": "[str, str], data: dict[str, Any]",
+                            "children": []
+                        },
+                        {
+                            "type": "try_statement",
+                            "start_token": 416,
+                            "end_token": 470,
+                            "label": "try:\n            response = httpx.post(url, headers=headers, json=data)\n            response.raise_for_status()\n            return response.json()\n        except httpx.HTTPError as e:\n            logger.error(f\"FAL API request failed: {str(e)}\")\n            raise RuntimeError(f\"Failed to submit request: {str(e)}\")",
+                            "children": [
+                                {
+                                    "type": "call",
+                                    "start_token": 419,
+                                    "end_token": 434,
+                                    "label": "response = httpx.post(url, headers=headers, json=data)",
+                                    "children": []
+                                },
+                                {
+                                    "type": "attribute",
+                                    "start_token": 437,
+                                    "end_token": 440,
+                                    "label": ".raise_for_status()",
+                                    "children": []
+                                },
+                                {
+                                    "type": "return_statement",
+                                    "start_token": 442,
+                                    "end_token": 447,
+                                    "label": "return response.json()",
+                                    "children": []
+                                },
+                                {
+                                    "type": "except_clause",
+                                    "start_token": 449,
+                                    "end_token": 470,
+                                    "label": "except httpx.HTTPError as e:\n            logger.error(f\"FAL API request failed: {str(e)}\")\n            raise RuntimeError(f\"Failed to submit request: {str(e)}\")",
+                                    "children": [
+                                        {
+                                            "type": "attribute",
+                                            "start_token": 452,
+                                            "end_token": 454,
+                                            "label": "HTTPError as e",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "type": "function_definition",
+                    "start_token": 473,
+                    "end_token": 1114,
+                    "label": "def _poll_status(self, status_url: str, headers: dict[str, str]) -> dict[str, Any]:\n        \"\"\"Poll the status endpoint until completion or failure.\"\"\"\n        try:\n            response = httpx.get(status_url, headers=headers)\n            response.raise_for_status()\n            return response.json()\n        except httpx.HTTPError as e:\n            logger.error(f\"Failed to get status: {str(e)}\")\n            raise RuntimeError(f\"Failed to get status: {str(e)}\")\n\n    def generate_video(self, input_data: Input, credentials: FalCredentials) -> str:\n        \"\"\"Generate video using the specified FAL model.\"\"\"\n        base_url = \"https://queue.fal.run\"\n        api_key = credentials.api_key.get_secret_value()\n        headers = self._get_headers(api_key)\n\n        # Submit generation request\n        submit_url = f\"{base_url}/{input_data.model.value}\"\n        submit_data = {\"prompt\": input_data.prompt}\n\n        seen_logs = set()\n\n        try:\n            # Submit request to queue\n            submit_response = httpx.post(submit_url, headers=headers, json=submit_data)\n            submit_response.raise_for_status()\n            request_data = submit_response.json()\n\n            # Get request_id and urls from initial response\n            request_id = request_data.get(\"request_id\")\n            status_url = request_data.get(\"status_url\")\n            result_url = request_data.get(\"response_url\")\n\n            if not all([request_id, status_url, result_url]):\n                raise ValueError(\"Missing required data in submission response\")\n\n            # Poll for status with exponential backoff\n            max_attempts = 30\n            attempt = 0\n            base_wait_time = 5\n\n            while attempt < max_attempts:\n                status_response = httpx.get(f\"{status_url}?logs=1\", headers=headers)\n                status_response.raise_for_status()\n                status_data = status_response.json()\n\n                # Process new logs only\n                logs = status_data.get(\"logs\", [])\n                if logs and isinstance(logs, list):\n                    for log in logs:\n                        if isinstance(log, dict):\n                            # Create a unique key for this log entry\n                            log_key = (\n                                f\"{log.get('timestamp', '')}-{log.get('message', '')}\"\n                            )\n                            if log_key not in seen_logs:\n                                seen_logs.add(log_key)\n                                message = log.get(\"message\", \"\")\n                                if message:\n                                    logger.debug(\n                                        f\"[FAL Generation] [{log.get('level', 'INFO')}] [{log.get('source', '')}] [{log.get('timestamp', '')}] {message}\"\n                                    )\n\n                status = status_data.get(\"status\")\n                if status == \"COMPLETED\":\n                    # Get the final result\n                    result_response = httpx.get(result_url, headers=headers)\n                    result_response.raise_for_status()\n                    result_data = result_response.json()\n\n                    if \"video\" not in result_data or not isinstance(\n                        result_data[\"video\"], dict\n                    ):\n                        raise ValueError(\"Invalid response format - missing video data\")\n\n                    video_url = result_data[\"video\"].get(\"url\")\n                    if not video_url:\n                        raise ValueError(\"No video URL in response\")\n\n                    return video_url\n\n                elif status == \"FAILED\":\n                    error_msg = status_data.get(\"error\", \"No error details provided\")\n                    raise RuntimeError(f\"Video generation failed: {error_msg}\")\n                elif status == \"IN_QUEUE\":\n                    position = status_data.get(\"queue_position\", \"unknown\")\n                    logger.debug(\n                        f\"[FAL Generation] Status: In queue, position: {position}\"\n                    )\n                elif status == \"IN_PROGRESS\":\n                    logger.debug(\n                        \"[FAL Generation] Status: Request is being processed...\"\n                    )\n                else:\n                    logger.info(f\"[FAL Generation] Status: Unknown status: {status}\")\n\n                wait_time = min(base_wait_time * (2**attempt), 60)  # Cap at 60 seconds\n                time.sleep(wait_time)\n                attempt += 1\n\n            raise RuntimeError(\"Maximum polling attempts reached\")",
+                    "children": [
+                        {
+                            "type": "parameters",
+                            "start_token": 474,
+                            "end_token": 490,
+                            "label": "_poll_status(self, status_url: str, headers: dict[str, str])",
+                            "children": []
+                        },
+                        {
+                            "type": "try_statement",
+                            "start_token": 505,
+                            "end_token": 1114,
+                            "label": "try:\n            response = httpx.get(status_url, headers=headers)\n            response.raise_for_status()\n            return response.json()\n        except httpx.HTTPError as e:\n            logger.error(f\"Failed to get status: {str(e)}\")\n            raise RuntimeError(f\"Failed to get status: {str(e)}\")\n\n    def generate_video(self, input_data: Input, credentials: FalCredentials) -> str:\n        \"\"\"Generate video using the specified FAL model.\"\"\"\n        base_url = \"https://queue.fal.run\"\n        api_key = credentials.api_key.get_secret_value()\n        headers = self._get_headers(api_key)\n\n        # Submit generation request\n        submit_url = f\"{base_url}/{input_data.model.value}\"\n        submit_data = {\"prompt\": input_data.prompt}\n\n        seen_logs = set()\n\n        try:\n            # Submit request to queue\n            submit_response = httpx.post(submit_url, headers=headers, json=submit_data)\n            submit_response.raise_for_status()\n            request_data = submit_response.json()\n\n            # Get request_id and urls from initial response\n            request_id = request_data.get(\"request_id\")\n            status_url = request_data.get(\"status_url\")\n            result_url = request_data.get(\"response_url\")\n\n            if not all([request_id, status_url, result_url]):\n                raise ValueError(\"Missing required data in submission response\")\n\n            # Poll for status with exponential backoff\n            max_attempts = 30\n            attempt = 0\n            base_wait_time = 5\n\n            while attempt < max_attempts:\n                status_response = httpx.get(f\"{status_url}?logs=1\", headers=headers)\n                status_response.raise_for_status()\n                status_data = status_response.json()\n\n                # Process new logs only\n                logs = status_data.get(\"logs\", [])\n                if logs and isinstance(logs, list):\n                    for log in logs:\n                        if isinstance(log, dict):\n                            # Create a unique key for this log entry\n                            log_key = (\n                                f\"{log.get('timestamp', '')}-{log.get('message', '')}\"\n                            )\n                            if log_key not in seen_logs:\n                                seen_logs.add(log_key)\n                                message = log.get(\"message\", \"\")\n                                if message:\n                                    logger.debug(\n                                        f\"[FAL Generation] [{log.get('level', 'INFO')}] [{log.get('source', '')}] [{log.get('timestamp', '')}] {message}\"\n                                    )\n\n                status = status_data.get(\"status\")\n                if status == \"COMPLETED\":\n                    # Get the final result\n                    result_response = httpx.get(result_url, headers=headers)\n                    result_response.raise_for_status()\n                    result_data = result_response.json()\n\n                    if \"video\" not in result_data or not isinstance(\n                        result_data[\"video\"], dict\n                    ):\n                        raise ValueError(\"Invalid response format - missing video data\")\n\n                    video_url = result_data[\"video\"].get(\"url\")\n                    if not video_url:\n                        raise ValueError(\"No video URL in response\")\n\n                    return video_url\n\n                elif status == \"FAILED\":\n                    error_msg = status_data.get(\"error\", \"No error details provided\")\n                    raise RuntimeError(f\"Video generation failed: {error_msg}\")\n                elif status == \"IN_QUEUE\":\n                    position = status_data.get(\"queue_position\", \"unknown\")\n                    logger.debug(\n                        f\"[FAL Generation] Status: In queue, position: {position}\"\n                    )\n                elif status == \"IN_PROGRESS\":\n                    logger.debug(\n                        \"[FAL Generation] Status: Request is being processed...\"\n                    )\n                else:\n                    logger.info(f\"[FAL Generation] Status: Unknown status: {status}\")\n\n                wait_time = min(base_wait_time * (2**attempt), 60)  # Cap at 60 seconds\n                time.sleep(wait_time)\n                attempt += 1\n\n            raise RuntimeError(\"Maximum polling attempts reached\")",
+                            "children": [
+                                {
+                                    "type": "call",
+                                    "start_token": 508,
+                                    "end_token": 519,
+                                    "label": "response = httpx.get(status_url, headers=headers)",
+                                    "children": []
+                                },
+                                {
+                                    "type": "attribute",
+                                    "start_token": 522,
+                                    "end_token": 525,
+                                    "label": ".raise_for_status()",
+                                    "children": []
+                                },
+                                {
+                                    "type": "return_statement",
+                                    "start_token": 527,
+                                    "end_token": 532,
+                                    "label": "return response.json()",
+                                    "children": []
+                                },
+                                {
+                                    "type": "except_clause",
+                                    "start_token": 534,
+                                    "end_token": 553,
+                                    "label": "except httpx.HTTPError as e:\n            logger.error(f\"Failed to get status: {str(e)}\")\n            raise RuntimeError(f",
+                                    "children": [
+                                        {
+                                            "type": "attribute",
+                                            "start_token": 537,
+                                            "end_token": 539,
+                                            "label": "HTTPError as e",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "start_token": 1133,
+            "end_token": 1195,
+            "label": "def run(\n        self, input_data: Input, *, credentials: FalCredentials, **kwargs\n    ) -> BlockOutput:\n        try:\n            video_url = self.generate_video(input_data, credentials)\n            yield \"video_url\", video_url\n        except Exception as e:\n            error_message = str(e)\n            yield \"error\", error_message\n",
+            "children": [
+                {
+                    "type": "parameters",
+                    "start_token": 1134,
+                    "end_token": 1152,
+                    "label": "run(\n        self, input_data: Input, *, credentials: FalCredentials, **kwargs\n",
+                    "children": []
+                },
+                {
+                    "type": "try_statement",
+                    "start_token": 1159,
+                    "end_token": 1195,
+                    "label": "try:\n            video_url = self.generate_video(input_data, credentials)\n            yield \"video_url\", video_url\n        except Exception as e:\n            error_message = str(e)\n            yield \"error\", error_message\n",
+                    "children": [
+                        {
+                            "type": "call",
+                            "start_token": 1162,
+                            "end_token": 1171,
+                            "label": "video_url = self.generate_video(input_data, credentials)",
+                            "children": []
+                        },
+                        {
+                            "type": "yield",
+                            "start_token": 1173,
+                            "end_token": 1176,
+                            "label": "yield \"video_url\", video_url",
+                            "children": []
+                        },
+                        {
+                            "type": "except_clause",
+                            "start_token": 1178,
+                            "end_token": 1190,
+                            "label": "except Exception as e:\n            error_message = str(e)\n",
+                            "children": [
+                                {
+                                    "type": "attribute",
+                                    "start_token": 1180,
+                                    "end_token": 1181,
+                                    "label": "as e",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

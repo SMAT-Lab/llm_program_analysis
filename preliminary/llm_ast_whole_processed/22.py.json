@@ -1,0 +1,729 @@
+{
+    "type": "module",
+    "start_token": 0,
+    "end_token": 3061,
+    "label": "from urllib.parse import urlparse\n\nfrom typing_extensions import TypedDict\n\nfrom backend.data.block import Block, BlockCategory, BlockOutput, BlockSchema\nfrom backend.data.model import SchemaField\n\nfrom ._api import get_api\nfrom ._auth import (\n    TEST_CREDENTIALS,\n    TEST_CREDENTIALS_INPUT,\n    GithubCredentials,\n    GithubCredentialsField,\n    GithubCredentialsInput,\n)\n\n\ndef is_github_url(url: str) -> bool:\n    return urlparse(url).netloc == \"github.com\"\n\n\n# --8<-- [start:GithubCommentBlockExample]\nclass GithubCommentBlock(Block):\n    class Input(BlockSchema):\n        credentials: GithubCredentialsInput = GithubCredentialsField(\"repo\")\n        issue_url: str = SchemaField(\n            description=\"URL of the GitHub issue or pull request\",\n            placeholder=\"https://github.com/owner/repo/issues/1\",\n        )\n        comment: str = SchemaField(\n            description=\"Comment to post on the issue or pull request\",\n            placeholder=\"Enter your comment\",\n        )\n\n    class Output(BlockSchema):\n        id: int = SchemaField(description=\"ID of the created comment\")\n        url: str = SchemaField(description=\"URL to the comment on GitHub\")\n        error: str = SchemaField(\n            description=\"Error message if the comment posting failed\"\n        )\n\n    def __init__(self):\n        super().__init__(\n            id=\"a8db4d8d-db1c-4a25-a1b0-416a8c33602b\",\n            description=\"This block posts a comment on a specified GitHub issue or pull request.\",\n            categories={BlockCategory.DEVELOPER_TOOLS},\n            input_schema=GithubCommentBlock.Input,\n            output_schema=GithubCommentBlock.Output,\n            test_input=[\n                {\n                    \"issue_url\": \"https://github.com/owner/repo/issues/1\",\n                    \"comment\": \"This is a test comment.\",\n                    \"credentials\": TEST_CREDENTIALS_INPUT,\n                },\n                {\n                    \"issue_url\": \"https://github.com/owner/repo/pull/1\",\n                    \"comment\": \"This is a test comment.\",\n                    \"credentials\": TEST_CREDENTIALS_INPUT,\n                },\n            ],\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[\n                (\"id\", 1337),\n                (\"url\", \"https://github.com/owner/repo/issues/1#issuecomment-1337\"),\n                (\"id\", 1337),\n                (\n                    \"url\",\n                    \"https://github.com/owner/repo/issues/1#issuecomment-1337\",\n                ),\n            ],\n            test_mock={\n                \"post_comment\": lambda *args, **kwargs: (\n                    1337,\n                    \"https://github.com/owner/repo/issues/1#issuecomment-1337\",\n                )\n            },\n        )\n\n    @staticmethod\n    def post_comment(\n        credentials: GithubCredentials, issue_url: str, body_text: str\n    ) -> tuple[int, str]:\n        api = get_api(credentials)\n        data = {\"body\": body_text}\n        if \"pull\" in issue_url:\n            issue_url = issue_url.replace(\"pull\", \"issues\")\n        comments_url = issue_url + \"/comments\"\n        response = api.post(comments_url, json=data)\n        comment = response.json()\n        return comment[\"id\"], comment[\"html_url\"]\n\n    def run(\n        self,\n        input_data: Input,\n        *,\n        credentials: GithubCredentials,\n        **kwargs,\n    ) -> BlockOutput:\n        id, url = self.post_comment(\n            credentials,\n            input_data.issue_url,\n            input_data.comment,\n        )\n        yield \"id\", id\n        yield \"url\", url\n\n\n# --8<-- [end:GithubCommentBlockExample]\n\n\nclass GithubMakeIssueBlock(Block):\n    class Input(BlockSchema):\n        credentials: GithubCredentialsInput = GithubCredentialsField(\"repo\")\n        repo_url: str = SchemaField(\n            description=\"URL of the GitHub repository\",\n            placeholder=\"https://github.com/owner/repo\",\n        )\n        title: str = SchemaField(\n            description=\"Title of the issue\", placeholder=\"Enter the issue title\"\n        )\n        body: str = SchemaField(\n            description=\"Body of the issue\", placeholder=\"Enter the issue body\"\n        )\n\n    class Output(BlockSchema):\n        number: int = SchemaField(description=\"Number of the created issue\")\n        url: str = SchemaField(description=\"URL of the created issue\")\n        error: str = SchemaField(\n            description=\"Error message if the issue creation failed\"\n        )\n\n    def __init__(self):\n        super().__init__(\n            id=\"691dad47-f494-44c3-a1e8-05b7990f2dab\",\n            description=\"This block creates a new issue on a specified GitHub repository.\",\n            categories={BlockCategory.DEVELOPER_TOOLS},\n            input_schema=GithubMakeIssueBlock.Input,\n            output_schema=GithubMakeIssueBlock.Output,\n            test_input={\n                \"repo_url\": \"https://github.com/owner/repo\",\n                \"title\": \"Test Issue\",\n                \"body\": \"This is a test issue.\",\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[\n                (\"number\", 1),\n                (\"url\", \"https://github.com/owner/repo/issues/1\"),\n            ],\n            test_mock={\n                \"create_issue\": lambda *args, **kwargs: (\n                    1,\n                    \"https://github.com/owner/repo/issues/1\",\n                )\n            },\n        )\n\n    @staticmethod\n    def create_issue(\n        credentials: GithubCredentials, repo_url: str, title: str, body: str\n    ) -> tuple[int, str]:\n        api = get_api(credentials)\n        data = {\"title\": title, \"body\": body}\n        issues_url = repo_url + \"/issues\"\n        response = api.post(issues_url, json=data)\n        issue = response.json()\n        return issue[\"number\"], issue[\"html_url\"]\n\n    def run(\n        self,\n        input_data: Input,\n        *,\n        credentials: GithubCredentials,\n        **kwargs,\n    ) -> BlockOutput:\n        number, url = self.create_issue(\n            credentials,\n            input_data.repo_url,\n            input_data.title,\n            input_data.body,\n        )\n        yield \"number\", number\n        yield \"url\", url\n\n\nclass GithubReadIssueBlock(Block):\n    class Input(BlockSchema):\n        credentials: GithubCredentialsInput = GithubCredentialsField(\"repo\")\n        issue_url: str = SchemaField(\n            description=\"URL of the GitHub issue\",\n            placeholder=\"https://github.com/owner/repo/issues/1\",\n        )\n\n    class Output(BlockSchema):\n        title: str = SchemaField(description=\"Title of the issue\")\n        body: str = SchemaField(description=\"Body of the issue\")\n        user: str = SchemaField(description=\"User who created the issue\")\n        error: str = SchemaField(\n            description=\"Error message if reading the issue failed\"\n        )\n\n    def __init__(self):\n        super().__init__(\n            id=\"6443c75d-032a-4772-9c08-230c707c8acc\",\n            description=\"This block reads the body, title, and user of a specified GitHub issue.\",\n            categories={BlockCategory.DEVELOPER_TOOLS},\n            input_schema=GithubReadIssueBlock.Input,\n            output_schema=GithubReadIssueBlock.Output,\n            test_input={\n                \"issue_url\": \"https://github.com/owner/repo/issues/1\",\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[\n                (\"title\", \"Title of the issue\"),\n                (\"body\", \"This is the body of the issue.\"),\n                (\"user\", \"username\"),\n            ],\n            test_mock={\n                \"read_issue\": lambda *args, **kwargs: (\n                    \"Title of the issue\",\n                    \"This is the body of the issue.\",\n                    \"username\",\n                )\n            },\n        )\n\n    @staticmethod\n    def read_issue(\n        credentials: GithubCredentials, issue_url: str\n    ) -> tuple[str, str, str]:\n        api = get_api(credentials)\n        response = api.get(issue_url)\n        data = response.json()\n        title = data.get(\"title\", \"No title found\")\n        body = data.get(\"body\", \"No body content found\")\n        user = data.get(\"user\", {}).get(\"login\", \"No user found\")\n        return title, body, user\n\n    def run(\n        self,\n        input_data: Input,\n        *,\n        credentials: GithubCredentials,\n        **kwargs,\n    ) -> BlockOutput:\n        title, body, user = self.read_issue(\n            credentials,\n            input_data.issue_url,\n        )\n        if title:\n            yield \"title\", title\n        if body:\n            yield \"body\", body\n        if user:\n            yield \"user\", user\n\n\nclass GithubListIssuesBlock(Block):\n    class Input(BlockSchema):\n        credentials: GithubCredentialsInput = GithubCredentialsField(\"repo\")\n        repo_url: str = SchemaField(\n            description=\"URL of the GitHub repository\",\n            placeholder=\"https://github.com/owner/repo\",\n        )\n\n    class Output(BlockSchema):\n        class IssueItem(TypedDict):\n            title: str\n            url: str\n\n        issue: IssueItem = SchemaField(\n            title=\"Issue\", description=\"Issues with their title and URL\"\n        )\n        error: str = SchemaField(description=\"Error message if listing issues failed\")\n\n    def __init__(self):\n        super().__init__(\n            id=\"c215bfd7-0e57-4573-8f8c-f7d4963dcd74\",\n            description=\"This block lists all issues for a specified GitHub repository.\",\n            categories={BlockCategory.DEVELOPER_TOOLS},\n            input_schema=GithubListIssuesBlock.Input,\n            output_schema=GithubListIssuesBlock.Output,\n            test_input={\n                \"repo_url\": \"https://github.com/owner/repo\",\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[\n                (\n                    \"issue\",\n                    {\n                        \"title\": \"Issue 1\",\n                        \"url\": \"https://github.com/owner/repo/issues/1\",\n                    },\n                )\n            ],\n            test_mock={\n                \"list_issues\": lambda *args, **kwargs: [\n                    {\n                        \"title\": \"Issue 1\",\n                        \"url\": \"https://github.com/owner/repo/issues/1\",\n                    }\n                ]\n            },\n        )\n\n    @staticmethod\n    def list_issues(\n        credentials: GithubCredentials, repo_url: str\n    ) -> list[Output.IssueItem]:\n        api = get_api(credentials)\n        issues_url = repo_url + \"/issues\"\n        response = api.get(issues_url)\n        data = response.json()\n        issues: list[GithubListIssuesBlock.Output.IssueItem] = [\n            {\"title\": issue[\"title\"], \"url\": issue[\"html_url\"]} for issue in data\n        ]\n        return issues\n\n    def run(\n        self,\n        input_data: Input,\n        *,\n        credentials: GithubCredentials,\n        **kwargs,\n    ) -> BlockOutput:\n        issues = self.list_issues(\n            credentials,\n            input_data.repo_url,\n        )\n        yield from ((\"issue\", issue) for issue in issues)\n\n\nclass GithubAddLabelBlock(Block):\n    class Input(BlockSchema):\n        credentials: GithubCredentialsInput = GithubCredentialsField(\"repo\")\n        issue_url: str = SchemaField(\n            description=\"URL of the GitHub issue or pull request\",\n            placeholder=\"https://github.com/owner/repo/issues/1\",\n        )\n        label: str = SchemaField(\n            description=\"Label to add to the issue or pull request\",\n            placeholder=\"Enter the label\",\n        )\n\n    class Output(BlockSchema):\n        status: str = SchemaField(description=\"Status of the label addition operation\")\n        error: str = SchemaField(\n            description=\"Error message if the label addition failed\"\n        )\n\n    def __init__(self):\n        super().__init__(\n            id=\"98bd6b77-9506-43d5-b669-6b9733c4b1f1\",\n            description=\"This block adds a label to a specified GitHub issue or pull request.\",\n            categories={BlockCategory.DEVELOPER_TOOLS},\n            input_schema=GithubAddLabelBlock.Input,\n            output_schema=GithubAddLabelBlock.Output,\n            test_input={\n                \"issue_url\": \"https://github.com/owner/repo/issues/1\",\n                \"label\": \"bug\",\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[(\"status\", \"Label added successfully\")],\n            test_mock={\"add_label\": lambda *args, **kwargs: \"Label added successfully\"},\n        )\n\n    @staticmethod\n    def add_label(credentials: GithubCredentials, issue_url: str, label: str) -> str:\n        api = get_api(credentials)\n        data = {\"labels\": [label]}\n        labels_url = issue_url + \"/labels\"\n        api.post(labels_url, json=data)\n        return \"Label added successfully\"\n\n    def run(\n        self,\n        input_data: Input,\n        *,\n        credentials: GithubCredentials,\n        **kwargs,\n    ) -> BlockOutput:\n        status = self.add_label(\n            credentials,\n            input_data.issue_url,\n            input_data.label,\n        )\n        yield \"status\", status\n\n\nclass GithubRemoveLabelBlock(Block):\n    class Input(BlockSchema):\n        credentials: GithubCredentialsInput = GithubCredentialsField(\"repo\")\n        issue_url: str = SchemaField(\n            description=\"URL of the GitHub issue or pull request\",\n            placeholder=\"https://github.com/owner/repo/issues/1\",\n        )\n        label: str = SchemaField(\n            description=\"Label to remove from the issue or pull request\",\n            placeholder=\"Enter the label\",\n        )\n\n    class Output(BlockSchema):\n        status: str = SchemaField(description=\"Status of the label removal operation\")\n        error: str = SchemaField(\n            description=\"Error message if the label removal failed\"\n        )\n\n    def __init__(self):\n        super().__init__(\n            id=\"78f050c5-3e3a-48c0-9e5b-ef1ceca5589c\",\n            description=\"This block removes a label from a specified GitHub issue or pull request.\",\n            categories={BlockCategory.DEVELOPER_TOOLS},\n            input_schema=GithubRemoveLabelBlock.Input,\n            output_schema=GithubRemoveLabelBlock.Output,\n            test_input={\n                \"issue_url\": \"https://github.com/owner/repo/issues/1\",\n                \"label\": \"bug\",\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[(\"status\", \"Label removed successfully\")],\n            test_mock={\n                \"remove_label\": lambda *args, **kwargs: \"Label removed successfully\"\n            },\n        )\n\n    @staticmethod\n    def remove_label(credentials: GithubCredentials, issue_url: str, label: str) -> str:\n        api = get_api(credentials)\n        label_url = issue_url + f\"/labels/{label}\"\n        api.delete(label_url)\n        return \"Label removed successfully\"\n\n    def run(\n        self,\n        input_data: Input,\n        *,\n        credentials: GithubCredentials,\n        **kwargs,\n    ) -> BlockOutput:\n        status = self.remove_label(\n            credentials,\n            input_data.issue_url,\n            input_data.label,\n        )\n        yield \"status\", status\n\n\nclass GithubAssignIssueBlock(Block):\n    class Input(BlockSchema):\n        credentials: GithubCredentialsInput = GithubCredentialsField(\"repo\")\n        issue_url: str = SchemaField(\n            description=\"URL of the GitHub issue\",\n            placeholder=\"https://github.com/owner/repo/issues/1\",\n        )\n        assignee: str = SchemaField(\n            description=\"Username to assign to the issue\",\n            placeholder=\"Enter the username\",\n        )\n\n    class Output(BlockSchema):\n        status: str = SchemaField(\n            description=\"Status of the issue assignment operation\"\n        )\n        error: str = SchemaField(\n            description=\"Error message if the issue assignment failed\"\n        )\n\n    def __init__(self):\n        super().__init__(\n            id=\"90507c72-b0ff-413a-886a-23bbbd66f542\",\n            description=\"This block assigns a user to a specified GitHub issue.\",\n            categories={BlockCategory.DEVELOPER_TOOLS},\n            input_schema=GithubAssignIssueBlock.Input,\n            output_schema=GithubAssignIssueBlock.Output,\n            test_input={\n                \"issue_url\": \"https://github.com/owner/repo/issues/1\",\n                \"assignee\": \"username1\",\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[(\"status\", \"Issue assigned successfully\")],\n            test_mock={\n                \"assign_issue\": lambda *args, **kwargs: \"Issue assigned successfully\"\n            },\n        )\n\n    @staticmethod\n    def assign_issue(\n        credentials: GithubCredentials,\n        issue_url: str,\n        assignee: str,\n    ) -> str:\n        api = get_api(credentials)\n        assignees_url = issue_url + \"/assignees\"\n        data = {\"assignees\": [assignee]}\n        api.post(assignees_url, json=data)\n        return \"Issue assigned successfully\"\n\n    def run(\n        self,\n        input_data: Input,\n        *,\n        credentials: GithubCredentials,\n        **kwargs,\n    ) -> BlockOutput:\n        status = self.assign_issue(\n            credentials,\n            input_data.issue_url,\n            input_data.assignee,\n        )\n        yield \"status\", status\n\n\nclass GithubUnassignIssueBlock(Block):\n    class Input(BlockSchema):\n        credentials: GithubCredentialsInput = GithubCredentialsField(\"repo\")\n        issue_url: str = SchemaField(\n            description=\"URL of the GitHub issue\",\n            placeholder=\"https://github.com/owner/repo/issues/1\",\n        )\n        assignee: str = SchemaField(\n            description=\"Username to unassign from the issue\",\n            placeholder=\"Enter the username\",\n        )\n\n    class Output(BlockSchema):\n        status: str = SchemaField(\n            description=\"Status of the issue unassignment operation\"\n        )\n        error: str = SchemaField(\n            description=\"Error message if the issue unassignment failed\"\n        )\n\n    def __init__(self):\n        super().__init__(\n            id=\"d154002a-38f4-46c2-962d-2488f2b05ece\",\n            description=\"This block unassigns a user from a specified GitHub issue.\",\n            categories={BlockCategory.DEVELOPER_TOOLS},\n            input_schema=GithubUnassignIssueBlock.Input,\n            output_schema=GithubUnassignIssueBlock.Output,\n            test_input={\n                \"issue_url\": \"https://github.com/owner/repo/issues/1\",\n                \"assignee\": \"username1\",\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[(\"status\", \"Issue unassigned successfully\")],\n            test_mock={\n                \"unassign_issue\": lambda *args, **kwargs: \"Issue unassigned successfully\"\n            },\n        )\n\n    @staticmethod\n    def unassign_issue(\n        credentials: GithubCredentials,\n        issue_url: str,\n        assignee: str,\n    ) -> str:\n        api = get_api(credentials)\n        assignees_url = issue_url + \"/assignees\"\n        data = {\"assignees\": [assignee]}\n        api.delete(assignees_url, json=data)\n        return \"Issue unassigned successfully\"\n\n    def run(\n        self,\n        input_data: Input,\n        *,\n        credentials: GithubCredentials,\n        **kwargs,\n    ) -> BlockOutput:\n        status = self.unassign_issue(\n            credentials,\n            input_data.issue_url,\n            input_data.assignee,\n        )\n        yield \"status\", status\n",
+    "children": [
+        {
+            "type": "import_from_statement",
+            "start_token": 0,
+            "end_token": 5,
+            "label": "from urllib.parse import urlparse",
+            "children": [
+                {
+                    "type": "import_prefix",
+                    "start_token": 0,
+                    "end_token": 3,
+                    "label": "from urllib.parse",
+                    "children": []
+                },
+                {
+                    "type": "keyword_separator",
+                    "start_token": 4,
+                    "end_token": 4,
+                    "label": "import",
+                    "children": []
+                },
+                {
+                    "type": "identifier",
+                    "start_token": 5,
+                    "end_token": 5,
+                    "label": "urlparse",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 8,
+            "end_token": 11,
+            "label": "from typing_extensions import TypedDict",
+            "children": [
+                {
+                    "type": "import_prefix",
+                    "start_token": 8,
+                    "end_token": 9,
+                    "label": "from typing_extensions",
+                    "children": []
+                },
+                {
+                    "type": "keyword_separator",
+                    "start_token": 10,
+                    "end_token": 10,
+                    "label": "import",
+                    "children": []
+                },
+                {
+                    "type": "identifier",
+                    "start_token": 11,
+                    "end_token": 11,
+                    "label": "TypedDict",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 14,
+            "end_token": 27,
+            "label": "from backend.data.block import Block, BlockCategory, BlockOutput, BlockSchema",
+            "children": [
+                {
+                    "type": "import_prefix",
+                    "start_token": 14,
+                    "end_token": 19,
+                    "label": "from backend.data.block",
+                    "children": []
+                },
+                {
+                    "type": "keyword_separator",
+                    "start_token": 20,
+                    "end_token": 20,
+                    "label": "import",
+                    "children": []
+                },
+                {
+                    "type": "identifier",
+                    "start_token": 21,
+                    "end_token": 27,
+                    "label": "Block, BlockCategory, BlockOutput, BlockSchema",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 29,
+            "end_token": 36,
+            "label": "from backend.data.model import SchemaField",
+            "children": [
+                {
+                    "type": "import_prefix",
+                    "start_token": 29,
+                    "end_token": 34,
+                    "label": "from backend.data.model",
+                    "children": []
+                },
+                {
+                    "type": "keyword_separator",
+                    "start_token": 35,
+                    "end_token": 35,
+                    "label": "import",
+                    "children": []
+                },
+                {
+                    "type": "identifier",
+                    "start_token": 36,
+                    "end_token": 36,
+                    "label": "SchemaField",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 39,
+            "end_token": 44,
+            "label": "from ._api import get_api\n",
+            "children": [
+                {
+                    "type": "import_prefix",
+                    "start_token": 39,
+                    "end_token": 41,
+                    "label": "from ._api",
+                    "children": []
+                },
+                {
+                    "type": "keyword_separator",
+                    "start_token": 42,
+                    "end_token": 42,
+                    "label": "import",
+                    "children": []
+                },
+                {
+                    "type": "identifier",
+                    "start_token": 43,
+                    "end_token": 44,
+                    "label": "get_api\n",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 45,
+            "end_token": 66,
+            "label": "from ._auth import (\n    TEST_CREDENTIALS,\n    TEST_CREDENTIALS_INPUT,\n    GithubCredentials,\n    GithubCredentialsField,\n    GithubCredentialsInput,\n)",
+            "children": [
+                {
+                    "type": "import_prefix",
+                    "start_token": 45,
+                    "end_token": 48,
+                    "label": "from ._auth import",
+                    "children": []
+                },
+                {
+                    "type": "parameters",
+                    "start_token": 49,
+                    "end_token": 66,
+                    "label": "(\n    TEST_CREDENTIALS,\n    TEST_CREDENTIALS_INPUT,\n    GithubCredentials,\n    GithubCredentialsField,\n    GithubCredentialsInput,\n)",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 51,
+                            "end_token": 51,
+                            "label": "TEST_CREDENTIALS",
+                            "children": []
+                        },
+                        {
+                            "type": "keyword_separator",
+                            "start_token": 52,
+                            "end_token": 52,
+                            "label": ",",
+                            "children": []
+                        },
+                        {
+                            "type": "identifier",
+                            "start_token": 54,
+                            "end_token": 54,
+                            "label": "TEST_CREDENTIALS_INPUT",
+                            "children": []
+                        },
+                        {
+                            "type": "keyword_separator",
+                            "start_token": 55,
+                            "end_token": 55,
+                            "label": ",",
+                            "children": []
+                        },
+                        {
+                            "type": "identifier",
+                            "start_token": 57,
+                            "end_token": 57,
+                            "label": "GithubCredentials",
+                            "children": []
+                        },
+                        {
+                            "type": "keyword_separator",
+                            "start_token": 58,
+                            "end_token": 58,
+                            "label": ",",
+                            "children": []
+                        },
+                        {
+                            "type": "identifier",
+                            "start_token": 60,
+                            "end_token": 60,
+                            "label": "GithubCredentialsField",
+                            "children": []
+                        },
+                        {
+                            "type": "keyword_separator",
+                            "start_token": 61,
+                            "end_token": 61,
+                            "label": ",",
+                            "children": []
+                        },
+                        {
+                            "type": "identifier",
+                            "start_token": 63,
+                            "end_token": 63,
+                            "label": "GithubCredentialsInput",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "start_token": 70,
+            "end_token": 92,
+            "label": "def is_github_url(url: str) -> bool:\n    return urlparse(url).netloc == \"github.com\"\n",
+            "children": [
+                {
+                    "type": "typed_parameter",
+                    "start_token": 72,
+                    "end_token": 76,
+                    "label": "(url: str)",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 73,
+                            "end_token": 73,
+                            "label": "url",
+                            "children": []
+                        },
+                        {
+                            "type": "type",
+                            "start_token": 74,
+                            "end_token": 75,
+                            "label": ": str",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "conditional_expression",
+                    "start_token": 77,
+                    "end_token": 80,
+                    "label": "-> bool:",
+                    "children": [
+                        {
+                            "type": "conditional_expression",
+                            "label": "",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "return_statement",
+                    "start_token": 82,
+                    "end_token": 92,
+                    "label": "return urlparse(url).netloc == \"github.com\"\n",
+                    "children": [
+                        {
+                            "type": "call",
+                            "start_token": 83,
+                            "end_token": 91,
+                            "label": "urlparse(url).netloc == \"github.com\"",
+                            "children": [
+                                {
+                                    "type": "identifier",
+                                    "start_token": 84,
+                                    "end_token": 84,
+                                    "label": "(",
+                                    "children": []
+                                },
+                                {
+                                    "type": "expression_list",
+                                    "start_token": 85,
+                                    "end_token": 86,
+                                    "label": "url)",
+                                    "children": [
+                                        {
+                                            "type": "keyword_argument",
+                                            "label": "",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "keyword_argument",
+                            "label": "",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "class_definition",
+            "start_token": 108,
+            "end_token": 379,
+            "label": "class GithubCommentBlock(Block):\n    class Input(BlockSchema):\n        credentials: GithubCredentialsInput = GithubCredentialsField(\"repo\")\n        issue_url: str = SchemaField(\n            description=\"URL of the GitHub issue or pull request\",\n            placeholder=\"https://github.com/owner/repo/issues/1\",\n        )\n        comment: str = SchemaField(\n            description=\"Comment to post on the issue or pull request\",\n            placeholder=\"Enter your comment\",\n        )\n\n    class Output(BlockSchema):\n        id: int = SchemaField(description=\"ID of the created comment\")\n        url: str = SchemaField(description=\"URL to the comment on GitHub\")\n        error: str = SchemaField(\n            description=\"Error message if the comment posting failed\"\n        )\n\n    def __init__(self):\n        super().__init__(\n            id=\"a8db4d8d-db1c-4a25-a1b0-416a8c33602b\",\n            description=\"This block posts a comment on a specified GitHub issue or pull request.\",\n            categories={BlockCategory.DEVELOPER_TOOLS},\n            input_schema=GithubCommentBlock.Input,\n            output_schema=GithubCommentBlock.Output,\n            test_input=[\n                {\n                    \"issue_url\": \"https://github.com/owner/repo/issues/1\",\n                    \"comment\": \"This is a test comment.\",\n                    \"credentials\": TEST_CREDENTIALS_INPUT,\n                },\n                {\n                    \"issue_url\": \"https://github.com/owner/repo/pull/1\",\n                    \"comment\": \"This is a test comment.\",\n                    \"credentials\": TEST_CREDENTIALS_INPUT,\n                },\n            ],\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[\n                (\"id\", 1337),\n                (\"url\", \"https://github.com/owner/repo/issues/1#issuecomment-1337\"),\n                (\"id\", 1337),\n                (\n                    \"url\",\n                    \"https://github.com/owner/repo/issues/1#issuecomment-1337\",\n                ),\n            ],\n            test_mock={\n                \"post_comment\": lambda *args, **kwargs: (\n                    1337,\n                    \"https://github.com/owner/repo/issues/1#issuecomment-1337\",\n                )\n            },\n        )\n",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 109,
+                    "end_token": 109,
+                    "label": "GithubCommentBlock",
+                    "children": []
+                },
+                {
+                    "type": "parameters",
+                    "start_token": 110,
+                    "end_token": 112,
+                    "label": "(Block)",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 111,
+                            "end_token": 111,
+                            "label": "Block",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "class_definition",
+                    "start_token": 115,
+                    "end_token": 167,
+                    "label": "class Input(BlockSchema):\n        credentials: GithubCredentialsInput = GithubCredentialsField(\"repo\")\n        issue_url: str = SchemaField(\n            description=\"URL of the GitHub issue or pull request\",\n            placeholder=\"https://github.com/owner/repo/issues/1\",\n        )\n        comment: str = SchemaField(\n            description=\"Comment to post on the issue or pull request\",\n            placeholder=\"Enter your comment\",\n        )",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 116,
+                            "end_token": 116,
+                            "label": "Input",
+                            "children": []
+                        },
+                        {
+                            "type": "parameters",
+                            "start_token": 117,
+                            "end_token": 118,
+                            "label": "(BlockSchema",
+                            "children": [
+                                {
+                                    "type": "identifier",
+                                    "start_token": 119,
+                                    "end_token": 119,
+                                    "label": ")",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "field",
+                            "start_token": 122,
+                            "end_token": 129,
+                            "label": "credentials: GithubCredentialsInput = GithubCredentialsField(\"repo\")",
+                            "children": [
+                                {
+                                    "type": "attribute",
+                                    "label": "",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "field",
+                            "start_token": 131,
+                            "end_token": 148,
+                            "label": "issue_url: str = SchemaField(\n            description=\"URL of the GitHub issue or pull request\",\n            placeholder=\"https://github.com/owner/repo/issues/1\",\n        )",
+                            "children": [
+                                {
+                                    "type": "attribute",
+                                    "label": "",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "field",
+                            "start_token": 150,
+                            "end_token": 167,
+                            "label": "comment: str = SchemaField(\n            description=\"Comment to post on the issue or pull request\",\n            placeholder=\"Enter your comment\",\n        )",
+                            "children": [
+                                {
+                                    "type": "attribute",
+                                    "label": "",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "type": "class_definition",
+                    "start_token": 170,
+                    "end_token": 198,
+                    "label": "class Output(BlockSchema):\n        id: int = SchemaField(description=\"ID of the created comment\")\n        url: str = SchemaField(description=\"URL to the comment on GitHub\")\n",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 171,
+                            "end_token": 171,
+                            "label": "Output",
+                            "children": []
+                        },
+                        {
+                            "type": "parameters",
+                            "start_token": 172,
+                            "end_token": 173,
+                            "label": "(BlockSchema",
+                            "children": [
+                                {
+                                    "type": "identifier",
+                                    "start_token": 174,
+                                    "end_token": 174,
+                                    "label": ")",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "field",
+                            "start_token": 177,
+                            "end_token": 196,
+                            "label": "id: int = SchemaField(description=\"ID of the created comment\")\n        url: str = SchemaField(description=\"URL to the comment on GitHub\"",
+                            "children": [
+                                {
+                                    "type": "attribute",
+                                    "label": "",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "type": "function_definition",
+                    "start_token": 213,
+                    "end_token": 378,
+                    "label": "def __init__(self):\n        super().__init__(\n            id=\"a8db4d8d-db1c-4a25-a1b0-416a8c33602b\",\n            description=\"This block posts a comment on a specified GitHub issue or pull request.\",\n            categories={BlockCategory.DEVELOPER_TOOLS},\n            input_schema=GithubCommentBlock.Input,\n            output_schema=GithubCommentBlock.Output,\n            test_input=[\n                {\n                    \"issue_url\": \"https://github.com/owner/repo/issues/1\",\n                    \"comment\": \"This is a test comment.\",\n                    \"credentials\": TEST_CREDENTIALS_INPUT,\n                },\n                {\n                    \"issue_url\": \"https://github.com/owner/repo/pull/1\",\n                    \"comment\": \"This is a test comment.\",\n                    \"credentials\": TEST_CREDENTIALS_INPUT,\n                },\n            ],\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[\n                (\"id\", 1337),\n                (\"url\", \"https://github.com/owner/repo/issues/1#issuecomment-1337\"),\n                (\"id\", 1337),\n                (\n                    \"url\",\n                    \"https://github.com/owner/repo/issues/1#issuecomment-1337\",\n                ),\n            ],\n            test_mock={\n                \"post_comment\": lambda *args, **kwargs: (\n                    1337,\n                    \"https://github.com/owner/repo/issues/1#issuecomment-1337\",\n                )\n            },\n        )",
+                    "children": [
+                        {
+                            "type": "keyword_argument",
+                            "start_token": 215,
+                            "end_token": 218,
+                            "label": "(self):",
+                            "children": []
+                        },
+                        {
+                            "type": "keyword_argument",
+                            "start_token": 227,
+                            "end_token": 378,
+                            "label": "id=\"a8db4d8d-db1c-4a25-a1b0-416a8c33602b\",\n            description=\"This block posts a comment on a specified GitHub issue or pull request.\",\n            categories={BlockCategory.DEVELOPER_TOOLS},\n            input_schema=GithubCommentBlock.Input,\n            output_schema=GithubCommentBlock.Output,\n            test_input=[\n                {\n                    \"issue_url\": \"https://github.com/owner/repo/issues/1\",\n                    \"comment\": \"This is a test comment.\",\n                    \"credentials\": TEST_CREDENTIALS_INPUT,\n                },\n                {\n                    \"issue_url\": \"https://github.com/owner/repo/pull/1\",\n                    \"comment\": \"This is a test comment.\",\n                    \"credentials\": TEST_CREDENTIALS_INPUT,\n                },\n            ],\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[\n                (\"id\", 1337),\n                (\"url\", \"https://github.com/owner/repo/issues/1#issuecomment-1337\"),\n                (\"id\", 1337),\n                (\n                    \"url\",\n                    \"https://github.com/owner/repo/issues/1#issuecomment-1337\",\n                ),\n            ],\n            test_mock={\n                \"post_comment\": lambda *args, **kwargs: (\n                    1337,\n                    \"https://github.com/owner/repo/issues/1#issuecomment-1337\",\n                )\n            },\n        )",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "class_definition",
+            "start_token": 564,
+            "end_token": 811,
+            "label": "class GithubMakeIssueBlock(Block):\n    class Input(BlockSchema):\n        credentials: GithubCredentialsInput = GithubCredentialsField(\"repo\")\n        repo_url: str = SchemaField(\n            description=\"URL of the GitHub repository\",\n            placeholder=\"https://github.com/owner/repo\",\n        )\n        title: str = SchemaField(\n            description=\"Title of the issue\", placeholder=\"Enter the issue title\"\n        )\n        body: str = SchemaField(\n            description=\"Body of the issue\", placeholder=\"Enter the issue body\"\n        )\n\n    class Output(BlockSchema):\n        number: int = SchemaField(description=\"Number of the created issue\")\n        url: str = SchemaField(description=\"URL of the created issue\")\n        error: str = SchemaField(\n            description=\"Error message if the issue creation failed\"\n        )\n\n    def __init__(self):\n        super().__init__(\n            id=\"691dad47-f494-44c3-a1e8-05b7990f2dab\",\n            description=\"This block creates a new issue on a specified GitHub repository.\",\n            categories={BlockCategory.DEVELOPER_TOOLS},\n            input_schema=GithubMakeIssueBlock.Input,\n            output_schema=GithubMakeIssueBlock.Output,\n            test_input={\n                \"repo_url\": \"https://github.com/owner/repo\",\n                \"title\": \"Test Issue\",\n                \"body\": \"This is a test issue.\",\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[\n                (\"number\", 1),\n                (\"url\", \"https://github.com/owner/repo/issues/1\"),\n            ],\n            test_mock={\n                \"create_issue\": lambda *args, **kwargs: (\n                    1,\n                    \"https://github.com/owner/repo/issues/1\",\n                )\n            },\n        )",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 565,
+                    "end_token": 565,
+                    "label": "GithubMakeIssueBlock",
+                    "children": []
+                },
+                {
+                    "type": "parameters",
+                    "start_token": 566,
+                    "end_token": 568,
+                    "label": "(Block)",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "label": "",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "class_definition",
+                    "start_token": 571,
+                    "end_token": 638,
+                    "label": "class Input(BlockSchema):\n        credentials: GithubCredentialsInput = GithubCredentialsField(\"repo\")\n        repo_url: str = SchemaField(\n            description=\"URL of the GitHub repository\",\n            placeholder=\"https://github.com/owner/repo\",\n        )\n        title: str = SchemaField(\n            description=\"Title of the issue\", placeholder=\"Enter the issue title\"\n        )\n        body: str = SchemaField(\n            description=\"Body of the issue\", placeholder=\"Enter the issue body\"\n        )",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 573,
+                            "end_token": 573,
+                            "label": "(",
+                            "children": []
+                        },
+                        {
+                            "type": "parameters",
+                            "start_token": 574,
+                            "end_token": 574,
+                            "label": "BlockSchema",
+                            "children": [
+                                {
+                                    "type": "identifier",
+                                    "label": "",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "field",
+                            "start_token": 578,
+                            "end_token": 636,
+                            "label": "credentials: GithubCredentialsInput = GithubCredentialsField(\"repo\")\n        repo_url: str = SchemaField(\n            description=\"URL of the GitHub repository\",\n            placeholder=\"https://github.com/owner/repo\",\n        )\n        title: str = SchemaField(\n            description=\"Title of the issue\", placeholder=\"Enter the issue title\"\n        )\n        body: str = SchemaField(\n            description=\"Body of the issue\", placeholder=\"Enter the issue body\"",
+                            "children": [
+                                {
+                                    "type": "attribute",
+                                    "label": "",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "type": "class_definition",
+                    "start_token": 641,
+                    "end_token": 669,
+                    "label": "class Output(BlockSchema):\n        number: int = SchemaField(description=\"Number of the created issue\")\n        url: str = SchemaField(description=\"URL of the created issue\")\n",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 643,
+                            "end_token": 643,
+                            "label": "(",
+                            "children": []
+                        },
+                        {
+                            "type": "parameters",
+                            "start_token": 644,
+                            "end_token": 645,
+                            "label": "BlockSchema)",
+                            "children": [
+                                {
+                                    "type": "identifier",
+                                    "label": "",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "field",
+                            "start_token": 648,
+                            "end_token": 667,
+                            "label": "number: int = SchemaField(description=\"Number of the created issue\")\n        url: str = SchemaField(description=\"URL of the created issue\"",
+                            "children": [
+                                {
+                                    "type": "attribute",
+                                    "label": "",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "type": "function_definition",
+                    "start_token": 684,
+                    "end_token": 811,
+                    "label": "def __init__(self):\n        super().__init__(\n            id=\"691dad47-f494-44c3-a1e8-05b7990f2dab\",\n            description=\"This block creates a new issue on a specified GitHub repository.\",\n            categories={BlockCategory.DEVELOPER_TOOLS},\n            input_schema=GithubMakeIssueBlock.Input,\n            output_schema=GithubMakeIssueBlock.Output,\n            test_input={\n                \"repo_url\": \"https://github.com/owner/repo\",\n                \"title\": \"Test Issue\",\n                \"body\": \"This is a test issue.\",\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[\n                (\"number\", 1),\n                (\"url\", \"https://github.com/owner/repo/issues/1\"),\n            ],\n            test_mock={\n                \"create_issue\": lambda *args, **kwargs: (\n                    1,\n                    \"https://github.com/owner/repo/issues/1\",\n                )\n            },\n        )",
+                    "children": [
+                        {
+                            "type": "keyword_argument",
+                            "start_token": 686,
+                            "end_token": 688,
+                            "label": "(self)",
+                            "children": []
+                        },
+                        {
+                            "type": "keyword_argument",
+                            "start_token": 698,
+                            "end_token": 811,
+                            "label": "id=\"691dad47-f494-44c3-a1e8-05b7990f2dab\",\n            description=\"This block creates a new issue on a specified GitHub repository.\",\n            categories={BlockCategory.DEVELOPER_TOOLS},\n            input_schema=GithubMakeIssueBlock.Input,\n            output_schema=GithubMakeIssueBlock.Output,\n            test_input={\n                \"repo_url\": \"https://github.com/owner/repo\",\n                \"title\": \"Test Issue\",\n                \"body\": \"This is a test issue.\",\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[\n                (\"number\", 1),\n                (\"url\", \"https://github.com/owner/repo/issues/1\"),\n            ],\n            test_mock={\n                \"create_issue\": lambda *args, **kwargs: (\n                    1,\n                    \"https://github.com/owner/repo/issues/1\",\n                )\n            },\n        )",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "class_definition",
+            "start_token": 864,
+            "end_token": 1121,
+            "label": "body}\n        issues_url = repo_url + \"/issues\"\n        response = api.post(issues_url, json=data)\n        issue = response.json()\n        return issue[\"number\"], issue[\"html_url\"]\n\n    def run(\n        self,\n        input_data: Input,\n        *,\n        credentials: GithubCredentials,\n        **kwargs,\n    ) -> BlockOutput:\n        number, url = self.create_issue(\n            credentials,\n            input_data.repo_url,\n            input_data.title,\n            input_data.body,\n        )\n        yield \"number\", number\n        yield \"url\", url\n\n\nclass GithubReadIssueBlock(Block):\n    class Input(BlockSchema):\n        credentials: GithubCredentialsInput = GithubCredentialsField(\"repo\")\n        issue_url: str = SchemaField(\n            description=\"URL of the GitHub issue\",\n            placeholder=\"https://github.com/owner/repo/issues/1\",\n        )\n\n    class Output(BlockSchema):\n        title: str = SchemaField(description=\"Title of the issue\")\n        body: str = SchemaField(description=\"Body of the issue\")\n        user: str = SchemaField(description=\"User who created the issue\")\n        error: str = SchemaField(\n            description=\"Error message if reading the issue failed\"\n        )\n\n    def __init__(self):\n        super().__init__(\n            id=\"6443c75d-032a-4772-9c08-230c707c8acc\",\n            description=\"This block reads the body, title, and user of a specified GitHub issue.\",\n            categories={BlockCategory.DEVELOPER_TOOLS},\n            input_schema=GithubReadIssueBlock.Input,\n            output_schema=GithubReadIssueBlock.Output,\n",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 865,
+                    "end_token": 865,
+                    "label": "}",
+                    "children": []
+                },
+                {
+                    "type": "parameters",
+                    "start_token": 866,
+                    "end_token": 868,
+                    "label": "\n        issues_url =",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "label": "",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "class_definition",
+                    "start_token": 871,
+                    "end_token": 1049,
+                    "label": "\"/issues\"\n        response = api.post(issues_url, json=data)\n        issue = response.json()\n        return issue[\"number\"], issue[\"html_url\"]\n\n    def run(\n        self,\n        input_data: Input,\n        *,\n        credentials: GithubCredentials,\n        **kwargs,\n    ) -> BlockOutput:\n        number, url = self.create_issue(\n            credentials,\n            input_data.repo_url,\n            input_data.title,\n            input_data.body,\n        )\n        yield \"number\", number\n        yield \"url\", url\n\n\nclass GithubReadIssueBlock(Block):\n    class Input(BlockSchema):\n        credentials: GithubCredentialsInput = GithubCredentialsField(\"repo\")\n        issue_url: str = SchemaField(\n            description=\"URL of the GitHub issue\",\n            placeholder=\"https://github.com/owner/repo/issues/1\",\n        )\n\n    class Output(BlockSchema):\n        title: str = SchemaField(description=\"Title of the issue\")\n        body: str = SchemaField(description=\"Body of the issue\")\n",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 873,
+                            "end_token": 873,
+                            "label": "response",
+                            "children": []
+                        },
+                        {
+                            "type": "parameters",
+                            "start_token": 874,
+                            "end_token": 874,
+                            "label": "=",
+                            "children": [
+                                {
+                                    "type": "identifier",
+                                    "label": "",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "field",
+                            "start_token": 878,
+                            "end_token": 1048,
+                            "label": "(issues_url, json=data)\n        issue = response.json()\n        return issue[\"number\"], issue[\"html_url\"]\n\n    def run(\n        self,\n        input_data: Input,\n        *,\n        credentials: GithubCredentials,\n        **kwargs,\n    ) -> BlockOutput:\n        number, url = self.create_issue(\n            credentials,\n            input_data.repo_url,\n            input_data.title,\n            input_data.body,\n        )\n        yield \"number\", number\n        yield \"url\", url\n\n\nclass GithubReadIssueBlock(Block):\n    class Input(BlockSchema):\n        credentials: GithubCredentialsInput = GithubCredentialsField(\"repo\")\n        issue_url: str = SchemaField(\n            description=\"URL of the GitHub issue\",\n            placeholder=\"https://github.com/owner/repo/issues/1\",\n        )\n\n    class Output(BlockSchema):\n        title: str = SchemaField(description=\"Title of the issue\")\n        body: str = SchemaField(description=\"Body of the issue\")",
+                            "children": [
+                                {
+                                    "type": "attribute",
+                                    "label": "",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "type": "class_definition",
+                    "start_token": 1074,
+                    "end_token": 1121,
+                    "label": "\n    def __init__(self):\n        super().__init__(\n            id=\"6443c75d-032a-4772-9c08-230c707c8acc\",\n            description=\"This block reads the body, title, and user of a specified GitHub issue.\",\n            categories={BlockCategory.DEVELOPER_TOOLS},\n            input_schema=GithubReadIssueBlock.Input,\n            output_schema=GithubReadIssueBlock.Output,\n",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 1076,
+                            "end_token": 1076,
+                            "label": "__init__",
+                            "children": []
+                        },
+                        {
+                            "type": "parameters",
+                            "start_token": 1077,
+                            "end_token": 1077,
+                            "label": "(",
+                            "children": [
+                                {
+                                    "type": "identifier",
+                                    "label": "",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "field",
+                            "start_token": 1074,
+                            "end_token": 1121,
+                            "label": "\n    def __init__(self):\n        super().__init__(\n            id=\"6443c75d-032a-4772-9c08-230c707c8acc\",\n            description=\"This block reads the body, title, and user of a specified GitHub issue.\",\n            categories={BlockCategory.DEVELOPER_TOOLS},\n            input_schema=GithubReadIssueBlock.Input,\n            output_schema=GithubReadIssueBlock.Output,\n",
+                            "children": [
+                                {
+                                    "type": "attribute",
+                                    "label": "",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

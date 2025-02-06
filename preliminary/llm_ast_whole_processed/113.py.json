@@ -1,0 +1,1379 @@
+{
+    "type": "module",
+    "start_token": 0,
+    "end_token": 817,
+    "label": "from typing import Literal\n\nimport googlemaps\nfrom pydantic import BaseModel, SecretStr\n\nfrom backend.data.block import Block, BlockCategory, BlockOutput, BlockSchema\nfrom backend.data.model import (\n    APIKeyCredentials,\n    CredentialsField,\n    CredentialsMetaInput,\n    SchemaField,\n)\nfrom backend.integrations.providers import ProviderName\n\nTEST_CREDENTIALS = APIKeyCredentials(\n    id=\"01234567-89ab-cdef-0123-456789abcdef\",\n    provider=\"google_maps\",\n    api_key=SecretStr(\"mock-google-maps-api-key\"),\n    title=\"Mock Google Maps API key\",\n    expires_at=None,\n)\nTEST_CREDENTIALS_INPUT = {\n    \"provider\": TEST_CREDENTIALS.provider,\n    \"id\": TEST_CREDENTIALS.id,\n    \"type\": TEST_CREDENTIALS.type,\n    \"title\": TEST_CREDENTIALS.type,\n}\n\n\nclass Place(BaseModel):\n    name: str\n    address: str\n    phone: str\n    rating: float\n    reviews: int\n    website: str\n\n\nclass GoogleMapsSearchBlock(Block):\n    class Input(BlockSchema):\n        credentials: CredentialsMetaInput[\n            Literal[ProviderName.GOOGLE_MAPS], Literal[\"api_key\"]\n        ] = CredentialsField(description=\"Google Maps API Key\")\n        query: str = SchemaField(\n            description=\"Search query for local businesses\",\n            placeholder=\"e.g., 'restaurants in New York'\",\n        )\n        radius: int = SchemaField(\n            description=\"Search radius in meters (max 50000)\",\n            default=5000,\n            ge=1,\n            le=50000,\n        )\n        max_results: int = SchemaField(\n            description=\"Maximum number of results to return (max 60)\",\n            default=20,\n            ge=1,\n            le=60,\n        )\n\n    class Output(BlockSchema):\n        place: Place = SchemaField(description=\"Place found\")\n        error: str = SchemaField(description=\"Error message if the search failed\")\n\n    def __init__(self):\n        super().__init__(\n            id=\"f47ac10b-58cc-4372-a567-0e02b2c3d479\",\n            description=\"This block searches for local businesses using Google Maps API.\",\n            categories={BlockCategory.SEARCH},\n            input_schema=GoogleMapsSearchBlock.Input,\n            output_schema=GoogleMapsSearchBlock.Output,\n            test_input={\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n                \"query\": \"restaurants in new york\",\n                \"radius\": 5000,\n                \"max_results\": 5,\n            },\n            test_output=[\n                (\n                    \"place\",\n                    {\n                        \"name\": \"Test Restaurant\",\n                        \"address\": \"123 Test St, New York, NY 10001\",\n                        \"phone\": \"+1 (555) 123-4567\",\n                        \"rating\": 4.5,\n                        \"reviews\": 100,\n                        \"website\": \"https://testrestaurant.com\",\n                    },\n                ),\n            ],\n            test_mock={\n                \"search_places\": lambda *args, **kwargs: [\n                    {\n                        \"name\": \"Test Restaurant\",\n                        \"address\": \"123 Test St, New York, NY 10001\",\n                        \"phone\": \"+1 (555) 123-4567\",\n                        \"rating\": 4.5,\n                        \"reviews\": 100,\n                        \"website\": \"https://testrestaurant.com\",\n                    }\n                ]\n            },\n            test_credentials=TEST_CREDENTIALS,\n        )\n\n    def run(\n        self, input_data: Input, *, credentials: APIKeyCredentials, **kwargs\n    ) -> BlockOutput:\n        places = self.search_places(\n            credentials.api_key,\n            input_data.query,\n            input_data.radius,\n            input_data.max_results,\n        )\n        for place in places:\n            yield \"place\", place\n\n    def search_places(self, api_key: SecretStr, query, radius, max_results):\n        client = googlemaps.Client(key=api_key.get_secret_value())\n        return self._search_places(client, query, radius, max_results)\n\n    def _search_places(self, client, query, radius, max_results):\n        results = []\n        next_page_token = None\n        while len(results) < max_results:\n            response = client.places(\n                query=query,\n                radius=radius,\n                page_token=next_page_token,\n            )\n            for place in response[\"results\"]:\n                if len(results) >= max_results:\n                    break\n                place_details = client.place(place[\"place_id\"])[\"result\"]\n                results.append(\n                    Place(\n                        name=place_details.get(\"name\", \"\"),\n                        address=place_details.get(\"formatted_address\", \"\"),\n                        phone=place_details.get(\"formatted_phone_number\", \"\"),\n                        rating=place_details.get(\"rating\", 0),\n                        reviews=place_details.get(\"user_ratings_total\", 0),\n                        website=place_details.get(\"website\", \"\"),\n                    )\n                )\n            next_page_token = response.get(\"next_page_token\")\n            if not next_page_token:\n                break\n        return results\n",
+    "children": [
+        {
+            "type": "import_from_statement",
+            "start_token": 0,
+            "end_token": 3,
+            "label": "from typing import Literal",
+            "children": [
+                {
+                    "type": "import_prefix",
+                    "start_token": 0,
+                    "end_token": 1,
+                    "label": "from typing",
+                    "children": []
+                },
+                {
+                    "type": "aliased_import",
+                    "start_token": 2,
+                    "end_token": 3,
+                    "label": "import Literal",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "import_statement",
+            "start_token": 6,
+            "end_token": 7,
+            "label": "import googlemaps",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 9,
+            "end_token": 14,
+            "label": "from pydantic import BaseModel, SecretStr",
+            "children": [
+                {
+                    "type": "import_prefix",
+                    "start_token": 9,
+                    "end_token": 10,
+                    "label": "from pydantic",
+                    "children": []
+                },
+                {
+                    "type": "aliased_import",
+                    "start_token": 11,
+                    "end_token": 14,
+                    "label": "import BaseModel, SecretStr",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 17,
+            "end_token": 31,
+            "label": "from backend.data.block import Block, BlockCategory, BlockOutput, BlockSchema\n",
+            "children": [
+                {
+                    "type": "relative_import",
+                    "start_token": 17,
+                    "end_token": 22,
+                    "label": "from backend.data.block",
+                    "children": [
+                        {
+                            "type": "dotted_name",
+                            "start_token": 18,
+                            "end_token": 22,
+                            "label": "backend.data.block",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "aliased_import",
+                    "start_token": 23,
+                    "end_token": 30,
+                    "label": "import Block, BlockCategory, BlockOutput, BlockSchema",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 32,
+            "end_token": 53,
+            "label": "from backend.data.model import (\n    APIKeyCredentials,\n    CredentialsField,\n    CredentialsMetaInput,\n    SchemaField,\n)",
+            "children": [
+                {
+                    "type": "relative_import",
+                    "start_token": 32,
+                    "end_token": 37,
+                    "label": "from backend.data.model",
+                    "children": [
+                        {
+                            "type": "dotted_name",
+                            "start_token": 33,
+                            "end_token": 37,
+                            "label": "backend.data.model",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "aliased_import",
+                    "start_token": 38,
+                    "end_token": 53,
+                    "label": "import (\n    APIKeyCredentials,\n    CredentialsField,\n    CredentialsMetaInput,\n    SchemaField,\n)",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 55,
+            "end_token": 62,
+            "label": "from backend.integrations.providers import ProviderName",
+            "children": [
+                {
+                    "type": "relative_import",
+                    "start_token": 55,
+                    "end_token": 60,
+                    "label": "from backend.integrations.providers",
+                    "children": [
+                        {
+                            "type": "dotted_name",
+                            "start_token": 56,
+                            "end_token": 60,
+                            "label": "backend.integrations.providers",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "aliased_import",
+                    "start_token": 61,
+                    "end_token": 62,
+                    "label": "import ProviderName",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "assignment",
+            "start_token": 65,
+            "end_token": 98,
+            "label": "TEST_CREDENTIALS = APIKeyCredentials(\n    id=\"01234567-89ab-cdef-0123-456789abcdef\",\n    provider=\"google_maps\",\n    api_key=SecretStr(\"mock-google-maps-api-key\"),\n    title=\"Mock Google Maps API key\",\n    expires_at=None,\n)",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 65,
+                    "end_token": 65,
+                    "label": "TEST_CREDENTIALS",
+                    "children": []
+                },
+                {
+                    "type": "call",
+                    "start_token": 67,
+                    "end_token": 98,
+                    "label": "APIKeyCredentials(\n    id=\"01234567-89ab-cdef-0123-456789abcdef\",\n    provider=\"google_maps\",\n    api_key=SecretStr(\"mock-google-maps-api-key\"),\n    title=\"Mock Google Maps API key\",\n    expires_at=None,\n)",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 67,
+                            "end_token": 67,
+                            "label": "APIKeyCredentials",
+                            "children": []
+                        },
+                        {
+                            "type": "argument_list",
+                            "start_token": 68,
+                            "end_token": 98,
+                            "label": "(\n    id=\"01234567-89ab-cdef-0123-456789abcdef\",\n    provider=\"google_maps\",\n    api_key=SecretStr(\"mock-google-maps-api-key\"),\n    title=\"Mock Google Maps API key\",\n    expires_at=None,\n)",
+                            "children": [
+                                {
+                                    "type": "keyword_argument",
+                                    "start_token": 70,
+                                    "end_token": 72,
+                                    "label": "id=\"01234567-89ab-cdef-0123-456789abcdef\"",
+                                    "children": []
+                                },
+                                {
+                                    "type": "keyword_argument",
+                                    "start_token": 75,
+                                    "end_token": 77,
+                                    "label": "provider=\"google_maps\"",
+                                    "children": []
+                                },
+                                {
+                                    "type": "keyword_argument",
+                                    "start_token": 80,
+                                    "end_token": 85,
+                                    "label": "api_key=SecretStr(\"mock-google-maps-api-key\")",
+                                    "children": []
+                                },
+                                {
+                                    "type": "keyword_argument",
+                                    "start_token": 88,
+                                    "end_token": 90,
+                                    "label": "title=\"Mock Google Maps API key\"",
+                                    "children": []
+                                },
+                                {
+                                    "type": "keyword_argument",
+                                    "start_token": 93,
+                                    "end_token": 95,
+                                    "label": "expires_at=None",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "assignment",
+            "start_token": 100,
+            "end_token": 132,
+            "label": "TEST_CREDENTIALS_INPUT = {\n    \"provider\": TEST_CREDENTIALS.provider,\n    \"id\": TEST_CREDENTIALS.id,\n    \"type\": TEST_CREDENTIALS.type,\n    \"title\": TEST_CREDENTIALS.type,\n}",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 100,
+                    "end_token": 100,
+                    "label": "TEST_CREDENTIALS_INPUT",
+                    "children": []
+                },
+                {
+                    "type": "dictionary",
+                    "start_token": 102,
+                    "end_token": 132,
+                    "label": "{\n    \"provider\": TEST_CREDENTIALS.provider,\n    \"id\": TEST_CREDENTIALS.id,\n    \"type\": TEST_CREDENTIALS.type,\n    \"title\": TEST_CREDENTIALS.type,\n}",
+                    "children": [
+                        {
+                            "type": "pair",
+                            "start_token": 104,
+                            "end_token": 109,
+                            "label": "\"provider\": TEST_CREDENTIALS.provider,",
+                            "children": []
+                        },
+                        {
+                            "type": "pair",
+                            "start_token": 111,
+                            "end_token": 115,
+                            "label": "\"id\": TEST_CREDENTIALS.id",
+                            "children": []
+                        },
+                        {
+                            "type": "pair",
+                            "start_token": 118,
+                            "end_token": 122,
+                            "label": "\"type\": TEST_CREDENTIALS.type",
+                            "children": []
+                        },
+                        {
+                            "type": "pair",
+                            "start_token": 125,
+                            "end_token": 129,
+                            "label": "\"title\": TEST_CREDENTIALS.type",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "class_definition",
+            "start_token": 136,
+            "end_token": 166,
+            "label": "class Place(BaseModel):\n    name: str\n    address: str\n    phone: str\n    rating: float\n    reviews: int\n    website: str\n",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 137,
+                    "end_token": 137,
+                    "label": "Place",
+                    "children": []
+                },
+                {
+                    "type": "parameters",
+                    "start_token": 138,
+                    "end_token": 140,
+                    "label": "(BaseModel)",
+                    "children": []
+                },
+                {
+                    "type": "block",
+                    "start_token": 141,
+                    "end_token": 166,
+                    "label": ":\n    name: str\n    address: str\n    phone: str\n    rating: float\n    reviews: int\n    website: str\n",
+                    "children": [
+                        {
+                            "type": "assignment",
+                            "start_token": 143,
+                            "end_token": 145,
+                            "label": "name: str",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 147,
+                            "end_token": 149,
+                            "label": "address: str",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 151,
+                            "end_token": 153,
+                            "label": "phone: str",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 155,
+                            "end_token": 157,
+                            "label": "rating: float",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 159,
+                            "end_token": 161,
+                            "label": "reviews: int",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 163,
+                            "end_token": 165,
+                            "label": "website: str",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "class_definition",
+            "start_token": 169,
+            "end_token": 505,
+            "label": "class GoogleMapsSearchBlock(Block):\n    class Input(BlockSchema):\n        credentials: CredentialsMetaInput[\n            Literal[ProviderName.GOOGLE_MAPS], Literal[\"api_key\"]\n        ] = CredentialsField(description=\"Google Maps API Key\")\n        query: str = SchemaField(\n            description=\"Search query for local businesses\",\n            placeholder=\"e.g., 'restaurants in New York'\",\n        )\n        radius: int = SchemaField(\n            description=\"Search radius in meters (max 50000)\",\n            default=5000,\n            ge=1,\n            le=50000,\n        )\n        max_results: int = SchemaField(\n            description=\"Maximum number of results to return (max 60)\",\n            default=20,\n            ge=1,\n            le=60,\n        )\n\n    class Output(BlockSchema):\n        place: Place = SchemaField(description=\"Place found\")\n        error: str = SchemaField(description=\"Error message if the search failed\")\n\n    def __init__(self):\n        super().__init__(\n            id=\"f47ac10b-58cc-4372-a567-0e02b2c3d479\",\n            description=\"This block searches for local businesses using Google Maps API.\",\n            categories={BlockCategory.SEARCH},\n            input_schema=GoogleMapsSearchBlock.Input,\n            output_schema=GoogleMapsSearchBlock.Output,\n            test_input={\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n                \"query\": \"restaurants in new york\",\n                \"radius\": 5000,\n                \"max_results\": 5,\n            },\n            test_output=[\n                (\n                    \"place\",\n                    {\n                        \"name\": \"Test Restaurant\",\n                        \"address\": \"123 Test St, New York, NY 10001\",\n                        \"phone\": \"+1 (555) 123-4567\",\n                        \"rating\": 4.5,\n                        \"reviews\": 100,\n                        \"website\": \"https://testrestaurant.com\",\n                    },\n                ),\n            ],\n            test_mock={\n                \"search_places\": lambda *args, **kwargs: [\n                    {\n                        \"name\": \"Test Restaurant\",\n                        \"address\": \"123 Test St, New York, NY 10001\",\n                        \"phone\": \"+1 (555) 123-4567\",\n                        \"rating\": 4.5,\n                        \"reviews\": 100,\n                        \"website\": \"https://testrestaurant.com\",\n                    }\n                ]\n            },\n            test_credentials=TEST_CREDENTIALS,\n        )",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 170,
+                    "end_token": 170,
+                    "label": "GoogleMapsSearchBlock",
+                    "children": []
+                },
+                {
+                    "type": "parameters",
+                    "start_token": 171,
+                    "end_token": 173,
+                    "label": "(Block)",
+                    "children": []
+                },
+                {
+                    "type": "block",
+                    "start_token": 174,
+                    "end_token": 505,
+                    "label": ":\n    class Input(BlockSchema):\n        credentials: CredentialsMetaInput[\n            Literal[ProviderName.GOOGLE_MAPS], Literal[\"api_key\"]\n        ] = CredentialsField(description=\"Google Maps API Key\")\n        query: str = SchemaField(\n            description=\"Search query for local businesses\",\n            placeholder=\"e.g., 'restaurants in New York'\",\n        )\n        radius: int = SchemaField(\n            description=\"Search radius in meters (max 50000)\",\n            default=5000,\n            ge=1,\n            le=50000,\n        )\n        max_results: int = SchemaField(\n            description=\"Maximum number of results to return (max 60)\",\n            default=20,\n            ge=1,\n            le=60,\n        )\n\n    class Output(BlockSchema):\n        place: Place = SchemaField(description=\"Place found\")\n        error: str = SchemaField(description=\"Error message if the search failed\")\n\n    def __init__(self):\n        super().__init__(\n            id=\"f47ac10b-58cc-4372-a567-0e02b2c3d479\",\n            description=\"This block searches for local businesses using Google Maps API.\",\n            categories={BlockCategory.SEARCH},\n            input_schema=GoogleMapsSearchBlock.Input,\n            output_schema=GoogleMapsSearchBlock.Output,\n            test_input={\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n                \"query\": \"restaurants in new york\",\n                \"radius\": 5000,\n                \"max_results\": 5,\n            },\n            test_output=[\n                (\n                    \"place\",\n                    {\n                        \"name\": \"Test Restaurant\",\n                        \"address\": \"123 Test St, New York, NY 10001\",\n                        \"phone\": \"+1 (555) 123-4567\",\n                        \"rating\": 4.5,\n                        \"reviews\": 100,\n                        \"website\": \"https://testrestaurant.com\",\n                    },\n                ),\n            ],\n            test_mock={\n                \"search_places\": lambda *args, **kwargs: [\n                    {\n                        \"name\": \"Test Restaurant\",\n                        \"address\": \"123 Test St, New York, NY 10001\",\n                        \"phone\": \"+1 (555) 123-4567\",\n                        \"rating\": 4.5,\n                        \"reviews\": 100,\n                        \"website\": \"https://testrestaurant.com\",\n                    }\n                ]\n            },\n            test_credentials=TEST_CREDENTIALS,\n        )",
+                    "children": [
+                        {
+                            "type": "class_definition",
+                            "start_token": 176,
+                            "end_token": 285,
+                            "label": "class Input(BlockSchema):\n        credentials: CredentialsMetaInput[\n            Literal[ProviderName.GOOGLE_MAPS], Literal[\"api_key\"]\n        ] = CredentialsField(description=\"Google Maps API Key\")\n        query: str = SchemaField(\n            description=\"Search query for local businesses\",\n            placeholder=\"e.g., 'restaurants in New York'\",\n        )\n        radius: int = SchemaField(\n            description=\"Search radius in meters (max 50000)\",\n            default=5000,\n            ge=1,\n            le=50000,\n        )\n        max_results: int = SchemaField(\n            description=\"Maximum number of results to return (max 60)\",\n            default=20,\n            ge=1,\n            le=60,\n        )\n",
+                            "children": [
+                                {
+                                    "type": "identifier",
+                                    "start_token": 177,
+                                    "end_token": 177,
+                                    "label": "Input",
+                                    "children": []
+                                },
+                                {
+                                    "type": "parameters",
+                                    "start_token": 178,
+                                    "end_token": 180,
+                                    "label": "(BlockSchema)",
+                                    "children": []
+                                },
+                                {
+                                    "type": "block",
+                                    "start_token": 181,
+                                    "end_token": 285,
+                                    "label": ":\n        credentials: CredentialsMetaInput[\n            Literal[ProviderName.GOOGLE_MAPS], Literal[\"api_key\"]\n        ] = CredentialsField(description=\"Google Maps API Key\")\n        query: str = SchemaField(\n            description=\"Search query for local businesses\",\n            placeholder=\"e.g., 'restaurants in New York'\",\n        )\n        radius: int = SchemaField(\n            description=\"Search radius in meters (max 50000)\",\n            default=5000,\n            ge=1,\n            le=50000,\n        )\n        max_results: int = SchemaField(\n            description=\"Maximum number of results to return (max 60)\",\n            default=20,\n            ge=1,\n            le=60,\n        )\n",
+                                    "children": [
+                                        {
+                                            "type": "assignment",
+                                            "start_token": 183,
+                                            "end_token": 207,
+                                            "label": "credentials: CredentialsMetaInput[\n            Literal[ProviderName.GOOGLE_MAPS], Literal[\"api_key\"]\n        ] = CredentialsField(description=\"Google Maps API Key\")",
+                                            "children": [
+                                                {
+                                                    "type": "identifier",
+                                                    "start_token": 183,
+                                                    "end_token": 183,
+                                                    "label": "credentials",
+                                                    "children": []
+                                                },
+                                                {
+                                                    "type": "call",
+                                                    "start_token": 202,
+                                                    "end_token": 207,
+                                                    "label": "CredentialsField(description=\"Google Maps API Key\")",
+                                                    "children": [
+                                                        {
+                                                            "type": "identifier",
+                                                            "start_token": 202,
+                                                            "end_token": 202,
+                                                            "label": "CredentialsField",
+                                                            "children": []
+                                                        },
+                                                        {
+                                                            "type": "argument_list",
+                                                            "start_token": 203,
+                                                            "end_token": 207,
+                                                            "label": "(description=\"Google Maps API Key\")",
+                                                            "children": [
+                                                                {
+                                                                    "type": "keyword_argument",
+                                                                    "start_token": 204,
+                                                                    "end_token": 206,
+                                                                    "label": "description=\"Google Maps API Key\"",
+                                                                    "children": []
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "assignment",
+                                            "start_token": 209,
+                                            "end_token": 226,
+                                            "label": "query: str = SchemaField(\n            description=\"Search query for local businesses\",\n            placeholder=\"e.g., 'restaurants in New York'\",\n        )",
+                                            "children": [
+                                                {
+                                                    "type": "identifier",
+                                                    "start_token": 209,
+                                                    "end_token": 209,
+                                                    "label": "query",
+                                                    "children": []
+                                                },
+                                                {
+                                                    "type": "call",
+                                                    "start_token": 213,
+                                                    "end_token": 226,
+                                                    "label": "SchemaField(\n            description=\"Search query for local businesses\",\n            placeholder=\"e.g., 'restaurants in New York'\",\n        )",
+                                                    "children": [
+                                                        {
+                                                            "type": "identifier",
+                                                            "start_token": 213,
+                                                            "end_token": 213,
+                                                            "label": "SchemaField",
+                                                            "children": []
+                                                        },
+                                                        {
+                                                            "type": "argument_list",
+                                                            "start_token": 214,
+                                                            "end_token": 226,
+                                                            "label": "(\n            description=\"Search query for local businesses\",\n            placeholder=\"e.g., 'restaurants in New York'\",\n        )",
+                                                            "children": [
+                                                                {
+                                                                    "type": "keyword_argument",
+                                                                    "start_token": 216,
+                                                                    "end_token": 224,
+                                                                    "label": "description=\"Search query for local businesses\",\n            placeholder=\"e.g., 'restaurants in New York'\",",
+                                                                    "children": []
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "assignment",
+                                            "start_token": 228,
+                                            "end_token": 255,
+                                            "label": "radius: int = SchemaField(\n            description=\"Search radius in meters (max 50000)\",\n            default=5000,\n            ge=1,\n            le=50000,\n        )",
+                                            "children": [
+                                                {
+                                                    "type": "identifier",
+                                                    "start_token": 228,
+                                                    "end_token": 228,
+                                                    "label": "radius",
+                                                    "children": []
+                                                },
+                                                {
+                                                    "type": "call",
+                                                    "start_token": 232,
+                                                    "end_token": 255,
+                                                    "label": "SchemaField(\n            description=\"Search radius in meters (max 50000)\",\n            default=5000,\n            ge=1,\n            le=50000,\n        )",
+                                                    "children": [
+                                                        {
+                                                            "type": "identifier",
+                                                            "start_token": 232,
+                                                            "end_token": 232,
+                                                            "label": "SchemaField",
+                                                            "children": []
+                                                        },
+                                                        {
+                                                            "type": "argument_list",
+                                                            "start_token": 233,
+                                                            "end_token": 255,
+                                                            "label": "(\n            description=\"Search radius in meters (max 50000)\",\n            default=5000,\n            ge=1,\n            le=50000,\n        )",
+                                                            "children": [
+                                                                {
+                                                                    "type": "keyword_argument",
+                                                                    "start_token": 235,
+                                                                    "end_token": 253,
+                                                                    "label": "description=\"Search radius in meters (max 50000)\",\n            default=5000,\n            ge=1,\n            le=50000,",
+                                                                    "children": []
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "assignment",
+                                            "start_token": 257,
+                                            "end_token": 284,
+                                            "label": "max_results: int = SchemaField(\n            description=\"Maximum number of results to return (max 60)\",\n            default=20,\n            ge=1,\n            le=60,\n        )",
+                                            "children": [
+                                                {
+                                                    "type": "identifier",
+                                                    "start_token": 257,
+                                                    "end_token": 257,
+                                                    "label": "max_results",
+                                                    "children": []
+                                                },
+                                                {
+                                                    "type": "call",
+                                                    "start_token": 261,
+                                                    "end_token": 284,
+                                                    "label": "SchemaField(\n            description=\"Maximum number of results to return (max 60)\",\n            default=20,\n            ge=1,\n            le=60,\n        )",
+                                                    "children": [
+                                                        {
+                                                            "type": "identifier",
+                                                            "start_token": 261,
+                                                            "end_token": 261,
+                                                            "label": "SchemaField",
+                                                            "children": []
+                                                        },
+                                                        {
+                                                            "type": "argument_list",
+                                                            "start_token": 262,
+                                                            "end_token": 284,
+                                                            "label": "(\n            description=\"Maximum number of results to return (max 60)\",\n            default=20,\n            ge=1,\n            le=60,\n        )",
+                                                            "children": [
+                                                                {
+                                                                    "type": "keyword_argument",
+                                                                    "start_token": 264,
+                                                                    "end_token": 282,
+                                                                    "label": "description=\"Maximum number of results to return (max 60)\",\n            default=20,\n            ge=1,\n            le=60,",
+                                                                    "children": []
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "class_definition",
+                            "start_token": 287,
+                            "end_token": 315,
+                            "label": "class Output(BlockSchema):\n        place: Place = SchemaField(description=\"Place found\")\n        error: str = SchemaField(description=\"Error message if the search failed\")\n",
+                            "children": [
+                                {
+                                    "type": "identifier",
+                                    "start_token": 288,
+                                    "end_token": 288,
+                                    "label": "Output",
+                                    "children": []
+                                },
+                                {
+                                    "type": "parameters",
+                                    "start_token": 289,
+                                    "end_token": 291,
+                                    "label": "(BlockSchema)",
+                                    "children": []
+                                },
+                                {
+                                    "type": "block",
+                                    "start_token": 292,
+                                    "end_token": 315,
+                                    "label": ":\n        place: Place = SchemaField(description=\"Place found\")\n        error: str = SchemaField(description=\"Error message if the search failed\")\n",
+                                    "children": [
+                                        {
+                                            "type": "assignment",
+                                            "start_token": 294,
+                                            "end_token": 303,
+                                            "label": "place: Place = SchemaField(description=\"Place found\")",
+                                            "children": [
+                                                {
+                                                    "type": "identifier",
+                                                    "start_token": 294,
+                                                    "end_token": 294,
+                                                    "label": "place",
+                                                    "children": []
+                                                },
+                                                {
+                                                    "type": "call",
+                                                    "start_token": 298,
+                                                    "end_token": 303,
+                                                    "label": "SchemaField(description=\"Place found\")",
+                                                    "children": [
+                                                        {
+                                                            "type": "identifier",
+                                                            "start_token": 298,
+                                                            "end_token": 298,
+                                                            "label": "SchemaField",
+                                                            "children": []
+                                                        },
+                                                        {
+                                                            "type": "argument_list",
+                                                            "start_token": 299,
+                                                            "end_token": 303,
+                                                            "label": "(description=\"Place found\")",
+                                                            "children": [
+                                                                {
+                                                                    "type": "keyword_argument",
+                                                                    "start_token": 300,
+                                                                    "end_token": 302,
+                                                                    "label": "description=\"Place found\"",
+                                                                    "children": []
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "assignment",
+                                            "start_token": 305,
+                                            "end_token": 314,
+                                            "label": "error: str = SchemaField(description=\"Error message if the search failed\")",
+                                            "children": [
+                                                {
+                                                    "type": "identifier",
+                                                    "start_token": 305,
+                                                    "end_token": 305,
+                                                    "label": "error",
+                                                    "children": []
+                                                },
+                                                {
+                                                    "type": "call",
+                                                    "start_token": 309,
+                                                    "end_token": 314,
+                                                    "label": "SchemaField(description=\"Error message if the search failed\")",
+                                                    "children": [
+                                                        {
+                                                            "type": "identifier",
+                                                            "start_token": 309,
+                                                            "end_token": 309,
+                                                            "label": "SchemaField",
+                                                            "children": []
+                                                        },
+                                                        {
+                                                            "type": "argument_list",
+                                                            "start_token": 310,
+                                                            "end_token": 314,
+                                                            "label": "(description=\"Error message if the search failed\")",
+                                                            "children": [
+                                                                {
+                                                                    "type": "keyword_argument",
+                                                                    "start_token": 311,
+                                                                    "end_token": 313,
+                                                                    "label": "description=\"Error message if the search failed\"",
+                                                                    "children": []
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "function_definition",
+                            "start_token": 317,
+                            "end_token": 505,
+                            "label": "def __init__(self):\n        super().__init__(\n            id=\"f47ac10b-58cc-4372-a567-0e02b2c3d479\",\n            description=\"This block searches for local businesses using Google Maps API.\",\n            categories={BlockCategory.SEARCH},\n            input_schema=GoogleMapsSearchBlock.Input,\n            output_schema=GoogleMapsSearchBlock.Output,\n            test_input={\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n                \"query\": \"restaurants in new york\",\n                \"radius\": 5000,\n                \"max_results\": 5,\n            },\n            test_output=[\n                (\n                    \"place\",\n                    {\n                        \"name\": \"Test Restaurant\",\n                        \"address\": \"123 Test St, New York, NY 10001\",\n                        \"phone\": \"+1 (555) 123-4567\",\n                        \"rating\": 4.5,\n                        \"reviews\": 100,\n                        \"website\": \"https://testrestaurant.com\",\n                    },\n                ),\n            ],\n            test_mock={\n                \"search_places\": lambda *args, **kwargs: [\n                    {\n                        \"name\": \"Test Restaurant\",\n                        \"address\": \"123 Test St, New York, NY 10001\",\n                        \"phone\": \"+1 (555) 123-4567\",\n                        \"rating\": 4.5,\n                        \"reviews\": 100,\n                        \"website\": \"https://testrestaurant.com\",\n                    }\n                ]\n            },\n            test_credentials=TEST_CREDENTIALS,\n        )",
+                            "children": [
+                                {
+                                    "type": "parameters",
+                                    "start_token": 318,
+                                    "end_token": 321,
+                                    "label": "__init__(self)",
+                                    "children": []
+                                },
+                                {
+                                    "type": "block",
+                                    "start_token": 322,
+                                    "end_token": 505,
+                                    "label": ":\n        super().__init__(\n            id=\"f47ac10b-58cc-4372-a567-0e02b2c3d479\",\n            description=\"This block searches for local businesses using Google Maps API.\",\n            categories={BlockCategory.SEARCH},\n            input_schema=GoogleMapsSearchBlock.Input,\n            output_schema=GoogleMapsSearchBlock.Output,\n            test_input={\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n                \"query\": \"restaurants in new york\",\n                \"radius\": 5000,\n                \"max_results\": 5,\n            },\n            test_output=[\n                (\n                    \"place\",\n                    {\n                        \"name\": \"Test Restaurant\",\n                        \"address\": \"123 Test St, New York, NY 10001\",\n                        \"phone\": \"+1 (555) 123-4567\",\n                        \"rating\": 4.5,\n                        \"reviews\": 100,\n                        \"website\": \"https://testrestaurant.com\",\n                    },\n                ),\n            ],\n            test_mock={\n                \"search_places\": lambda *args, **kwargs: [\n                    {\n                        \"name\": \"Test Restaurant\",\n                        \"address\": \"123 Test St, New York, NY 10001\",\n                        \"phone\": \"+1 (555) 123-4567\",\n                        \"rating\": 4.5,\n                        \"reviews\": 100,\n                        \"website\": \"https://testrestaurant.com\",\n                    }\n                ]\n            },\n            test_credentials=TEST_CREDENTIALS,\n        )",
+                                    "children": [
+                                        {
+                                            "type": "call",
+                                            "start_token": 324,
+                                            "end_token": 505,
+                                            "label": "super().__init__(\n            id=\"f47ac10b-58cc-4372-a567-0e02b2c3d479\",\n            description=\"This block searches for local businesses using Google Maps API.\",\n            categories={BlockCategory.SEARCH},\n            input_schema=GoogleMapsSearchBlock.Input,\n            output_schema=GoogleMapsSearchBlock.Output,\n            test_input={\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n                \"query\": \"restaurants in new york\",\n                \"radius\": 5000,\n                \"max_results\": 5,\n            },\n            test_output=[\n                (\n                    \"place\",\n                    {\n                        \"name\": \"Test Restaurant\",\n                        \"address\": \"123 Test St, New York, NY 10001\",\n                        \"phone\": \"+1 (555) 123-4567\",\n                        \"rating\": 4.5,\n                        \"reviews\": 100,\n                        \"website\": \"https://testrestaurant.com\",\n                    },\n                ),\n            ],\n            test_mock={\n                \"search_places\": lambda *args, **kwargs: [\n                    {\n                        \"name\": \"Test Restaurant\",\n                        \"address\": \"123 Test St, New York, NY 10001\",\n                        \"phone\": \"+1 (555) 123-4567\",\n                        \"rating\": 4.5,\n                        \"reviews\": 100,\n                        \"website\": \"https://testrestaurant.com\",\n                    }\n                ]\n            },\n            test_credentials=TEST_CREDENTIALS,\n        )",
+                                            "children": [
+                                                {
+                                                    "type": "attribute",
+                                                    "start_token": 324,
+                                                    "end_token": 328,
+                                                    "label": "super().__init__",
+                                                    "children": []
+                                                },
+                                                {
+                                                    "type": "argument_list",
+                                                    "start_token": 329,
+                                                    "end_token": 505,
+                                                    "label": "(\n            id=\"f47ac10b-58cc-4372-a567-0e02b2c3d479\",\n            description=\"This block searches for local businesses using Google Maps API.\",\n            categories={BlockCategory.SEARCH},\n            input_schema=GoogleMapsSearchBlock.Input,\n            output_schema=GoogleMapsSearchBlock.Output,\n            test_input={\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n                \"query\": \"restaurants in new york\",\n                \"radius\": 5000,\n                \"max_results\": 5,\n            },\n            test_output=[\n                (\n                    \"place\",\n                    {\n                        \"name\": \"Test Restaurant\",\n                        \"address\": \"123 Test St, New York, NY 10001\",\n                        \"phone\": \"+1 (555) 123-4567\",\n                        \"rating\": 4.5,\n                        \"reviews\": 100,\n                        \"website\": \"https://testrestaurant.com\",\n                    },\n                ),\n            ],\n            test_mock={\n                \"search_places\": lambda *args, **kwargs: [\n                    {\n                        \"name\": \"Test Restaurant\",\n                        \"address\": \"123 Test St, New York, NY 10001\",\n                        \"phone\": \"+1 (555) 123-4567\",\n                        \"rating\": 4.5,\n                        \"reviews\": 100,\n                        \"website\": \"https://testrestaurant.com\",\n                    }\n                ]\n            },\n            test_credentials=TEST_CREDENTIALS,\n        )",
+                                                    "children": [
+                                                        {
+                                                            "type": "keyword_argument",
+                                                            "start_token": 331,
+                                                            "end_token": 506,
+                                                            "label": "id=\"f47ac10b-58cc-4372-a567-0e02b2c3d479\",\n            description=\"This block searches for local businesses using Google Maps API.\",\n            categories={BlockCategory.SEARCH},\n            input_schema=GoogleMapsSearchBlock.Input,\n            output_schema=GoogleMapsSearchBlock.Output,\n            test_input={\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n                \"query\": \"restaurants in new york\",\n                \"radius\": 5000,\n                \"max_results\": 5,\n            },\n            test_output=[\n                (\n                    \"place\",\n                    {\n                        \"name\": \"Test Restaurant\",\n                        \"address\": \"123 Test St, New York, NY 10001\",\n                        \"phone\": \"+1 (555) 123-4567\",\n                        \"rating\": 4.5,\n                        \"reviews\": 100,\n                        \"website\": \"https://testrestaurant.com\",\n                    },\n                ),\n            ],\n            test_mock={\n                \"search_places\": lambda *args, **kwargs: [\n                    {\n                        \"name\": \"Test Restaurant\",\n                        \"address\": \"123 Test St, New York, NY 10001\",\n                        \"phone\": \"+1 (555) 123-4567\",\n                        \"rating\": 4.5,\n                        \"reviews\": 100,\n                        \"website\": \"https://testrestaurant.com\",\n                    }\n                ]\n            },\n            test_credentials=TEST_CREDENTIALS,\n        )\n",
+                                                            "children": []
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "start_token": 508,
+            "end_token": 573,
+            "label": "def run(\n        self, input_data: Input, *, credentials: APIKeyCredentials, **kwargs\n    ) -> BlockOutput:\n        places = self.search_places(\n            credentials.api_key,\n            input_data.query,\n            input_data.radius,\n            input_data.max_results,\n        )\n        for place in places:\n            yield \"place\", place\n",
+            "children": [
+                {
+                    "type": "parameters",
+                    "start_token": 509,
+                    "end_token": 527,
+                    "label": "run(\n        self, input_data: Input, *, credentials: APIKeyCredentials, **kwargs\n",
+                    "children": [
+                        {
+                            "type": "typed_parameter",
+                            "start_token": 515,
+                            "end_token": 516,
+                            "label": ": Input",
+                            "children": []
+                        },
+                        {
+                            "type": "typed_parameter",
+                            "start_token": 520,
+                            "end_token": 522,
+                            "label": "credentials: APIKeyCredentials",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "block",
+                    "start_token": 532,
+                    "end_token": 573,
+                    "label": ":\n        places = self.search_places(\n            credentials.api_key,\n            input_data.query,\n            input_data.radius,\n            input_data.max_results,\n        )\n        for place in places:\n            yield \"place\", place\n",
+                    "children": [
+                        {
+                            "type": "assignment",
+                            "start_token": 534,
+                            "end_token": 561,
+                            "label": "places = self.search_places(\n            credentials.api_key,\n            input_data.query,\n            input_data.radius,\n            input_data.max_results,\n        )",
+                            "children": [
+                                {
+                                    "type": "identifier",
+                                    "start_token": 534,
+                                    "end_token": 534,
+                                    "label": "places",
+                                    "children": []
+                                },
+                                {
+                                    "type": "call",
+                                    "start_token": 536,
+                                    "end_token": 561,
+                                    "label": "self.search_places(\n            credentials.api_key,\n            input_data.query,\n            input_data.radius,\n            input_data.max_results,\n        )",
+                                    "children": [
+                                        {
+                                            "type": "attribute",
+                                            "start_token": 536,
+                                            "end_token": 538,
+                                            "label": "self.search_places",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "argument_list",
+                                            "start_token": 539,
+                                            "end_token": 561,
+                                            "label": "(\n            credentials.api_key,\n            input_data.query,\n            input_data.radius,\n            input_data.max_results,\n        )",
+                                            "children": [
+                                                {
+                                                    "type": "attribute",
+                                                    "start_token": 541,
+                                                    "end_token": 543,
+                                                    "label": "credentials.api_key",
+                                                    "children": []
+                                                },
+                                                {
+                                                    "type": "attribute",
+                                                    "start_token": 546,
+                                                    "end_token": 548,
+                                                    "label": "input_data.query",
+                                                    "children": []
+                                                },
+                                                {
+                                                    "type": "attribute",
+                                                    "start_token": 551,
+                                                    "end_token": 553,
+                                                    "label": "input_data.radius",
+                                                    "children": []
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "for_statement",
+                            "start_token": 563,
+                            "end_token": 573,
+                            "label": "for place in places:\n            yield \"place\", place\n",
+                            "children": [
+                                {
+                                    "type": "for_in_clause",
+                                    "start_token": 563,
+                                    "end_token": 566,
+                                    "label": "for place in places",
+                                    "children": [
+                                        {
+                                            "type": "identifier",
+                                            "start_token": 564,
+                                            "end_token": 564,
+                                            "label": "place",
+                                            "children": []
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "block",
+                                    "start_token": 567,
+                                    "end_token": 573,
+                                    "label": ":\n            yield \"place\", place\n",
+                                    "children": [
+                                        {
+                                            "type": "yield",
+                                            "start_token": 569,
+                                            "end_token": 572,
+                                            "label": "yield \"place\", place",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "start_token": 575,
+            "end_token": 619,
+            "label": "def search_places(self, api_key: SecretStr, query, radius, max_results):\n        client = googlemaps.Client(key=api_key.get_secret_value())\n        return self._search_places(client, query, radius, max_results)",
+            "children": [
+                {
+                    "type": "parameters",
+                    "start_token": 576,
+                    "end_token": 589,
+                    "label": "search_places(self, api_key: SecretStr, query, radius, max_results)",
+                    "children": [
+                        {
+                            "type": "typed_parameter",
+                            "start_token": 580,
+                            "end_token": 582,
+                            "label": "api_key: SecretStr",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "block",
+                    "start_token": 590,
+                    "end_token": 619,
+                    "label": ":\n        client = googlemaps.Client(key=api_key.get_secret_value())\n        return self._search_places(client, query, radius, max_results)",
+                    "children": [
+                        {
+                            "type": "assignment",
+                            "start_token": 592,
+                            "end_token": 605,
+                            "label": "client = googlemaps.Client(key=api_key.get_secret_value())",
+                            "children": [
+                                {
+                                    "type": "identifier",
+                                    "start_token": 592,
+                                    "end_token": 592,
+                                    "label": "client",
+                                    "children": []
+                                },
+                                {
+                                    "type": "call",
+                                    "start_token": 594,
+                                    "end_token": 605,
+                                    "label": "googlemaps.Client(key=api_key.get_secret_value())",
+                                    "children": [
+                                        {
+                                            "type": "attribute",
+                                            "start_token": 594,
+                                            "end_token": 596,
+                                            "label": "googlemaps.Client",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "argument_list",
+                                            "start_token": 597,
+                                            "end_token": 605,
+                                            "label": "(key=api_key.get_secret_value())",
+                                            "children": [
+                                                {
+                                                    "type": "attribute",
+                                                    "start_token": 599,
+                                                    "end_token": 602,
+                                                    "label": "=api_key.get_secret_value",
+                                                    "children": []
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "return_statement",
+                            "start_token": 607,
+                            "end_token": 619,
+                            "label": "return self._search_places(client, query, radius, max_results)",
+                            "children": [
+                                {
+                                    "type": "call",
+                                    "start_token": 608,
+                                    "end_token": 619,
+                                    "label": "self._search_places(client, query, radius, max_results)",
+                                    "children": [
+                                        {
+                                            "type": "attribute",
+                                            "start_token": 608,
+                                            "end_token": 610,
+                                            "label": "self._search_places",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "argument_list",
+                                            "start_token": 611,
+                                            "end_token": 619,
+                                            "label": "(client, query, radius, max_results)",
+                                            "children": [
+                                                {
+                                                    "type": "identifier",
+                                                    "start_token": 612,
+                                                    "end_token": 612,
+                                                    "label": "client",
+                                                    "children": []
+                                                },
+                                                {
+                                                    "type": "identifier",
+                                                    "start_token": 614,
+                                                    "end_token": 614,
+                                                    "label": "query",
+                                                    "children": []
+                                                },
+                                                {
+                                                    "type": "identifier",
+                                                    "start_token": 616,
+                                                    "end_token": 616,
+                                                    "label": "radius",
+                                                    "children": []
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "start_token": 622,
+            "end_token": 816,
+            "label": "def _search_places(self, client, query, radius, max_results):\n        results = []\n        next_page_token = None\n        while len(results) < max_results:\n            response = client.places(\n                query=query,\n                radius=radius,\n                page_token=next_page_token,\n            )\n            for place in response[\"results\"]:\n                if len(results) >= max_results:\n                    break\n                place_details = client.place(place[\"place_id\"])[\"result\"]\n                results.append(\n                    Place(\n                        name=place_details.get(\"name\", \"\"),\n                        address=place_details.get(\"formatted_address\", \"\"),\n                        phone=place_details.get(\"formatted_phone_number\", \"\"),\n                        rating=place_details.get(\"rating\", 0),\n                        reviews=place_details.get(\"user_ratings_total\", 0),\n                        website=place_details.get(\"website\", \"\"),\n                    )\n                )\n            next_page_token = response.get(\"next_page_token\")\n            if not next_page_token:\n                break\n        return results",
+            "children": [
+                {
+                    "type": "parameters",
+                    "start_token": 623,
+                    "end_token": 634,
+                    "label": "_search_places(self, client, query, radius, max_results)",
+                    "children": [
+                        {
+                            "type": "typed_parameter",
+                            "start_token": 627,
+                            "end_token": 628,
+                            "label": "client,",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "block",
+                    "start_token": 635,
+                    "end_token": 816,
+                    "label": ":\n        results = []\n        next_page_token = None\n        while len(results) < max_results:\n            response = client.places(\n                query=query,\n                radius=radius,\n                page_token=next_page_token,\n            )\n            for place in response[\"results\"]:\n                if len(results) >= max_results:\n                    break\n                place_details = client.place(place[\"place_id\"])[\"result\"]\n                results.append(\n                    Place(\n                        name=place_details.get(\"name\", \"\"),\n                        address=place_details.get(\"formatted_address\", \"\"),\n                        phone=place_details.get(\"formatted_phone_number\", \"\"),\n                        rating=place_details.get(\"rating\", 0),\n                        reviews=place_details.get(\"user_ratings_total\", 0),\n                        website=place_details.get(\"website\", \"\"),\n                    )\n                )\n            next_page_token = response.get(\"next_page_token\")\n            if not next_page_token:\n                break\n        return results",
+                    "children": [
+                        {
+                            "type": "assignment",
+                            "start_token": 637,
+                            "end_token": 640,
+                            "label": "results = []",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 642,
+                            "end_token": 644,
+                            "label": "next_page_token = None",
+                            "children": []
+                        },
+                        {
+                            "type": "while_statement",
+                            "start_token": 646,
+                            "end_token": 814,
+                            "label": "while len(results) < max_results:\n            response = client.places(\n                query=query,\n                radius=radius,\n                page_token=next_page_token,\n            )\n            for place in response[\"results\"]:\n                if len(results) >= max_results:\n                    break\n                place_details = client.place(place[\"place_id\"])[\"result\"]\n                results.append(\n                    Place(\n                        name=place_details.get(\"name\", \"\"),\n                        address=place_details.get(\"formatted_address\", \"\"),\n                        phone=place_details.get(\"formatted_phone_number\", \"\"),\n                        rating=place_details.get(\"rating\", 0),\n                        reviews=place_details.get(\"user_ratings_total\", 0),\n                        website=place_details.get(\"website\", \"\"),\n                    )\n                )\n            next_page_token = response.get(\"next_page_token\")\n            if not next_page_token:\n                break\n",
+                            "children": [
+                                {
+                                    "type": "comparison_operator",
+                                    "start_token": 647,
+                                    "end_token": 652,
+                                    "label": "len(results) < max_results",
+                                    "children": []
+                                },
+                                {
+                                    "type": "block",
+                                    "start_token": 653,
+                                    "end_token": 814,
+                                    "label": ":\n            response = client.places(\n                query=query,\n                radius=radius,\n                page_token=next_page_token,\n            )\n            for place in response[\"results\"]:\n                if len(results) >= max_results:\n                    break\n                place_details = client.place(place[\"place_id\"])[\"result\"]\n                results.append(\n                    Place(\n                        name=place_details.get(\"name\", \"\"),\n                        address=place_details.get(\"formatted_address\", \"\"),\n                        phone=place_details.get(\"formatted_phone_number\", \"\"),\n                        rating=place_details.get(\"rating\", 0),\n                        reviews=place_details.get(\"user_ratings_total\", 0),\n                        website=place_details.get(\"website\", \"\"),\n                    )\n                )\n            next_page_token = response.get(\"next_page_token\")\n            if not next_page_token:\n                break\n",
+                                    "children": [
+                                        {
+                                            "type": "assignment",
+                                            "start_token": 655,
+                                            "end_token": 677,
+                                            "label": "response = client.places(\n                query=query,\n                radius=radius,\n                page_token=next_page_token,\n            )",
+                                            "children": [
+                                                {
+                                                    "type": "identifier",
+                                                    "start_token": 655,
+                                                    "end_token": 655,
+                                                    "label": "response",
+                                                    "children": []
+                                                },
+                                                {
+                                                    "type": "call",
+                                                    "start_token": 657,
+                                                    "end_token": 677,
+                                                    "label": "client.places(\n                query=query,\n                radius=radius,\n                page_token=next_page_token,\n            )",
+                                                    "children": [
+                                                        {
+                                                            "type": "attribute",
+                                                            "start_token": 657,
+                                                            "end_token": 659,
+                                                            "label": "client.places",
+                                                            "children": []
+                                                        },
+                                                        {
+                                                            "type": "argument_list",
+                                                            "start_token": 660,
+                                                            "end_token": 677,
+                                                            "label": "(\n                query=query,\n                radius=radius,\n                page_token=next_page_token,\n            )",
+                                                            "children": [
+                                                                {
+                                                                    "type": "keyword_argument",
+                                                                    "start_token": 663,
+                                                                    "end_token": 665,
+                                                                    "label": "=query,",
+                                                                    "children": []
+                                                                },
+                                                                {
+                                                                    "type": "keyword_argument",
+                                                                    "start_token": 668,
+                                                                    "end_token": 670,
+                                                                    "label": "=radius,",
+                                                                    "children": []
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "for_statement",
+                                            "start_token": 679,
+                                            "end_token": 811,
+                                            "label": "for place in response[\"results\"]:\n                if len(results) >= max_results:\n                    break\n                place_details = client.place(place[\"place_id\"])[\"result\"]\n                results.append(\n                    Place(\n                        name=place_details.get(\"name\", \"\"),\n                        address=place_details.get(\"formatted_address\", \"\"),\n                        phone=place_details.get(\"formatted_phone_number\", \"\"),\n                        rating=place_details.get(\"rating\", 0),\n                        reviews=place_details.get(\"user_ratings_total\", 0),\n                        website=place_details.get(\"website\", \"\"),\n                    )\n                )\n            next_page_token = response.get(\"next_page_token\")\n            if not next_page_token:",
+                                            "children": [
+                                                {
+                                                    "type": "for_in_clause",
+                                                    "start_token": 679,
+                                                    "end_token": 682,
+                                                    "label": "for place in response",
+                                                    "children": [
+                                                        {
+                                                            "type": "identifier",
+                                                            "start_token": 680,
+                                                            "end_token": 680,
+                                                            "label": "place",
+                                                            "children": []
+                                                        }
+                                                    ]
+                                                },
+                                                {
+                                                    "type": "block",
+                                                    "start_token": 683,
+                                                    "end_token": 811,
+                                                    "label": "[\"results\"]:\n                if len(results) >= max_results:\n                    break\n                place_details = client.place(place[\"place_id\"])[\"result\"]\n                results.append(\n                    Place(\n                        name=place_details.get(\"name\", \"\"),\n                        address=place_details.get(\"formatted_address\", \"\"),\n                        phone=place_details.get(\"formatted_phone_number\", \"\"),\n                        rating=place_details.get(\"rating\", 0),\n                        reviews=place_details.get(\"user_ratings_total\", 0),\n                        website=place_details.get(\"website\", \"\"),\n                    )\n                )\n            next_page_token = response.get(\"next_page_token\")\n            if not next_page_token:",
+                                                    "children": [
+                                                        {
+                                                            "type": "if_statement",
+                                                            "start_token": 688,
+                                                            "end_token": 698,
+                                                            "label": "if len(results) >= max_results:\n                    break",
+                                                            "children": [
+                                                                {
+                                                                    "type": "comparison_operator",
+                                                                    "start_token": 689,
+                                                                    "end_token": 695,
+                                                                    "label": "len(results) >= max_results",
+                                                                    "children": []
+                                                                },
+                                                                {
+                                                                    "type": "block",
+                                                                    "start_token": 696,
+                                                                    "end_token": 698,
+                                                                    "label": ":\n                    break",
+                                                                    "children": []
+                                                                }
+                                                            ]
+                                                        },
+                                                        {
+                                                            "type": "assignment",
+                                                            "start_token": 700,
+                                                            "end_token": 713,
+                                                            "label": "place_details = client.place(place[\"place_id\"])[\"result\"]",
+                                                            "children": [
+                                                                {
+                                                                    "type": "identifier",
+                                                                    "start_token": 700,
+                                                                    "end_token": 700,
+                                                                    "label": "place_details",
+                                                                    "children": []
+                                                                },
+                                                                {
+                                                                    "type": "subscript",
+                                                                    "start_token": 702,
+                                                                    "end_token": 713,
+                                                                    "label": "client.place(place[\"place_id\"])[\"result\"]",
+                                                                    "children": [
+                                                                        {
+                                                                            "type": "identifier",
+                                                                            "start_token": 702,
+                                                                            "end_token": 702,
+                                                                            "label": "client",
+                                                                            "children": []
+                                                                        },
+                                                                        {
+                                                                            "type": "subscript",
+                                                                            "start_token": 705,
+                                                                            "end_token": 711,
+                                                                            "label": "(place[\"place_id\"])[",
+                                                                            "children": [
+                                                                                {
+                                                                                    "type": "identifier",
+                                                                                    "start_token": 705,
+                                                                                    "end_token": 705,
+                                                                                    "label": "(",
+                                                                                    "children": []
+                                                                                }
+                                                                            ]
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        },
+                                                        {
+                                                            "type": "call",
+                                                            "start_token": 715,
+                                                            "end_token": 795,
+                                                            "label": "results.append(\n                    Place(\n                        name=place_details.get(\"name\", \"\"),\n                        address=place_details.get(\"formatted_address\", \"\"),\n                        phone=place_details.get(\"formatted_phone_number\", \"\"),\n                        rating=place_details.get(\"rating\", 0),\n                        reviews=place_details.get(\"user_ratings_total\", 0),\n                        website=place_details.get(\"website\", \"\"),\n                    )",
+                                                            "children": [
+                                                                {
+                                                                    "type": "attribute",
+                                                                    "start_token": 715,
+                                                                    "end_token": 717,
+                                                                    "label": "results.append",
+                                                                    "children": []
+                                                                },
+                                                                {
+                                                                    "type": "argument_list",
+                                                                    "start_token": 718,
+                                                                    "end_token": 795,
+                                                                    "label": "(\n                    Place(\n                        name=place_details.get(\"name\", \"\"),\n                        address=place_details.get(\"formatted_address\", \"\"),\n                        phone=place_details.get(\"formatted_phone_number\", \"\"),\n                        rating=place_details.get(\"rating\", 0),\n                        reviews=place_details.get(\"user_ratings_total\", 0),\n                        website=place_details.get(\"website\", \"\"),\n                    )",
+                                                                    "children": [
+                                                                        {
+                                                                            "type": "call",
+                                                                            "start_token": 720,
+                                                                            "end_token": 793,
+                                                                            "label": "Place(\n                        name=place_details.get(\"name\", \"\"),\n                        address=place_details.get(\"formatted_address\", \"\"),\n                        phone=place_details.get(\"formatted_phone_number\", \"\"),\n                        rating=place_details.get(\"rating\", 0),\n                        reviews=place_details.get(\"user_ratings_total\", 0),\n                        website=place_details.get(\"website\", \"\"),",
+                                                                            "children": [
+                                                                                {
+                                                                                    "type": "identifier",
+                                                                                    "start_token": 720,
+                                                                                    "end_token": 720,
+                                                                                    "label": "Place",
+                                                                                    "children": []
+                                                                                },
+                                                                                {
+                                                                                    "type": "argument_list",
+                                                                                    "start_token": 721,
+                                                                                    "end_token": 793,
+                                                                                    "label": "(\n                        name=place_details.get(\"name\", \"\"),\n                        address=place_details.get(\"formatted_address\", \"\"),\n                        phone=place_details.get(\"formatted_phone_number\", \"\"),\n                        rating=place_details.get(\"rating\", 0),\n                        reviews=place_details.get(\"user_ratings_total\", 0),\n                        website=place_details.get(\"website\", \"\"),",
+                                                                                    "children": [
+                                                                                        {
+                                                                                            "type": "keyword_argument",
+                                                                                            "start_token": 723,
+                                                                                            "end_token": 727,
+                                                                                            "label": "name=place_details.get",
+                                                                                            "children": []
+                                                                                        },
+                                                                                        {
+                                                                                            "type": "keyword_argument",
+                                                                                            "start_token": 735,
+                                                                                            "end_token": 739,
+                                                                                            "label": "address=place_details.get",
+                                                                                            "children": []
+                                                                                        },
+                                                                                        {
+                                                                                            "type": "keyword_argument",
+                                                                                            "start_token": 747,
+                                                                                            "end_token": 751,
+                                                                                            "label": "phone=place_details.get",
+                                                                                            "children": []
+                                                                                        },
+                                                                                        {
+                                                                                            "type": "keyword_argument",
+                                                                                            "start_token": 759,
+                                                                                            "end_token": 763,
+                                                                                            "label": "rating=place_details.get",
+                                                                                            "children": []
+                                                                                        },
+                                                                                        {
+                                                                                            "type": "keyword_argument",
+                                                                                            "start_token": 771,
+                                                                                            "end_token": 775,
+                                                                                            "label": "reviews=place_details.get",
+                                                                                            "children": []
+                                                                                        },
+                                                                                        {
+                                                                                            "type": "keyword_argument",
+                                                                                            "start_token": 783,
+                                                                                            "end_token": 787,
+                                                                                            "label": "website=place_details.get",
+                                                                                            "children": []
+                                                                                        }
+                                                                                    ]
+                                                                                }
+                                                                            ]
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        },
+                                                        {
+                                                            "type": "assignment",
+                                                            "start_token": 797,
+                                                            "end_token": 811,
+                                                            "label": ")\n            next_page_token = response.get(\"next_page_token\")\n            if not next_page_token:",
+                                                            "children": [
+                                                                {
+                                                                    "type": "identifier",
+                                                                    "start_token": 797,
+                                                                    "end_token": 797,
+                                                                    "label": ")",
+                                                                    "children": []
+                                                                },
+                                                                {
+                                                                    "type": "subscript",
+                                                                    "start_token": 801,
+                                                                    "end_token": 809,
+                                                                    "label": "response.get(\"next_page_token\")\n            if not",
+                                                                    "children": [
+                                                                        {
+                                                                            "type": "identifier",
+                                                                            "start_token": 802,
+                                                                            "end_token": 802,
+                                                                            "label": ".",
+                                                                            "children": []
+                                                                        },
+                                                                        {
+                                                                            "type": "subscript",
+                                                                            "start_token": 804,
+                                                                            "end_token": 807,
+                                                                            "label": "(\"next_page_token\")\n",
+                                                                            "children": [
+                                                                                {
+                                                                                    "type": "identifier",
+                                                                                    "start_token": 804,
+                                                                                    "end_token": 804,
+                                                                                    "label": "(",
+                                                                                    "children": []
+                                                                                }
+                                                                            ]
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "return_statement",
+                            "start_token": 815,
+                            "end_token": 816,
+                            "label": "return results",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

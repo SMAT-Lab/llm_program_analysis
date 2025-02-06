@@ -1,0 +1,306 @@
+{
+    "type": "module",
+    "code": "",
+    "children": [
+        {
+            "type": "import_statement",
+            "code": "import asyncio",
+            "children": []
+        },
+        {
+            "type": "import_statement",
+            "code": "import logging",
+            "children": []
+        },
+        {
+            "type": "import_statement",
+            "code": "import os",
+            "children": []
+        },
+        {
+            "type": "import_statement",
+            "code": "import threading",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "code": "from functools import wraps",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "code": "from uuid import uuid4",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "code": "from tenacity import retry, stop_after_attempt, wait_exponential",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "code": "from backend.util.process import get_service_name",
+            "children": []
+        },
+        {
+            "type": "expression_statement",
+            "code": "logger = logging.getLogger(__name__)",
+            "children": []
+        },
+        {
+            "type": "function_definition",
+            "code": "def _log_prefix(resource_name: str, conn_id: str):",
+            "children": [
+                {
+                    "type": "block",
+                    "code": "",
+                    "children": [
+                        {
+                            "type": "string",
+                            "code": "\"\"\"\nReturns a prefix string for logging purposes.\nThis needs to be called on the fly to get the current process ID & service name,\nnot the parent process ID & service name.\n\"\"\"",
+                            "children": []
+                        },
+                        {
+                            "type": "return_statement",
+                            "code": "return f\"[PID-{os.getpid()}|THREAD-{threading.get_native_id()}|{get_service_name()}|{resource_name}-{conn_id}]\"",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "code": "def conn_retry(resource_name: str, action_name: str, max_retry: int = 5, multiplier: int = 1, min_wait: float = 1, max_wait: float = 30):",
+            "children": [
+                {
+                    "type": "block",
+                    "code": "",
+                    "children": [
+                        {
+                            "type": "assignment",
+                            "code": "conn_id = str(uuid4())",
+                            "children": []
+                        },
+                        {
+                            "type": "function_definition",
+                            "code": "def on_retry(retry_state):",
+                            "children": [
+                                {
+                                    "type": "block",
+                                    "code": "",
+                                    "children": [
+                                        {
+                                            "type": "assignment",
+                                            "code": "prefix = _log_prefix(resource_name, conn_id)",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "assignment",
+                                            "code": "exception = retry_state.outcome.exception()",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "expression_statement",
+                                            "code": "logger.error(f\"{prefix} {action_name} failed: {exception}. Retrying now...\")",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "function_definition",
+                            "code": "def decorator(func):",
+                            "children": [
+                                {
+                                    "type": "block",
+                                    "code": "",
+                                    "children": [
+                                        {
+                                            "type": "assignment",
+                                            "code": "is_coroutine = asyncio.iscoroutinefunction(func)",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "assignment",
+                                            "code": "retry_decorator = retry(stop=stop_after_attempt(max_retry + 1), wait=wait_exponential(multiplier=multiplier, min=min_wait, max=max_wait), before_sleep=on_retry, reraise=True)",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "assignment",
+                                            "code": "wrapped_func = retry_decorator(func)",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "decorator",
+                                            "code": "@wraps(func)",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "function_definition",
+                                            "code": "def sync_wrapper(*args, **kwargs):",
+                                            "children": [
+                                                {
+                                                    "type": "block",
+                                                    "code": "",
+                                                    "children": [
+                                                        {
+                                                            "type": "assignment",
+                                                            "code": "prefix = _log_prefix(resource_name, conn_id)",
+                                                            "children": []
+                                                        },
+                                                        {
+                                                            "type": "expression_statement",
+                                                            "code": "logger.info(f\"{prefix} {action_name} started...\")",
+                                                            "children": []
+                                                        },
+                                                        {
+                                                            "type": "try_statement",
+                                                            "code": "",
+                                                            "children": [
+                                                                {
+                                                                    "type": "block",
+                                                                    "code": "",
+                                                                    "children": [
+                                                                        {
+                                                                            "type": "assignment",
+                                                                            "code": "result = wrapped_func(*args, **kwargs)",
+                                                                            "children": []
+                                                                        },
+                                                                        {
+                                                                            "type": "expression_statement",
+                                                                            "code": "logger.info(f\"{prefix} {action_name} completed successfully.\")",
+                                                                            "children": []
+                                                                        },
+                                                                        {
+                                                                            "type": "return_statement",
+                                                                            "code": "return result",
+                                                                            "children": []
+                                                                        }
+                                                                    ]
+                                                                },
+                                                                {
+                                                                    "type": "except_clause",
+                                                                    "code": "except Exception as e:",
+                                                                    "children": [
+                                                                        {
+                                                                            "type": "block",
+                                                                            "code": "",
+                                                                            "children": [
+                                                                                {
+                                                                                    "type": "expression_statement",
+                                                                                    "code": "logger.error(f\"{prefix} {action_name} failed after retries: {e}\")",
+                                                                                    "children": []
+                                                                                },
+                                                                                {
+                                                                                    "type": "raise_statement",
+                                                                                    "code": "raise",
+                                                                                    "children": []
+                                                                                }
+                                                                            ]
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "decorator",
+                                            "code": "@wraps(func)",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "function_definition",
+                                            "code": "async def async_wrapper(*args, **kwargs):",
+                                            "children": [
+                                                {
+                                                    "type": "block",
+                                                    "code": "",
+                                                    "children": [
+                                                        {
+                                                            "type": "assignment",
+                                                            "code": "prefix = _log_prefix(resource_name, conn_id)",
+                                                            "children": []
+                                                        },
+                                                        {
+                                                            "type": "expression_statement",
+                                                            "code": "logger.info(f\"{prefix} {action_name} started...\")",
+                                                            "children": []
+                                                        },
+                                                        {
+                                                            "type": "try_statement",
+                                                            "code": "",
+                                                            "children": [
+                                                                {
+                                                                    "type": "block",
+                                                                    "code": "",
+                                                                    "children": [
+                                                                        {
+                                                                            "type": "assignment",
+                                                                            "code": "result = await wrapped_func(*args, **kwargs)",
+                                                                            "children": []
+                                                                        },
+                                                                        {
+                                                                            "type": "expression_statement",
+                                                                            "code": "logger.info(f\"{prefix} {action_name} completed successfully.\")",
+                                                                            "children": []
+                                                                        },
+                                                                        {
+                                                                            "type": "return_statement",
+                                                                            "code": "return result",
+                                                                            "children": []
+                                                                        }
+                                                                    ]
+                                                                },
+                                                                {
+                                                                    "type": "except_clause",
+                                                                    "code": "except Exception as e:",
+                                                                    "children": [
+                                                                        {
+                                                                            "type": "block",
+                                                                            "code": "",
+                                                                            "children": [
+                                                                                {
+                                                                                    "type": "expression_statement",
+                                                                                    "code": "logger.error(f\"{prefix} {action_name} failed after retries: {e}\")",
+                                                                                    "children": []
+                                                                                },
+                                                                                {
+                                                                                    "type": "raise_statement",
+                                                                                    "code": "raise",
+                                                                                    "children": []
+                                                                                }
+                                                                            ]
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "return_statement",
+                                            "code": "return async_wrapper if is_coroutine else sync_wrapper",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "return_statement",
+                            "code": "return decorator",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

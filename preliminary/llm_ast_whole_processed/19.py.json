@@ -1,0 +1,460 @@
+{
+    "type": "module",
+    "start_token": 0,
+    "end_token": 819,
+    "label": "import asyncio\nimport json\nimport logging\nfrom abc import ABC, abstractmethod\nfrom datetime import datetime\nfrom typing import Any, AsyncGenerator, Generator, Generic, Optional, TypeVar\n\nfrom pydantic import BaseModel\nfrom redis.asyncio.client import PubSub as AsyncPubSub\nfrom redis.client import PubSub\n\nfrom backend.data import redis\n\nlogger = logging.getLogger(__name__)\n\n\nclass DateTimeEncoder(json.JSONEncoder):\n    def default(self, o):\n        if isinstance(o, datetime):\n            return o.isoformat()\n        return super().default(o)\n\n\nM = TypeVar(\"M\", bound=BaseModel)\n\n\nclass BaseRedisEventBus(Generic[M], ABC):\n    Model: type[M]\n\n    @property\n    @abstractmethod\n    def event_bus_name(self) -> str:\n        pass\n\n    def _serialize_message(self, item: M, channel_key: str) -> tuple[str, str]:\n        message = json.dumps(item.model_dump(), cls=DateTimeEncoder)\n        channel_name = f\"{self.event_bus_name}/{channel_key}\"\n        logger.info(f\"[{channel_name}] Publishing an event to Redis {message}\")\n        return message, channel_name\n\n    def _deserialize_message(self, msg: Any, channel_key: str) -> M | None:\n        message_type = \"pmessage\" if \"*\" in channel_key else \"message\"\n        if msg[\"type\"] != message_type:\n            return None\n        try:\n            data = json.loads(msg[\"data\"])\n            logger.info(f\"Consuming an event from Redis {data}\")\n            return self.Model(**data)\n        except Exception as e:\n            logger.error(f\"Failed to parse event result from Redis {msg} {e}\")\n\n    def _get_pubsub_channel(\n        self, connection: redis.Redis | redis.AsyncRedis, channel_key: str\n    ) -> tuple[PubSub | AsyncPubSub, str]:\n        full_channel_name = f\"{self.event_bus_name}/{channel_key}\"\n        pubsub = connection.pubsub()\n        return pubsub, full_channel_name\n\n\nclass RedisEventBus(BaseRedisEventBus[M], ABC):\n    Model: type[M]\n\n    @property\n    def connection(self) -> redis.Redis:\n        return redis.get_redis()\n\n    def publish_event(self, event: M, channel_key: str):\n        message, full_channel_name = self._serialize_message(event, channel_key)\n        self.connection.publish(full_channel_name, message)\n\n    def listen_events(self, channel_key: str) -> Generator[M, None, None]:\n        pubsub, full_channel_name = self._get_pubsub_channel(\n            self.connection, channel_key\n        )\n        assert isinstance(pubsub, PubSub)\n\n        if \"*\" in channel_key:\n            pubsub.psubscribe(full_channel_name)\n        else:\n            pubsub.subscribe(full_channel_name)\n\n        for message in pubsub.listen():\n            if event := self._deserialize_message(message, channel_key):\n                yield event\n\n\nclass AsyncRedisEventBus(BaseRedisEventBus[M], ABC):\n    Model: type[M]\n\n    @property\n    async def connection(self) -> redis.AsyncRedis:\n        return await redis.get_redis_async()\n\n    async def publish_event(self, event: M, channel_key: str):\n        message, full_channel_name = self._serialize_message(event, channel_key)\n        connection = await self.connection\n        await connection.publish(full_channel_name, message)\n\n    async def listen_events(self, channel_key: str) -> AsyncGenerator[M, None]:\n        pubsub, full_channel_name = self._get_pubsub_channel(\n            await self.connection, channel_key\n        )\n        assert isinstance(pubsub, AsyncPubSub)\n\n        if \"*\" in channel_key:\n            await pubsub.psubscribe(full_channel_name)\n        else:\n            await pubsub.subscribe(full_channel_name)\n\n        async for message in pubsub.listen():\n            if event := self._deserialize_message(message, channel_key):\n                yield event\n\n    async def wait_for_event(\n        self, channel_key: str, timeout: Optional[float] = None\n    ) -> M | None:\n        try:\n            return await asyncio.wait_for(\n                anext(aiter(self.listen_events(channel_key))), timeout\n            )\n        except TimeoutError:\n            return None\n",
+    "children": [
+        {
+            "type": "import_statement",
+            "start_token": 0,
+            "end_token": 1,
+            "label": "import asyncio",
+            "children": []
+        },
+        {
+            "type": "import_statement",
+            "start_token": 3,
+            "end_token": 4,
+            "label": "import json",
+            "children": []
+        },
+        {
+            "type": "import_statement",
+            "start_token": 6,
+            "end_token": 7,
+            "label": "import logging",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 9,
+            "end_token": 14,
+            "label": "from abc import ABC, abstractmethod",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 16,
+            "end_token": 19,
+            "label": "from datetime import datetime",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 21,
+            "end_token": 34,
+            "label": "from typing import Any, AsyncGenerator, Generator, Generic, Optional, TypeVar",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 37,
+            "end_token": 40,
+            "label": "from pydantic import BaseModel",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 42,
+            "end_token": 51,
+            "label": "from redis.asyncio.client import PubSub as AsyncPubSub",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 53,
+            "end_token": 58,
+            "label": "from redis.client import PubSub",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 61,
+            "end_token": 66,
+            "label": "from backend.data import redis",
+            "children": []
+        },
+        {
+            "type": "assignment",
+            "start_token": 69,
+            "end_token": 76,
+            "label": "logger = logging.getLogger(__name__)",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 69,
+                    "end_token": 69,
+                    "label": "logger",
+                    "children": []
+                },
+                {
+                    "type": "call",
+                    "start_token": 71,
+                    "end_token": 75,
+                    "label": "logging.getLogger(__name__",
+                    "children": [
+                        {
+                            "type": "attribute",
+                            "start_token": 71,
+                            "end_token": 73,
+                            "label": "logging.getLogger",
+                            "children": [
+                                {
+                                    "type": "identifier",
+                                    "start_token": 71,
+                                    "end_token": 71,
+                                    "label": "logging",
+                                    "children": []
+                                },
+                                {
+                                    "type": "identifier",
+                                    "start_token": 73,
+                                    "end_token": 73,
+                                    "label": "getLogger",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "identifier",
+                            "start_token": 75,
+                            "end_token": 75,
+                            "label": "__name__",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "class_definition",
+            "start_token": 80,
+            "end_token": 123,
+            "label": "class DateTimeEncoder(json.JSONEncoder):\n    def default(self, o):\n        if isinstance(o, datetime):\n            return o.isoformat()\n        return super().default(o)\n",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 80,
+                    "end_token": 80,
+                    "label": "class",
+                    "children": []
+                },
+                {
+                    "type": "class_definition",
+                    "start_token": 139,
+                    "end_token": 235,
+                    "label": "class BaseRedisEventBus(Generic[M], ABC):\n    Model: type[M]\n\n    @property\n    @abstractmethod\n    def event_bus_name(self) -> str:\n        pass\n\n    def _serialize_message(self, item: M, channel_key: str) -> tuple[str, str]:\n        message = json.dumps(item.model_dump(), cls=DateTimeEncoder)\n        channel_name = f\"{self.event_bus_name}/{channel_key}\"\n        logger.info(f\"[{channel_name}] Publishing an event to Redis {message}\")\n        return message, channel_name\n",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 139,
+                            "end_token": 139,
+                            "label": "class",
+                            "children": []
+                        },
+                        {
+                            "type": "identifier",
+                            "start_token": 141,
+                            "end_token": 141,
+                            "label": "(",
+                            "children": []
+                        },
+                        {
+                            "type": "generic_type",
+                            "start_token": 143,
+                            "end_token": 145,
+                            "label": "[M]",
+                            "children": [
+                                {
+                                    "type": "identifier",
+                                    "start_token": 143,
+                                    "end_token": 143,
+                                    "label": "[",
+                                    "children": []
+                                },
+                                {
+                                    "type": "type_parameter",
+                                    "start_token": 145,
+                                    "end_token": 145,
+                                    "label": "]",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "type": "decorated_definition",
+                    "start_token": 237,
+                    "end_token": 318,
+                    "label": "def _deserialize_message(self, msg: Any, channel_key: str) -> M | None:\n        message_type = \"pmessage\" if \"*\" in channel_key else \"message\"\n        if msg[\"type\"] != message_type:\n            return None\n        try:\n            data = json.loads(msg[\"data\"])\n            logger.info(f\"Consuming an event from Redis {data}\")\n            return self.Model(**data)\n        except Exception as e:\n",
+                    "children": [
+                        {
+                            "type": "decorator",
+                            "start_token": 159,
+                            "end_token": 160,
+                            "label": "@property",
+                            "children": []
+                        },
+                        {
+                            "type": "decorator",
+                            "start_token": 162,
+                            "end_token": 164,
+                            "label": "@abstractmethod\n",
+                            "children": []
+                        },
+                        {
+                            "type": "function_definition",
+                            "start_token": 165,
+                            "end_token": 173,
+                            "label": "def event_bus_name(self) -> str:",
+                            "children": [
+                                {
+                                    "type": "identifier",
+                                    "start_token": 165,
+                                    "end_token": 165,
+                                    "label": "def",
+                                    "children": []
+                                },
+                                {
+                                    "type": "parameters",
+                                    "start_token": 167,
+                                    "end_token": 167,
+                                    "label": "(",
+                                    "children": []
+                                },
+                                {
+                                    "type": "return_statement",
+                                    "start_token": 169,
+                                    "end_token": 173,
+                                    "label": ") -> str:",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "class_definition",
+            "start_token": 237,
+            "end_token": 326,
+            "label": "def _deserialize_message(self, msg: Any, channel_key: str) -> M | None:\n        message_type = \"pmessage\" if \"*\" in channel_key else \"message\"\n        if msg[\"type\"] != message_type:\n            return None\n        try:\n            data = json.loads(msg[\"data\"])\n            logger.info(f\"Consuming an event from Redis {data}\")\n            return self.Model(**data)\n        except Exception as e:\n            logger.error(f\"Failed to parse event result from Redis {msg} {e}\")\n",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 237,
+                    "end_token": 237,
+                    "label": "def",
+                    "children": []
+                },
+                {
+                    "type": "identifier",
+                    "start_token": 237,
+                    "end_token": 237,
+                    "label": "def",
+                    "children": []
+                },
+                {
+                    "type": "generic_type",
+                    "start_token": 239,
+                    "end_token": 239,
+                    "label": "(",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 239,
+                            "end_token": 239,
+                            "label": "(",
+                            "children": []
+                        },
+                        {
+                            "type": "type_parameter",
+                            "start_token": 239,
+                            "end_token": 239,
+                            "label": "(",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "class_definition",
+            "start_token": 237,
+            "end_token": 326,
+            "label": "def _deserialize_message(self, msg: Any, channel_key: str) -> M | None:\n        message_type = \"pmessage\" if \"*\" in channel_key else \"message\"\n        if msg[\"type\"] != message_type:\n            return None\n        try:\n            data = json.loads(msg[\"data\"])\n            logger.info(f\"Consuming an event from Redis {data}\")\n            return self.Model(**data)\n        except Exception as e:\n            logger.error(f\"Failed to parse event result from Redis {msg} {e}\")\n",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 237,
+                    "end_token": 237,
+                    "label": "def",
+                    "children": []
+                },
+                {
+                    "type": "identifier",
+                    "start_token": 237,
+                    "end_token": 237,
+                    "label": "def",
+                    "children": []
+                },
+                {
+                    "type": "generic_type",
+                    "start_token": 239,
+                    "end_token": 239,
+                    "label": "(",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 239,
+                            "end_token": 239,
+                            "label": "(",
+                            "children": []
+                        },
+                        {
+                            "type": "type_parameter",
+                            "start_token": 239,
+                            "end_token": 239,
+                            "label": "(",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "block",
+            "start_token": 237,
+            "end_token": 326,
+            "label": "def _deserialize_message(self, msg: Any, channel_key: str) -> M | None:\n        message_type = \"pmessage\" if \"*\" in channel_key else \"message\"\n        if msg[\"type\"] != message_type:\n            return None\n        try:\n            data = json.loads(msg[\"data\"])\n            logger.info(f\"Consuming an event from Redis {data}\")\n            return self.Model(**data)\n        except Exception as e:\n            logger.error(f\"Failed to parse event result from Redis {msg} {e}\")\n",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 237,
+                    "end_token": 237,
+                    "label": "def",
+                    "children": []
+                },
+                {
+                    "type": "identifier",
+                    "start_token": 237,
+                    "end_token": 237,
+                    "label": "def",
+                    "children": []
+                },
+                {
+                    "type": "generic_type",
+                    "start_token": 239,
+                    "end_token": 239,
+                    "label": "(",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 239,
+                            "end_token": 239,
+                            "label": "(",
+                            "children": []
+                        },
+                        {
+                            "type": "type_parameter",
+                            "start_token": 239,
+                            "end_token": 239,
+                            "label": "(",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "class_definition",
+            "start_token": 381,
+            "end_token": 822,
+            "label": "",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 381,
+                    "end_token": 381,
+                    "label": "class",
+                    "children": []
+                },
+                {
+                    "type": "identifier",
+                    "start_token": 383,
+                    "end_token": 383,
+                    "label": "(",
+                    "children": []
+                },
+                {
+                    "type": "generic_type",
+                    "start_token": 385,
+                    "end_token": 387,
+                    "label": "[M]",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 385,
+                            "end_token": 385,
+                            "label": "[",
+                            "children": []
+                        },
+                        {
+                            "type": "type_parameter",
+                            "start_token": 387,
+                            "end_token": 387,
+                            "label": "]",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "class_definition",
+            "start_token": 564,
+            "end_token": 822,
+            "label": "",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 564,
+                    "end_token": 564,
+                    "label": "class",
+                    "children": []
+                },
+                {
+                    "type": "identifier",
+                    "start_token": 566,
+                    "end_token": 566,
+                    "label": "(",
+                    "children": []
+                },
+                {
+                    "type": "generic_type",
+                    "start_token": 568,
+                    "end_token": 570,
+                    "label": "[M]",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 568,
+                            "end_token": 568,
+                            "label": "[",
+                            "children": []
+                        },
+                        {
+                            "type": "type_parameter",
+                            "start_token": 570,
+                            "end_token": 570,
+                            "label": "]",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

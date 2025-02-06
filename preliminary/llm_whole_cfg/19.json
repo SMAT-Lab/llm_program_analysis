@@ -1,0 +1,156 @@
+{
+  "source_file": "19.py",
+  "cfg": {
+    "blocks": [
+      {
+        "id": 1,
+        "start_line": 1,
+        "end_line": 6,
+        "label": "import asyncio\nimport json\nimport logging\nfrom abc import ABC, abstractmethod\nfrom datetime import datetime\nfrom typing import Any, AsyncGenerator, Generator, Generic, Optional, TypeVar",
+        "successors": [
+          2
+        ]
+      },
+      {
+        "id": 2,
+        "start_line": 8,
+        "end_line": 10,
+        "label": "from pydantic import BaseModel\nfrom redis.asyncio.client import PubSub as AsyncPubSub\nfrom redis.client import PubSub",
+        "successors": [
+          3
+        ]
+      },
+      {
+        "id": 3,
+        "start_line": 12,
+        "end_line": 14,
+        "label": "from backend.data import redis\n\nlogger = logging.getLogger(__name__)",
+        "successors": [
+          4
+        ]
+      },
+      {
+        "id": 4,
+        "start_line": 17,
+        "end_line": 21,
+        "label": "class DateTimeEncoder(json.JSONEncoder):\n    def default(self, o):\n        if isinstance(o, datetime):\n            return o.isoformat()\n        return super().default(o)",
+        "successors": [
+          5
+        ]
+      },
+      {
+        "id": 5,
+        "start_line": 24,
+        "end_line": 24,
+        "label": "M = TypeVar(\"M\", bound=BaseModel)",
+        "successors": [
+          6
+        ]
+      },
+      {
+        "id": 6,
+        "start_line": 27,
+        "end_line": 33,
+        "label": "class BaseRedisEventBus(Generic[M], ABC):\n    Model: type[M]\n\n    @property\n    @abstractmethod\n    def event_bus_name(self) -> str:\n        pass",
+        "successors": [
+          7
+        ]
+      },
+      {
+        "id": 7,
+        "start_line": 35,
+        "end_line": 39,
+        "label": "def _serialize_message(self, item: M, channel_key: str) -> tuple[str, str]:\n    message = json.dumps(item.model_dump(), cls=DateTimeEncoder)\n    channel_name = f\"{self.event_bus_name}/{channel_key}\"\n    logger.info(f\"[{channel_name}] Publishing an event to Redis {message}\")\n    return message, channel_name",
+        "successors": [
+          8
+        ]
+      },
+      {
+        "id": 8,
+        "start_line": 41,
+        "end_line": 48,
+        "label": "def _deserialize_message(self, msg: Any, channel_key: str) -> M | None:\n    message_type = \"pmessage\" if \"*\" in channel_key else \"message\"\n    if msg[\"type\"] != message_type:\n        return None\n    try:\n        data = json.loads(msg[\"data\"])\n        logger.info(f\"Consuming an event from Redis {data}\")\n        return self.Model(**data)\n    except Exception as e:",
+        "successors": [
+          9,
+          10
+        ]
+      },
+      {
+        "id": 9,
+        "start_line": 50,
+        "end_line": 50,
+        "label": "logger.error(f\"Failed to parse event result from Redis {msg} {e}\")",
+        "successors": []
+      },
+      {
+        "id": 10,
+        "start_line": 52,
+        "end_line": 57,
+        "label": "def _get_pubsub_channel(self, connection: redis.Redis | redis.AsyncRedis, channel_key: str) -> tuple[PubSub | AsyncPubSub, str]:\n    full_channel_name = f\"{self.event_bus_name}/{channel_key}\"\n    pubsub = connection.pubsub()\n    return pubsub, full_channel_name",
+        "successors": [
+          11
+        ]
+      },
+      {
+        "id": 11,
+        "start_line": 60,
+        "end_line": 65,
+        "label": "class RedisEventBus(BaseRedisEventBus[M], ABC):\n    Model: type[M]\n\n    @property\n    def connection(self) -> redis.Redis:\n        return redis.get_redis()",
+        "successors": [
+          12
+        ]
+      },
+      {
+        "id": 12,
+        "start_line": 67,
+        "end_line": 69,
+        "label": "def publish_event(self, event: M, channel_key: str):\n    message, full_channel_name = self._serialize_message(event, channel_key)\n    self.connection.publish(full_channel_name, message)",
+        "successors": [
+          13
+        ]
+      },
+      {
+        "id": 13,
+        "start_line": 71,
+        "end_line": 84,
+        "label": "def listen_events(self, channel_key: str) -> Generator[M, None, None]:\n    pubsub, full_channel_name = self._get_pubsub_channel(self.connection, channel_key)\n    assert isinstance(pubsub, PubSub)\n\n    if \"*\" in channel_key:\n        pubsub.psubscribe(full_channel_name)\n    else:\n        pubsub.subscribe(full_channel_name)\n\n    for message in pubsub.listen():\n        if event := self._deserialize_message(message, channel_key):\n            yield event",
+        "successors": []
+      },
+      {
+        "id": 14,
+        "start_line": 87,
+        "end_line": 92,
+        "label": "class AsyncRedisEventBus(BaseRedisEventBus[M], ABC):\n    Model: type[M]\n\n    @property\n    async def connection(self) -> redis.AsyncRedis:\n        return await redis.get_redis_async()",
+        "successors": [
+          15
+        ]
+      },
+      {
+        "id": 15,
+        "start_line": 94,
+        "end_line": 97,
+        "label": "async def publish_event(self, event: M, channel_key: str):\n    message, full_channel_name = self._serialize_message(event, channel_key)\n    connection = await self.connection\n    await connection.publish(full_channel_name, message)",
+        "successors": [
+          16
+        ]
+      },
+      {
+        "id": 16,
+        "start_line": 99,
+        "end_line": 112,
+        "label": "async def listen_events(self, channel_key: str) -> AsyncGenerator[M, None]:\n    pubsub, full_channel_name = self._get_pubsub_channel(await self.connection, channel_key)\n    assert isinstance(pubsub, AsyncPubSub)\n\n    if \"*\" in channel_key:\n        await pubsub.psubscribe(full_channel_name)\n    else:\n        await pubsub.subscribe(full_channel_name)\n\n    async for message in pubsub.listen():\n        if event := self._deserialize_message(message, channel_key):\n            yield event",
+        "successors": [
+          17
+        ]
+      },
+      {
+        "id": 17,
+        "start_line": 114,
+        "end_line": 122,
+        "label": "async def wait_for_event(self, channel_key: str, timeout: Optional[float] = None) -> M | None:\n    try:\n        return await asyncio.wait_for(anext(aiter(self.listen_events(channel_key))), timeout)\n    except TimeoutError:\n        return None",
+        "successors": []
+      }
+    ]
+  },
+  "code_length": 122
+}

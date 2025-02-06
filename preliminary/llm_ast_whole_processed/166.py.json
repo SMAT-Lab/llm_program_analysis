@@ -1,0 +1,394 @@
+{
+    "type": "module",
+    "start_token": 0,
+    "end_token": 3241,
+    "label": "import base64\nfrom email.utils import parseaddr\nfrom typing import List\n\nfrom google.oauth2.credentials import Credentials\nfrom googleapiclient.discovery import build\nfrom pydantic import BaseModel\n\nfrom backend.data.block import Block, BlockCategory, BlockOutput, BlockSchema\nfrom backend.data.model import SchemaField\n\nfrom ._auth import (\n    GOOGLE_OAUTH_IS_CONFIGURED,\n    TEST_CREDENTIALS,\n    TEST_CREDENTIALS_INPUT,\n    GoogleCredentials,\n    GoogleCredentialsField,\n    GoogleCredentialsInput,\n)\n\n\nclass Attachment(BaseModel):\n    filename: str\n    content_type: str\n    size: int\n    attachment_id: str\n\n\nclass Email(BaseModel):\n    id: str\n    subject: str\n    snippet: str\n    from_: str\n    to: str\n    date: str\n    body: str = \"\"  # Default to an empty string\n    sizeEstimate: int\n    attachments: List[Attachment]\n\n\nclass GmailReadBlock(Block):\n    class Input(BlockSchema):\n        credentials: GoogleCredentialsInput = GoogleCredentialsField(\n            [\"https://www.googleapis.com/auth/gmail.readonly\"]\n        )\n        query: str = SchemaField(\n            description=\"Search query for reading emails\",\n            default=\"is:unread\",\n        )\n        max_results: int = SchemaField(\n            description=\"Maximum number of emails to retrieve\",\n            default=10,\n        )\n\n    class Output(BlockSchema):\n        email: Email = SchemaField(\n            description=\"Email data\",\n        )\n        emails: list[Email] = SchemaField(\n            description=\"List of email data\",\n        )\n        error: str = SchemaField(\n            description=\"Error message if any\",\n        )\n\n    def __init__(self):\n        super().__init__(\n            id=\"25310c70-b89b-43ba-b25c-4dfa7e2a481c\",\n            description=\"This block reads emails from Gmail.\",\n            categories={BlockCategory.COMMUNICATION},\n            disabled=not GOOGLE_OAUTH_IS_CONFIGURED,\n            input_schema=GmailReadBlock.Input,\n            output_schema=GmailReadBlock.Output,\n            test_input={\n                \"query\": \"is:unread\",\n                \"max_results\": 5,\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[\n                (\n                    \"email\",\n                    {\n                        \"id\": \"1\",\n                        \"subject\": \"Test Email\",\n                        \"snippet\": \"This is a test email\",\n                        \"from_\": \"test@example.com\",\n                        \"to\": \"recipient@example.com\",\n                        \"date\": \"2024-01-01\",\n                        \"body\": \"This is a test email\",\n                        \"sizeEstimate\": 100,\n                        \"attachments\": [],\n                    },\n                ),\n                (\n                    \"emails\",\n                    [\n                        {\n                            \"id\": \"1\",\n                            \"subject\": \"Test Email\",\n                            \"snippet\": \"This is a test email\",\n                            \"from_\": \"test@example.com\",\n                            \"to\": \"recipient@example.com\",\n                            \"date\": \"2024-01-01\",\n                            \"body\": \"This is a test email\",\n                            \"sizeEstimate\": 100,\n                            \"attachments\": [],\n                        }\n                    ],\n                ),\n            ],\n            test_mock={\n                \"_read_emails\": lambda *args, **kwargs: [\n                    {\n                        \"id\": \"1\",\n                        \"subject\": \"Test Email\",\n                        \"snippet\": \"This is a test email\",\n                        \"from_\": \"test@example.com\",\n                        \"to\": \"recipient@example.com\",\n                        \"date\": \"2024-01-01\",\n                        \"body\": \"This is a test email\",\n                        \"sizeEstimate\": 100,\n                        \"attachments\": [],\n                    }\n                ],\n                \"_send_email\": lambda *args, **kwargs: {\"id\": \"1\", \"status\": \"sent\"},\n            },\n        )\n\n    def run(\n        self, input_data: Input, *, credentials: GoogleCredentials, **kwargs\n    ) -> BlockOutput:\n        service = self._build_service(credentials, **kwargs)\n        messages = self._read_emails(service, input_data.query, input_data.max_results)\n        for email in messages:\n            yield \"email\", email\n        yield \"emails\", messages\n\n    @staticmethod\n    def _build_service(credentials: GoogleCredentials, **kwargs):\n        creds = Credentials(\n            token=(\n                credentials.access_token.get_secret_value()\n                if credentials.access_token\n                else None\n            ),\n            refresh_token=(\n                credentials.refresh_token.get_secret_value()\n                if credentials.refresh_token\n                else None\n            ),\n            token_uri=\"https://oauth2.googleapis.com/token\",\n            client_id=kwargs.get(\"client_id\"),\n            client_secret=kwargs.get(\"client_secret\"),\n            scopes=credentials.scopes,\n        )\n        return build(\"gmail\", \"v1\", credentials=creds)\n\n    def _read_emails(\n        self, service, query: str | None, max_results: int | None\n    ) -> list[Email]:\n        results = (\n            service.users()\n            .messages()\n            .list(userId=\"me\", q=query or \"\", maxResults=max_results or 10)\n            .execute()\n        )\n        messages = results.get(\"messages\", [])\n\n        email_data = []\n        for message in messages:\n            msg = (\n                service.users()\n                .messages()\n                .get(userId=\"me\", id=message[\"id\"], format=\"full\")\n                .execute()\n            )\n\n            headers = {\n                header[\"name\"].lower(): header[\"value\"]\n                for header in msg[\"payload\"][\"headers\"]\n            }\n\n            attachments = self._get_attachments(service, msg)\n\n            email = Email(\n                id=msg[\"id\"],\n                subject=headers.get(\"subject\", \"No Subject\"),\n                snippet=msg[\"snippet\"],\n                from_=parseaddr(headers.get(\"from\", \"\"))[1],\n                to=parseaddr(headers.get(\"to\", \"\"))[1],\n                date=headers.get(\"date\", \"\"),\n                body=self._get_email_body(msg),\n                sizeEstimate=msg[\"sizeEstimate\"],\n                attachments=attachments,\n            )\n            email_data.append(email)\n\n        return email_data\n\n    def _get_email_body(self, msg):\n        if \"parts\" in msg[\"payload\"]:\n            for part in msg[\"payload\"][\"parts\"]:\n                if part[\"mimeType\"] == \"text/plain\":\n                    return base64.urlsafe_b64decode(part[\"body\"][\"data\"]).decode(\n                        \"utf-8\"\n                    )\n        elif msg[\"payload\"][\"mimeType\"] == \"text/plain\":\n            return base64.urlsafe_b64decode(msg[\"payload\"][\"body\"][\"data\"]).decode(\n                \"utf-8\"\n            )\n\n        return \"This email does not contain a text body.\"\n\n    def _get_attachments(self, service, message):\n        attachments = []\n        if \"parts\" in message[\"payload\"]:\n            for part in message[\"payload\"][\"parts\"]:\n                if part[\"filename\"]:\n                    attachment = Attachment(\n                        filename=part[\"filename\"],\n                        content_type=part[\"mimeType\"],\n                        size=int(part[\"body\"].get(\"size\", 0)),\n                        attachment_id=part[\"body\"][\"attachmentId\"],\n                    )\n                    attachments.append(attachment)\n        return attachments\n\n    # Add a new method to download attachment content\n    def download_attachment(self, service, message_id: str, attachment_id: str):\n        attachment = (\n            service.users()\n            .messages()\n            .attachments()\n            .get(userId=\"me\", messageId=message_id, id=attachment_id)\n            .execute()\n        )\n        file_data = base64.urlsafe_b64decode(attachment[\"data\"].encode(\"UTF-8\"))\n        return file_data\n\n\nclass GmailSendBlock(Block):\n    class Input(BlockSchema):\n        credentials: GoogleCredentialsInput = GoogleCredentialsField(\n            [\"https://www.googleapis.com/auth/gmail.send\"]\n        )\n        to: str = SchemaField(\n            description=\"Recipient email address\",\n        )\n        subject: str = SchemaField(\n            description=\"Email subject\",\n        )\n        body: str = SchemaField(\n            description=\"Email body\",\n        )\n\n    class Output(BlockSchema):\n        result: dict = SchemaField(\n            description=\"Send confirmation\",\n        )\n        error: str = SchemaField(\n            description=\"Error message if any\",\n        )\n\n    def __init__(self):\n        super().__init__(\n            id=\"6c27abc2-e51d-499e-a85f-5a0041ba94f0\",\n            description=\"This block sends an email using Gmail.\",\n            categories={BlockCategory.COMMUNICATION},\n            input_schema=GmailSendBlock.Input,\n            output_schema=GmailSendBlock.Output,\n            disabled=not GOOGLE_OAUTH_IS_CONFIGURED,\n            test_input={\n                \"to\": \"recipient@example.com\",\n                \"subject\": \"Test Email\",\n                \"body\": \"This is a test email sent from GmailSendBlock.\",\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[\n                (\"result\", {\"id\": \"1\", \"status\": \"sent\"}),\n            ],\n            test_mock={\n                \"_send_email\": lambda *args, **kwargs: {\"id\": \"1\", \"status\": \"sent\"},\n            },\n        )\n\n    def run(\n        self, input_data: Input, *, credentials: GoogleCredentials, **kwargs\n    ) -> BlockOutput:\n        service = GmailReadBlock._build_service(credentials, **kwargs)\n        send_result = self._send_email(\n            service, input_data.to, input_data.subject, input_data.body\n        )\n        yield \"result\", send_result\n\n    def _send_email(self, service, to: str, subject: str, body: str) -> dict:\n        if not to or not subject or not body:\n            raise ValueError(\"To, subject, and body are required for sending an email\")\n        message = self._create_message(to, subject, body)\n        sent_message = (\n            service.users().messages().send(userId=\"me\", body=message).execute()\n        )\n        return {\"id\": sent_message[\"id\"], \"status\": \"sent\"}\n\n    def _create_message(self, to: str, subject: str, body: str) -> dict:\n        import base64\n        from email.mime.text import MIMEText\n\n        message = MIMEText(body)\n        message[\"to\"] = to\n        message[\"subject\"] = subject\n        raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode(\"utf-8\")\n        return {\"raw\": raw_message}\n\n\nclass GmailListLabelsBlock(Block):\n    class Input(BlockSchema):\n        credentials: GoogleCredentialsInput = GoogleCredentialsField(\n            [\"https://www.googleapis.com/auth/gmail.labels\"]\n        )\n\n    class Output(BlockSchema):\n        result: list[dict] = SchemaField(\n            description=\"List of labels\",\n        )\n        error: str = SchemaField(\n            description=\"Error message if any\",\n        )\n\n    def __init__(self):\n        super().__init__(\n            id=\"3e1c2c1c-c689-4520-b956-1f3bf4e02bb7\",\n            description=\"This block lists all labels in Gmail.\",\n            categories={BlockCategory.COMMUNICATION},\n            input_schema=GmailListLabelsBlock.Input,\n            output_schema=GmailListLabelsBlock.Output,\n            disabled=not GOOGLE_OAUTH_IS_CONFIGURED,\n            test_input={\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[\n                (\n                    \"result\",\n                    [\n                        {\"id\": \"Label_1\", \"name\": \"Important\"},\n                        {\"id\": \"Label_2\", \"name\": \"Work\"},\n                    ],\n                ),\n            ],\n            test_mock={\n                \"_list_labels\": lambda *args, **kwargs: [\n                    {\"id\": \"Label_1\", \"name\": \"Important\"},\n                    {\"id\": \"Label_2\", \"name\": \"Work\"},\n                ],\n            },\n        )\n\n    def run(\n        self, input_data: Input, *, credentials: GoogleCredentials, **kwargs\n    ) -> BlockOutput:\n        service = GmailReadBlock._build_service(credentials, **kwargs)\n        labels = self._list_labels(service)\n        yield \"result\", labels\n\n    def _list_labels(self, service) -> list[dict]:\n        results = service.users().labels().list(userId=\"me\").execute()\n        labels = results.get(\"labels\", [])\n        return [{\"id\": label[\"id\"], \"name\": label[\"name\"]} for label in labels]\n\n\nclass GmailAddLabelBlock(Block):\n    class Input(BlockSchema):\n        credentials: GoogleCredentialsInput = GoogleCredentialsField(\n            [\"https://www.googleapis.com/auth/gmail.modify\"]\n        )\n        message_id: str = SchemaField(\n            description=\"Message ID to add label to\",\n        )\n        label_name: str = SchemaField(\n            description=\"Label name to add\",\n        )\n\n    class Output(BlockSchema):\n        result: dict = SchemaField(\n            description=\"Label addition result\",\n        )\n        error: str = SchemaField(\n            description=\"Error message if any\",\n        )\n\n    def __init__(self):\n        super().__init__(\n            id=\"f884b2fb-04f4-4265-9658-14f433926ac9\",\n            description=\"This block adds a label to a Gmail message.\",\n            categories={BlockCategory.COMMUNICATION},\n            input_schema=GmailAddLabelBlock.Input,\n            output_schema=GmailAddLabelBlock.Output,\n            disabled=not GOOGLE_OAUTH_IS_CONFIGURED,\n            test_input={\n                \"message_id\": \"12345\",\n                \"label_name\": \"Important\",\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[\n                (\n                    \"result\",\n                    {\"status\": \"Label added successfully\", \"label_id\": \"Label_1\"},\n                ),\n            ],\n            test_mock={\n                \"_add_label\": lambda *args, **kwargs: {\n                    \"status\": \"Label added successfully\",\n                    \"label_id\": \"Label_1\",\n                },\n            },\n        )\n\n    def run(\n        self, input_data: Input, *, credentials: GoogleCredentials, **kwargs\n    ) -> BlockOutput:\n        service = GmailReadBlock._build_service(credentials, **kwargs)\n        result = self._add_label(service, input_data.message_id, input_data.label_name)\n        yield \"result\", result\n\n    def _add_label(self, service, message_id: str, label_name: str) -> dict:\n        label_id = self._get_or_create_label(service, label_name)\n        service.users().messages().modify(\n            userId=\"me\", id=message_id, body={\"addLabelIds\": [label_id]}\n        ).execute()\n        return {\"status\": \"Label added successfully\", \"label_id\": label_id}\n\n    def _get_or_create_label(self, service, label_name: str) -> str:\n        label_id = self._get_label_id(service, label_name)\n        if not label_id:\n            label = (\n                service.users()\n                .labels()\n                .create(userId=\"me\", body={\"name\": label_name})\n                .execute()\n            )\n            label_id = label[\"id\"]\n        return label_id\n\n    def _get_label_id(self, service, label_name: str) -> str | None:\n        results = service.users().labels().list(userId=\"me\").execute()\n        labels = results.get(\"labels\", [])\n        for label in labels:\n            if label[\"name\"] == label_name:\n                return label[\"id\"]\n        return None\n\n\nclass GmailRemoveLabelBlock(Block):\n    class Input(BlockSchema):\n        credentials: GoogleCredentialsInput = GoogleCredentialsField(\n            [\"https://www.googleapis.com/auth/gmail.modify\"]\n        )\n        message_id: str = SchemaField(\n            description=\"Message ID to remove label from\",\n        )\n        label_name: str = SchemaField(\n            description=\"Label name to remove\",\n        )\n\n    class Output(BlockSchema):\n        result: dict = SchemaField(\n            description=\"Label removal result\",\n        )\n        error: str = SchemaField(\n            description=\"Error message if any\",\n        )\n\n    def __init__(self):\n        super().__init__(\n            id=\"0afc0526-aba1-4b2b-888e-a22b7c3f359d\",\n            description=\"This block removes a label from a Gmail message.\",\n            categories={BlockCategory.COMMUNICATION},\n            input_schema=GmailRemoveLabelBlock.Input,\n            output_schema=GmailRemoveLabelBlock.Output,\n            disabled=not GOOGLE_OAUTH_IS_CONFIGURED,\n            test_input={\n                \"message_id\": \"12345\",\n                \"label_name\": \"Important\",\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[\n                (\n                    \"result\",\n                    {\"status\": \"Label removed successfully\", \"label_id\": \"Label_1\"},\n                ),\n            ],\n            test_mock={\n                \"_remove_label\": lambda *args, **kwargs: {\n                    \"status\": \"Label removed successfully\",\n                    \"label_id\": \"Label_1\",\n                },\n            },\n        )\n\n    def run(\n        self, input_data: Input, *, credentials: GoogleCredentials, **kwargs\n    ) -> BlockOutput:\n        service = GmailReadBlock._build_service(credentials, **kwargs)\n        result = self._remove_label(\n            service, input_data.message_id, input_data.label_name\n        )\n        yield \"result\", result\n\n    def _remove_label(self, service, message_id: str, label_name: str) -> dict:\n        label_id = self._get_label_id(service, label_name)\n        if label_id:\n            service.users().messages().modify(\n                userId=\"me\", id=message_id, body={\"removeLabelIds\": [label_id]}\n            ).execute()\n            return {\"status\": \"Label removed successfully\", \"label_id\": label_id}\n        else:\n            return {\"status\": \"Label not found\", \"label_name\": label_name}\n\n    def _get_label_id(self, service, label_name: str) -> str | None:\n        results = service.users().labels().list(userId=\"me\").execute()\n        labels = results.get(\"labels\", [])\n        for label in labels:\n            if label[\"name\"] == label_name:\n                return label[\"id\"]\n        return None",
+    "children": [
+        {
+            "type": "import_statement",
+            "start_token": 0,
+            "end_token": 1,
+            "label": "import base64",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 3,
+            "end_token": 8,
+            "label": "from email.utils import parseaddr",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 10,
+            "end_token": 13,
+            "label": "from typing import List",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 16,
+            "end_token": 23,
+            "label": "from google.oauth2.credentials import Credentials",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 25,
+            "end_token": 30,
+            "label": "from googleapiclient.discovery import build",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 32,
+            "end_token": 35,
+            "label": "from pydantic import BaseModel",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 38,
+            "end_token": 45,
+            "label": "from backend.data.block import Block",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 47,
+            "end_token": 49,
+            "label": "BlockCategory, BlockOutput",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 51,
+            "end_token": 52,
+            "label": "BlockSchema\n",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 53,
+            "end_token": 60,
+            "label": "from backend.data.model import SchemaField",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 63,
+            "end_token": 87,
+            "label": "from ._auth import (\n    GOOGLE_OAUTH_IS_CONFIGURED,\n    TEST_CREDENTIALS,\n    TEST_CREDENTIALS_INPUT,\n    GoogleCredentials,\n    GoogleCredentialsField,\n    GoogleCredentialsInput,\n)",
+            "children": []
+        },
+        {
+            "type": "class_definition",
+            "start_token": 91,
+            "end_token": 95,
+            "label": "class Attachment(BaseModel)",
+            "children": [
+                {
+                    "type": "attribute",
+                    "start_token": 98,
+                    "end_token": 100,
+                    "label": "filename: str",
+                    "children": []
+                },
+                {
+                    "type": "attribute",
+                    "start_token": 102,
+                    "end_token": 104,
+                    "label": "content_type: str",
+                    "children": []
+                },
+                {
+                    "type": "attribute",
+                    "start_token": 106,
+                    "end_token": 108,
+                    "label": "size: int",
+                    "children": []
+                },
+                {
+                    "type": "attribute",
+                    "start_token": 110,
+                    "end_token": 112,
+                    "label": "attachment_id: str",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "class_definition",
+            "start_token": 116,
+            "end_token": 170,
+            "label": "class Email(BaseModel):\n    id: str\n    subject: str\n    snippet: str\n    from_: str\n    to: str\n    date: str\n    body: str = \"\"  # Default to an empty string\n    sizeEstimate: int\n    attachments: List[Attachment]\n\n",
+            "children": [
+                {
+                    "type": "attribute",
+                    "start_token": 123,
+                    "end_token": 125,
+                    "label": "id: str",
+                    "children": []
+                },
+                {
+                    "type": "attribute",
+                    "start_token": 127,
+                    "end_token": 129,
+                    "label": "subject: str",
+                    "children": []
+                },
+                {
+                    "type": "attribute",
+                    "start_token": 131,
+                    "end_token": 133,
+                    "label": "snippet: str",
+                    "children": []
+                },
+                {
+                    "type": "attribute",
+                    "start_token": 135,
+                    "end_token": 137,
+                    "label": "from_: str",
+                    "children": []
+                },
+                {
+                    "type": "attribute",
+                    "start_token": 139,
+                    "end_token": 141,
+                    "label": "to: str",
+                    "children": []
+                },
+                {
+                    "type": "attribute",
+                    "start_token": 143,
+                    "end_token": 145,
+                    "label": "date: str",
+                    "children": []
+                },
+                {
+                    "type": "attribute",
+                    "start_token": 147,
+                    "end_token": 151,
+                    "label": "body: str = \"\"",
+                    "children": []
+                },
+                {
+                    "type": "attribute",
+                    "start_token": 159,
+                    "end_token": 161,
+                    "label": "sizeEstimate: int",
+                    "children": []
+                },
+                {
+                    "type": "attribute",
+                    "start_token": 163,
+                    "end_token": 169,
+                    "label": "attachments: List[Attachment]\n",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "class_definition",
+            "start_token": 172,
+            "end_token": 3241,
+            "label": "class GmailReadBlock(Block):\n    class Input(BlockSchema):\n        credentials: GoogleCredentialsInput = GoogleCredentialsField(\n            [\"https://www.googleapis.com/auth/gmail.readonly\"]\n        )\n        query: str = SchemaField(\n            description=\"Search query for reading emails\",\n            default=\"is:unread\",\n        )\n        max_results: int = SchemaField(\n            description=\"Maximum number of emails to retrieve\",\n            default=10,\n        )\n\n    class Output(BlockSchema):\n        email: Email = SchemaField(\n            description=\"Email data\",\n        )\n        emails: list[Email] = SchemaField(\n            description=\"List of email data\",\n        )\n        error: str = SchemaField(\n            description=\"Error message if any\",\n        )\n\n    def __init__(self):\n        super().__init__(\n            id=\"25310c70-b89b-43ba-b25c-4dfa7e2a481c\",\n            description=\"This block reads emails from Gmail.\",\n            categories={BlockCategory.COMMUNICATION},\n            disabled=not GOOGLE_OAUTH_IS_CONFIGURED,\n            input_schema=GmailReadBlock.Input,\n            output_schema=GmailReadBlock.Output,\n            test_input={\n                \"query\": \"is:unread\",\n                \"max_results\": 5,\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[\n                (\n                    \"email\",\n                    {\n                        \"id\": \"1\",\n                        \"subject\": \"Test Email\",\n                        \"snippet\": \"This is a test email\",\n                        \"from_\": \"test@example.com\",\n                        \"to\": \"recipient@example.com\",\n                        \"date\": \"2024-01-01\",\n                        \"body\": \"This is a test email\",\n                        \"sizeEstimate\": 100,\n                        \"attachments\": [],\n                    },\n                ),\n                (\n                    \"emails\",\n                    [\n                        {\n                            \"id\": \"1\",\n                            \"subject\": \"Test Email\",\n                            \"snippet\": \"This is a test email\",\n                            \"from_\": \"test@example.com\",\n                            \"to\": \"recipient@example.com\",\n                            \"date\": \"2024-01-01\",\n                            \"body\": \"This is a test email\",\n                            \"sizeEstimate\": 100,\n                            \"attachments\": [],\n                        }\n                    ],\n                ),\n            ],\n            test_mock={\n                \"_read_emails\": lambda *args, **kwargs: [\n                    {\n                        \"id\": \"1\",\n                        \"subject\": \"Test Email\",\n                        \"snippet\": \"This is a test email\",\n                        \"from_\": \"test@example.com\",\n                        \"to\": \"recipient@example.com\",\n                        \"date\": \"2024-01-01\",\n                        \"body\": \"This is a test email\",\n                        \"sizeEstimate\": 100,\n                        \"attachments\": [],\n                    }\n                ],\n                \"_send_email\": lambda *args, **kwargs: {\"id\": \"1\", \"status\": \"sent\"},\n            },\n        )\n\n    def run(\n        self, input_data: Input, *, credentials: GoogleCredentials, **kwargs\n    ) -> BlockOutput:\n        service = self._build_service(credentials, **kwargs)\n        messages = self._read_emails(service, input_data.query, input_data.max_results)\n        for email in messages:\n            yield \"email\", email\n        yield \"emails\", messages\n\n    @staticmethod\n    def _build_service(credentials: GoogleCredentials, **kwargs):\n        creds = Credentials(\n            token=(\n                credentials.access_token.get_secret_value()\n                if credentials.access_token\n                else None\n            ),\n            refresh_token=(\n                credentials.refresh_token.get_secret_value()\n                if credentials.refresh_token\n                else None\n            ),\n            token_uri=\"https://oauth2.googleapis.com/token\",\n            client_id=kwargs.get(\"client_id\"),\n            client_secret=kwargs.get(\"client_secret\"),\n            scopes=credentials.scopes,\n        )\n        return build(\"gmail\", \"v1\", credentials=creds)\n\n    def _read_emails(\n        self, service, query: str | None, max_results: int | None\n    ) -> list[Email]:\n        results = (\n            service.users()\n            .messages()\n            .list(userId=\"me\", q=query or \"\", maxResults=max_results or 10)\n            .execute()\n        )\n        messages = results.get(\"messages\", [])\n\n        email_data = []\n        for message in messages:\n            msg = (\n                service.users()\n                .messages()\n                .get(userId=\"me\", id=message[\"id\"], format=\"full\")\n                .execute()\n            )\n\n            headers = {\n                header[\"name\"].lower(): header[\"value\"]\n                for header in msg[\"payload\"][\"headers\"]\n            }\n\n            attachments = self._get_attachments(service, msg)\n\n            email = Email(\n                id=msg[\"id\"],\n                subject=headers.get(\"subject\", \"No Subject\"),\n                snippet=msg[\"snippet\"],\n                from_=parseaddr(headers.get(\"from\", \"\"))[1],\n                to=parseaddr(headers.get(\"to\", \"\"))[1],\n                date=headers.get(\"date\", \"\"),\n                body=self._get_email_body(msg),\n                sizeEstimate=msg[\"sizeEstimate\"],\n                attachments=attachments,\n            )\n            email_data.append(email)\n\n        return email_data\n\n    def _get_email_body(self, msg):\n        if \"parts\" in msg[\"payload\"]:\n            for part in msg[\"payload\"][\"parts\"]:\n                if part[\"mimeType\"] == \"text/plain\":\n                    return base64.urlsafe_b64decode(part[\"body\"][\"data\"]).decode(\n                        \"utf-8\"\n                    )\n        elif msg[\"payload\"][\"mimeType\"] == \"text/plain\":\n            return base64.urlsafe_b64decode(msg[\"payload\"][\"body\"][\"data\"]).decode(\n                \"utf-8\"\n            )\n\n        return \"This email does not contain a text body.\"\n\n    def _get_attachments(self, service, message):\n        attachments = []\n        if \"parts\" in message[\"payload\"]:\n            for part in message[\"payload\"][\"parts\"]:\n                if part[\"filename\"]:\n                    attachment = Attachment(\n                        filename=part[\"filename\"],\n                        content_type=part[\"mimeType\"],\n                        size=int(part[\"body\"].get(\"size\", 0)),\n                        attachment_id=part[\"body\"][\"attachmentId\"],\n                    )\n                    attachments.append(attachment)\n        return attachments\n\n    # Add a new method to download attachment content\n    def download_attachment(self, service, message_id: str, attachment_id: str):\n        attachment = (\n            service.users()\n            .messages()\n            .attachments()\n            .get(userId=\"me\", messageId=message_id, id=attachment_id)\n            .execute()\n        )\n        file_data = base64.urlsafe_b64decode(attachment[\"data\"].encode(\"UTF-8\"))\n        return file_data\n\n\nclass GmailSendBlock(Block):\n    class Input(BlockSchema):\n        credentials: GoogleCredentialsInput = GoogleCredentialsField(\n            [\"https://www.googleapis.com/auth/gmail.send\"]\n        )\n        to: str = SchemaField(\n            description=\"Recipient email address\",\n        )\n        subject: str = SchemaField(\n            description=\"Email subject\",\n        )\n        body: str = SchemaField(\n            description=\"Email body\",\n        )\n\n    class Output(BlockSchema):\n        result: dict = SchemaField(\n            description=\"Send confirmation\",\n        )\n        error: str = SchemaField(\n            description=\"Error message if any\",\n        )\n\n    def __init__(self):\n        super().__init__(\n            id=\"6c27abc2-e51d-499e-a85f-5a0041ba94f0\",\n            description=\"This block sends an email using Gmail.\",\n            categories={BlockCategory.COMMUNICATION},\n            input_schema=GmailSendBlock.Input,\n            output_schema=GmailSendBlock.Output,\n            disabled=not GOOGLE_OAUTH_IS_CONFIGURED,\n            test_input={\n                \"to\": \"recipient@example.com\",\n                \"subject\": \"Test Email\",\n                \"body\": \"This is a test email sent from GmailSendBlock.\",\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[\n                (\"result\", {\"id\": \"1\", \"status\": \"sent\"}),\n            ],\n            test_mock={\n                \"_send_email\": lambda *args, **kwargs: {\"id\": \"1\", \"status\": \"sent\"},\n            },\n        )\n\n    def run(\n        self, input_data: Input, *, credentials: GoogleCredentials, **kwargs\n    ) -> BlockOutput:\n        service = GmailReadBlock._build_service(credentials, **kwargs)\n        send_result = self._send_email(\n            service, input_data.to, input_data.subject, input_data.body\n        )\n        yield \"result\", send_result\n\n    def _send_email(self, service, to: str, subject: str, body: str) -> dict:\n        if not to or not subject or not body:\n            raise ValueError(\"To, subject, and body are required for sending an email\")\n        message = self._create_message(to, subject, body)\n        sent_message = (\n            service.users().messages().send(userId=\"me\", body=message).execute()\n        )\n        return {\"id\": sent_message[\"id\"], \"status\": \"sent\"}\n\n    def _create_message(self, to: str, subject: str, body: str) -> dict:\n        import base64\n        from email.mime.text import MIMEText\n\n        message = MIMEText(body)\n        message[\"to\"] = to\n        message[\"subject\"] = subject\n        raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode(\"utf-8\")\n        return {\"raw\": raw_message}\n\n\nclass GmailListLabelsBlock(Block):\n    class Input(BlockSchema):\n        credentials: GoogleCredentialsInput = GoogleCredentialsField(\n            [\"https://www.googleapis.com/auth/gmail.labels\"]\n        )\n\n    class Output(BlockSchema):\n        result: list[dict] = SchemaField(\n            description=\"List of labels\",\n        )\n        error: str = SchemaField(\n            description=\"Error message if any\",\n        )\n\n    def __init__(self):\n        super().__init__(\n            id=\"3e1c2c1c-c689-4520-b956-1f3bf4e02bb7\",\n            description=\"This block lists all labels in Gmail.\",\n            categories={BlockCategory.COMMUNICATION},\n            input_schema=GmailListLabelsBlock.Input,\n            output_schema=GmailListLabelsBlock.Output,\n            disabled=not GOOGLE_OAUTH_IS_CONFIGURED,\n            test_input={\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[\n                (\n                    \"result\",\n                    [\n                        {\"id\": \"Label_1\", \"name\": \"Important\"},\n                        {\"id\": \"Label_2\", \"name\": \"Work\"},\n                    ],\n                ),\n            ],\n            test_mock={\n                \"_list_labels\": lambda *args, **kwargs: [\n                    {\"id\": \"Label_1\", \"name\": \"Important\"},\n                    {\"id\": \"Label_2\", \"name\": \"Work\"},\n                ],\n            },\n        )\n\n    def run(\n        self, input_data: Input, *, credentials: GoogleCredentials, **kwargs\n    ) -> BlockOutput:\n        service = GmailReadBlock._build_service(credentials, **kwargs)\n        labels = self._list_labels(service)\n        yield \"result\", labels\n\n    def _list_labels(self, service) -> list[dict]:\n        results = service.users().labels().list(userId=\"me\").execute()\n        labels = results.get(\"labels\", [])\n        return [{\"id\": label[\"id\"], \"name\": label[\"name\"]} for label in labels]\n\n\nclass GmailAddLabelBlock(Block):\n    class Input(BlockSchema):\n        credentials: GoogleCredentialsInput = GoogleCredentialsField(\n            [\"https://www.googleapis.com/auth/gmail.modify\"]\n        )\n        message_id: str = SchemaField(\n            description=\"Message ID to add label to\",\n        )\n        label_name: str = SchemaField(\n            description=\"Label name to add\",\n        )\n\n    class Output(BlockSchema):\n        result: dict = SchemaField(\n            description=\"Label addition result\",\n        )\n        error: str = SchemaField(\n            description=\"Error message if any\",\n        )\n\n    def __init__(self):\n        super().__init__(\n            id=\"f884b2fb-04f4-4265-9658-14f433926ac9\",\n            description=\"This block adds a label to a Gmail message.\",\n            categories={BlockCategory.COMMUNICATION},\n            input_schema=GmailAddLabelBlock.Input,\n            output_schema=GmailAddLabelBlock.Output,\n            disabled=not GOOGLE_OAUTH_IS_CONFIGURED,\n            test_input={\n                \"message_id\": \"12345\",\n                \"label_name\": \"Important\",\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[\n                (\n                    \"result\",\n                    {\"status\": \"Label added successfully\", \"label_id\": \"Label_1\"},\n                ),\n            ],\n            test_mock={\n                \"_add_label\": lambda *args, **kwargs: {\n                    \"status\": \"Label added successfully\",\n                    \"label_id\": \"Label_1\",\n                },\n            },\n        )\n\n    def run(\n        self, input_data: Input, *, credentials: GoogleCredentials, **kwargs\n    ) -> BlockOutput:\n        service = GmailReadBlock._build_service(credentials, **kwargs)\n        result = self._add_label(service, input_data.message_id, input_data.label_name)\n        yield \"result\", result\n\n    def _add_label(self, service, message_id: str, label_name: str) -> dict:\n        label_id = self._get_or_create_label(service, label_name)\n        service.users().messages().modify(\n            userId=\"me\", id=message_id, body={\"addLabelIds\": [label_id]}\n        ).execute()\n        return {\"status\": \"Label added successfully\", \"label_id\": label_id}\n\n    def _get_or_create_label(self, service, label_name: str) -> str:\n        label_id = self._get_label_id(service, label_name)\n        if not label_id:\n            label = (\n                service.users()\n                .labels()\n                .create(userId=\"me\", body={\"name\": label_name})\n                .execute()\n            )\n            label_id = label[\"id\"]\n        return label_id\n\n    def _get_label_id(self, service, label_name: str) -> str | None:\n        results = service.users().labels().list(userId=\"me\").execute()\n        labels = results.get(\"labels\", [])\n        for label in labels:\n            if label[\"name\"] == label_name:\n                return label[\"id\"]\n        return None\n\n\nclass GmailRemoveLabelBlock(Block):\n    class Input(BlockSchema):\n        credentials: GoogleCredentialsInput = GoogleCredentialsField(\n            [\"https://www.googleapis.com/auth/gmail.modify\"]\n        )\n        message_id: str = SchemaField(\n            description=\"Message ID to remove label from\",\n        )\n        label_name: str = SchemaField(\n            description=\"Label name to remove\",\n        )\n\n    class Output(BlockSchema):\n        result: dict = SchemaField(\n            description=\"Label removal result\",\n        )\n        error: str = SchemaField(\n            description=\"Error message if any\",\n        )\n\n    def __init__(self):\n        super().__init__(\n            id=\"0afc0526-aba1-4b2b-888e-a22b7c3f359d\",\n            description=\"This block removes a label from a Gmail message.\",\n            categories={BlockCategory.COMMUNICATION},\n            input_schema=GmailRemoveLabelBlock.Input,\n            output_schema=GmailRemoveLabelBlock.Output,\n            disabled=not GOOGLE_OAUTH_IS_CONFIGURED,\n            test_input={\n                \"message_id\": \"12345\",\n                \"label_name\": \"Important\",\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[\n                (\n                    \"result\",\n                    {\"status\": \"Label removed successfully\", \"label_id\": \"Label_1\"},\n                ),\n            ],\n            test_mock={\n                \"_remove_label\": lambda *args, **kwargs: {\n                    \"status\": \"Label removed successfully\",\n                    \"label_id\": \"Label_1\",\n                },\n            },\n        )\n\n    def run(\n        self, input_data: Input, *, credentials: GoogleCredentials, **kwargs\n    ) -> BlockOutput:\n        service = GmailReadBlock._build_service(credentials, **kwargs)\n        result = self._remove_label(\n            service, input_data.message_id, input_data.label_name\n        )\n        yield \"result\", result\n\n    def _remove_label(self, service, message_id: str, label_name: str) -> dict:\n        label_id = self._get_label_id(service, label_name)\n        if label_id:\n            service.users().messages().modify(\n                userId=\"me\", id=message_id, body={\"removeLabelIds\": [label_id]}\n            ).execute()\n            return {\"status\": \"Label removed successfully\", \"label_id\": label_id}\n        else:\n            return {\"status\": \"Label not found\", \"label_name\": label_name}\n\n    def _get_label_id(self, service, label_name: str) -> str | None:\n        results = service.users().labels().list(userId=\"me\").execute()\n        labels = results.get(\"labels\", [])\n        for label in labels:\n            if label[\"name\"] == label_name:\n                return label[\"id\"]\n        return None",
+            "children": [
+                {
+                    "type": "class_definition",
+                    "start_token": 179,
+                    "end_token": 217,
+                    "label": "class Input(BlockSchema):\n        credentials: GoogleCredentialsInput = GoogleCredentialsField(\n            [\"https://www.googleapis.com/auth/gmail.readonly\"]\n        )\n        query: str = SchemaField(\n            description=\"Search query for reading emails\",\n            default=\"is:unread\",\n        )\n",
+                    "children": [
+                        {
+                            "type": "attribute",
+                            "start_token": 186,
+                            "end_token": 189,
+                            "label": "credentials: GoogleCredentialsInput =",
+                            "children": []
+                        },
+                        {
+                            "type": "attribute",
+                            "start_token": 199,
+                            "end_token": 216,
+                            "label": "query: str = SchemaField(\n            description=\"Search query for reading emails\",\n            default=\"is:unread\",\n        )",
+                            "children": []
+                        },
+                        {
+                            "type": "attribute",
+                            "start_token": 218,
+                            "end_token": 235,
+                            "label": "max_results: int = SchemaField(\n            description=\"Maximum number of emails to retrieve\",\n            default=10,\n        )",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "class_definition",
+                    "start_token": 238,
+                    "end_token": 288,
+                    "label": "class Output(BlockSchema):\n        email: Email = SchemaField(\n            description=\"Email data\",\n        )\n        emails: list[Email] = SchemaField(\n            description=\"List of email data\",\n        )\n        error: str = SchemaField(\n            description=\"Error message if any\",\n        )",
+                    "children": [
+                        {
+                            "type": "attribute",
+                            "start_token": 245,
+                            "end_token": 257,
+                            "label": "email: Email = SchemaField(\n            description=\"Email data\",\n        )",
+                            "children": []
+                        },
+                        {
+                            "type": "attribute",
+                            "start_token": 259,
+                            "end_token": 274,
+                            "label": "emails: list[Email] = SchemaField(\n            description=\"List of email data\",\n        )",
+                            "children": []
+                        },
+                        {
+                            "type": "attribute",
+                            "start_token": 276,
+                            "end_token": 288,
+                            "label": "error: str = SchemaField(\n            description=\"Error message if any\",\n        )",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "function_definition",
+                    "start_token": 291,
+                    "end_token": 593,
+                    "label": "def __init__(self):\n        super().__init__(\n            id=\"25310c70-b89b-43ba-b25c-4dfa7e2a481c\",\n            description=\"This block reads emails from Gmail.\",\n            categories={BlockCategory.COMMUNICATION},\n            disabled=not GOOGLE_OAUTH_IS_CONFIGURED,\n            input_schema=GmailReadBlock.Input,\n            output_schema=GmailReadBlock.Output,\n            test_input={\n                \"query\": \"is:unread\",\n                \"max_results\": 5,\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n            },\n            test_credentials=TEST_CREDENTIALS,\n            test_output=[\n                (\n                    \"email\",\n                    {\n                        \"id\": \"1\",\n                        \"subject\": \"Test Email\",\n                        \"snippet\": \"This is a test email\",\n                        \"from_\": \"test@example.com\",\n                        \"to\": \"recipient@example.com\",\n                        \"date\": \"2024-01-01\",\n                        \"body\": \"This is a test email\",\n                        \"sizeEstimate\": 100,\n                        \"attachments\": [],\n                    },\n                ),\n                (\n                    \"emails\",\n                    [\n                        {\n                            \"id\": \"1\",\n                            \"subject\": \"Test Email\",\n                            \"snippet\": \"This is a test email\",\n                            \"from_\": \"test@example.com\",\n                            \"to\": \"recipient@example.com\",\n                            \"date\": \"2024-01-01\",\n                            \"body\": \"This is a test email\",\n                            \"sizeEstimate\": 100,\n                            \"attachments\": [],\n                        }\n                    ],\n                ),\n            ],\n            test_mock={\n                \"_read_emails\": lambda *args, **kwargs: [\n                    {\n                        \"id\": \"1\",\n                        \"subject\": \"Test Email\",\n                        \"snippet\": \"This is a test email\",\n                        \"from_\": \"test@example.com\",\n                        \"to\": \"recipient@example.com\",\n                        \"date\": \"2024-01-01\",\n                        \"body\": \"This is a test email\",\n                        \"sizeEstimate\": 100,\n                        \"attachments\": [],\n                    }\n                ],\n                \"_send_email\": lambda *args, **kwargs: {\"id\": \"1\", \"status\": \"sent\"},\n            },\n        )",
+                    "children": [
+                        {
+                            "type": "expression_statement",
+                            "start_token": 305,
+                            "end_token": 369,
+                            "label": "id=\"25310c70-b89b-43ba-b25c-4dfa7e2a481c\",\n            description=\"This block reads emails from Gmail.\",\n            categories={BlockCategory.COMMUNICATION},\n            disabled=not GOOGLE_OAUTH_IS_CONFIGURED,\n            input_schema=GmailReadBlock.Input,\n            output_schema=GmailReadBlock.Output,\n            test_input={\n                \"query\": \"is:unread\",\n                \"max_results\": 5,\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n            },\n            test_credentials=TEST_CREDENTIALS,",
+                            "children": [
+                                {
+                                    "type": "attribute",
+                                    "start_token": 305,
+                                    "end_token": 369,
+                                    "label": "id=\"25310c70-b89b-43ba-b25c-4dfa7e2a481c\",\n            description=\"This block reads emails from Gmail.\",\n            categories={BlockCategory.COMMUNICATION},\n            disabled=not GOOGLE_OAUTH_IS_CONFIGURED,\n            input_schema=GmailReadBlock.Input,\n            output_schema=GmailReadBlock.Output,\n            test_input={\n                \"query\": \"is:unread\",\n                \"max_results\": 5,\n                \"credentials\": TEST_CREDENTIALS_INPUT,\n            },\n            test_credentials=TEST_CREDENTIALS,",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "expression_statement",
+                            "start_token": 371,
+                            "end_token": 497,
+                            "label": "test_output=[\n                (\n                    \"email\",\n                    {\n                        \"id\": \"1\",\n                        \"subject\": \"Test Email\",\n                        \"snippet\": \"This is a test email\",\n                        \"from_\": \"test@example.com\",\n                        \"to\": \"recipient@example.com\",\n                        \"date\": \"2024-01-01\",\n                        \"body\": \"This is a test email\",\n                        \"sizeEstimate\": 100,\n                        \"attachments\": [],\n                    },\n                ),\n                (\n                    \"emails\",\n                    [\n                        {\n                            \"id\": \"1\",\n                            \"subject\": \"Test Email\",\n                            \"snippet\": \"This is a test email\",\n                            \"from_\": \"test@example.com\",\n                            \"to\": \"recipient@example.com\",\n                            \"date\": \"2024-01-01\",\n                            \"body\": \"This is a test email\",\n                            \"sizeEstimate\": 100,\n                            \"attachments\": [],\n                        }\n                    ],\n                ),\n            ]",
+                            "children": [
+                                {
+                                    "type": "attribute",
+                                    "start_token": 371,
+                                    "end_token": 497,
+                                    "label": "test_output=[\n                (\n                    \"email\",\n                    {\n                        \"id\": \"1\",\n                        \"subject\": \"Test Email\",\n                        \"snippet\": \"This is a test email\",\n                        \"from_\": \"test@example.com\",\n                        \"to\": \"recipient@example.com\",\n                        \"date\": \"2024-01-01\",\n                        \"body\": \"This is a test email\",\n                        \"sizeEstimate\": 100,\n                        \"attachments\": [],\n                    },\n                ),\n                (\n                    \"emails\",\n                    [\n                        {\n                            \"id\": \"1\",\n                            \"subject\": \"Test Email\",\n                            \"snippet\": \"This is a test email\",\n                            \"from_\": \"test@example.com\",\n                            \"to\": \"recipient@example.com\",\n                            \"date\": \"2024-01-01\",\n                            \"body\": \"This is a test email\",\n                            \"sizeEstimate\": 100,\n                            \"attachments\": [],\n                        }\n                    ],\n                ),\n            ]",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "expression_statement",
+                            "start_token": 500,
+                            "end_token": 589,
+                            "label": "test_mock={\n                \"_read_emails\": lambda *args, **kwargs: [\n                    {\n                        \"id\": \"1\",\n                        \"subject\": \"Test Email\",\n                        \"snippet\": \"This is a test email\",\n                        \"from_\": \"test@example.com\",\n                        \"to\": \"recipient@example.com\",\n                        \"date\": \"2024-01-01\",\n                        \"body\": \"This is a test email\",\n                        \"sizeEstimate\": 100,\n                        \"attachments\": [],\n                    }\n                ],\n                \"_send_email\": lambda *args, **kwargs: {\"id\": \"1\", \"status\": \"sent\"},\n",
+                            "children": [
+                                {
+                                    "type": "attribute",
+                                    "start_token": 500,
+                                    "end_token": 589,
+                                    "label": "test_mock={\n                \"_read_emails\": lambda *args, **kwargs: [\n                    {\n                        \"id\": \"1\",\n                        \"subject\": \"Test Email\",\n                        \"snippet\": \"This is a test email\",\n                        \"from_\": \"test@example.com\",\n                        \"to\": \"recipient@example.com\",\n                        \"date\": \"2024-01-01\",\n                        \"body\": \"This is a test email\",\n                        \"sizeEstimate\": 100,\n                        \"attachments\": [],\n                    }\n                ],\n                \"_send_email\": lambda *args, **kwargs: {\"id\": \"1\", \"status\": \"sent\"},\n",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "type": "function_definition",
+                    "start_token": 596,
+                    "end_token": 667,
+                    "label": "def run(\n        self, input_data: Input, *, credentials: GoogleCredentials, **kwargs\n    ) -> BlockOutput:\n        service = self._build_service(credentials, **kwargs)\n        messages = self._read_emails(service, input_data.query, input_data.max_results)\n        for email in messages:\n            yield \"email\", email\n        yield \"emails\", messages\n",
+                    "children": [
+                        {
+                            "type": "expression_statement",
+                            "start_token": 660,
+                            "end_token": 667,
+                            "label": ", email\n        yield \"emails\", messages\n",
+                            "children": [
+                                {
+                                    "type": "attribute",
+                                    "start_token": 660,
+                                    "end_token": 667,
+                                    "label": ", email\n        yield \"emails\", messages\n",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "type": "decorator_list",
+                    "start_token": 669,
+                    "end_token": 671,
+                    "label": "@staticmethod\n",
+                    "children": [
+                        {
+                            "type": "decorator",
+                            "start_token": 669,
+                            "end_token": 671,
+                            "label": "@staticmethod\n",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "function_definition",
+                    "start_token": 673,
+                    "end_token": 813,
+                    "label": "_build_service(credentials: GoogleCredentials, **kwargs):\n        creds = Credentials(\n            token=(\n                credentials.access_token.get_secret_value()\n                if credentials.access_token\n                else None\n            ),\n            refresh_token=(\n                credentials.refresh_token.get_secret_value()\n                if credentials.refresh_token\n                else None\n            ),\n            token_uri=\"https://oauth2.googleapis.com/token\",\n            client_id=kwargs.get(\"client_id\"),\n            client_secret=kwargs.get(\"client_secret\"),\n            scopes=credentials.scopes,\n        )\n        return build(\"gmail\", \"v1\", credentials=creds)\n\n    def _read_emails(\n        self, service, query: str | None, max_results: int | None\n    ) -> list[Email]:\n        results =",
+                    "children": [
+                        {
+                            "type": "expression_statement",
+                            "start_token": 724,
+                            "end_token": 732,
+                            "label": "\n                if credentials.refresh_token\n                else None\n",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "decorator_list",
+                    "start_token": 826,
+                    "end_token": 828,
+                    "label": "\n            .list",
+                    "children": [
+                        {
+                            "type": "decorator",
+                            "start_token": 826,
+                            "end_token": 828,
+                            "label": "\n            .list",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "function_definition",
+                    "start_token": 830,
+                    "end_token": 182,
+                    "label": "",
+                    "children": [
+                        {
+                            "type": "expression_statement",
+                            "start_token": 909,
+                            "end_token": 1160,
+                            "label": "\"full\")\n                .execute()\n            )\n\n            headers = {\n                header[\"name\"].lower(): header[\"value\"]\n                for header in msg[\"payload\"][\"headers\"]\n            }\n\n            attachments = self._get_attachments(service, msg)\n\n            email = Email(\n                id=msg[\"id\"],\n                subject=headers.get(\"subject\", \"No Subject\"),\n                snippet=msg[\"snippet\"],\n                from_=parseaddr(headers.get(\"from\", \"\"))[1],\n                to=parseaddr(headers.get(\"to\", \"\"))[1],\n                date=headers.get(\"date\", \"\"),\n                body=self._get_email_body(msg),\n                sizeEstimate=msg[\"sizeEstimate\"],\n                attachments=attachments,\n            )\n            email_data.append(email)\n\n        return email_data\n\n    def _get_email_body(self, msg):\n        if \"parts\" in msg[\"payload\"]:\n            for part in msg[\"payload\"][\"parts\"]:\n                if part[\"mimeType\"] == \"text/plain\":\n                    return base64.urlsafe_b64decode(part[\"body\"][\"data\"]).decode(\n                        \"utf-8\"\n                    )\n        elif msg[\"payload\"][\"mimeType\"] == \"text/plain\":\n            return base64.urlsafe_b64decode(",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

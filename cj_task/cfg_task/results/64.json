@@ -1,0 +1,26 @@
+{
+  "edge_analysis": {
+    "static_total": 0,
+    "llm_total": 6,
+    "matched_edges": {
+      "exact_matches": 0,
+      "partial_matches": 0
+    },
+    "accuracy_metrics": {
+      "precision": 0,
+      "recall": 0,
+      "f1_score": 0
+    }
+  },
+  "structure_validation": {
+    "missing_blocks": [],
+    "extra_blocks": [
+      "Edge 0: [Source] func parseType(oriType: String, pointerCount: String): Tokens {\\nif (oriType == \"char\" && pointerCount.count(\"*\") == 1) {\\n return Tokens() + Token(TokenKind.IDENTIFIER, \"CString\")\\n } => [Target] var outType = Tokens()\\nif (typeMap.contains(oriType)) {\\noutType += Token(typeMap[oriType])\\n} else {",
+      "Edge 1: [Source] var outType = Tokens()\\nif (typeMap.contains(oriType)) {\\noutType += Token(typeMap[oriType])\\n} else { => [Target] outType += Token(TokenKind.UNIT)\\n}",
+      "Edge 2: [Source] outType += Token(TokenKind.UNIT)\\n} => [Target] for (_ in 0..pointerCount.count(\"*\")) {\\n outType = quote(CPointer<$(outType)>)\\n }",
+      "Edge 3: [Source] for (_ in 0..pointerCount.count(\"*\")) {\\n outType = quote(CPointer<$(outType)>)\\n } => [Target] return outType\\n}",
+      "Edge 4: [Source] func parseDotH(dotH: String): Tokens {\\n var outTokens = Tokens()\\n let file = File(dotH, Read)\\n let reader = StringReader(file)\\n var content = reader.readToEnd() //StringReader\u7684\u5206\u6bb5\u8bfb\u53d6\u672a\u89e3\u51b3\uff0c\u6682\u65f6\u76f4\u63a5\u5168\u90e8\u8bfb\u5b8c\\n let commentRegex = Regex(##\"/\\*.*\\*/|//.*(\\n|\\r)|\\*/|/\\*|\\*{2}\\s.*(\\n|\\r)\"##) //\u79fb\u9664\u6ce8\u91ca\\n content = commentRegex\\n .matcher(content)\\n .replaceAll(\"\")\\n .replace(\"void(*)(void*)\", \"void*\")\\n .replace(\"int (*callback)(void*,int,char**,char**)\", \"void *\")\\n let funcRegex = Regex(##\"\\w+\\s+\\**\\w+\\s*\\([^)]*\\)\\s*;\"##) //\u83b7\u5f97\u51fd\u6570\u5b9a\u4e49\u7684\u5339\u914d\\n let funcArr = funcRegex.matcher(content).findAll() ?? Array<MatchData>()\\n for (i in funcArr) {\\nvar funcDefine = i.matchStr()\\nlet funcDefineArray = funcDefine.split(\"(\")\\nlet funcPrefix = funcDefineArray[0].split(\" \")\\nvar funcReturn = Tokens() => [Target] if (typeMap.contains(funcPrefix[0])) {\\n funcReturn += Token(typeMap[funcPrefix[0]])\\n}else{\\n funcReturn += Token(TokenKind.UNIT)\\n}\\nvar funcName = funcPrefix[1]\\nif (funcName.contains(\"*\")) { //\u5224\u65ad\u662f\u5426\u53ef\u80fd\u4e3a\u5b57\u7b26\u4e32\\n funcName = funcName.replace(\"*\", \"\")\\n if (funcPrefix[0] == \"char\") {\\n funcReturn = quote(CString)\\n } else {\\n funcReturn = quote(CPointer<Byte>)\\n }\\n}",
+      "Edge 5: [Source] if (typeMap.contains(funcPrefix[0])) {\\n funcReturn += Token(typeMap[funcPrefix[0]])\\n}else{\\n funcReturn += Token(TokenKind.UNIT)\\n}\\nvar funcName = funcPrefix[1]\\nif (funcName contains(\"*\")) { //\u5224\u65ad\u662f\u5426\u53ef\u80fd\u4e3a\u5b57\u7b26\u4e32\\n funcName = funcName.replace(\"*\", \"\")\\n if (funcPrefix[0] == \"char\") {\\n funcReturn = quote(CString)\\n } else {\\n funcReturn = quote(CPointer<Byte>)\\n }\\n} => [Target] let paramListStr = funcDefineArray[1]\\nlet paramRegex = Regex(##\"(\\w+\\s*\\**|\\w+\\s+\\**\\w+|\\.{3})(\\s*,|\\s*\\))\"##) //\u5339\u914d\u5230\u53c2\u6570\u5217\u8868\\nlet paramMatchList = paramRegex.matcher(paramListStr).findAll() ?? Array<MatchData>()\\nlet paramList = Array<String>(paramMatchList.size,\\n {i => Regex(##\"\\s*,|\\s*\\)|\\n|\\r\"##).matcher(paramMatchList[i].matchStr()).replace(\"\")}) //\u79fb\u9664\u7279\u6b8a\u5b57\u7b26\u5e76\u5b58\u5165\u6570\u7ec4\\nvar paramsToken = Tokens()\\nfor (i in 0..paramList.size) {\\n println(\"${funcName}\\n${paramList}\\n${\"void\" == paramList[i]}\")\\n if (let Some(_) <- Regex(##\"\\w+\\s+\\**\\w+\"##).matches(paramList[i])) { //\u5904\u7406\u8bf8\u5982int n\u7684\u51fd\u6570\u53c2\u6570\\n let paramSplit = paramList[i].split(\" \")\\n let type_u = paramSplit[0].replace(\"*\", \"\")\\n let paramToken = Token(TokenKind.IDENTIFIER, paramSplit[1].replace(\"*\", \"\").replace(\"type\",\"type${i}\"))\\n let typeToken = parseType(type_u, paramList[i])\\n paramsToken += quote($(paramToken): $(typeToken))\\n } else if (\"void\" == paramList[i]) { //\u5904\u7406\u8bf8\u5982void\u7684\u51fd\u6570\u53c2\u6570\\n continue\\n } else if (let Some(_) <- Regex(##\"\\w+\\s*\\**\"##).matches(paramList[i])) { // \u5904\u7406\u8bf8\u5982int*\u7684\u51fd\u6570\u53c2\u6570\\n let type_u = paramList[i].replace(\"*\", \"\")\\n let paramToken = Token(TokenKind.IDENTIFIER, \"param${i}\")\\n let typeToken = parseType(type_u, paramList[i])\\n paramsToken += quote($(paramToken): $(typeToken))\\n } else if (let Some(_) <- Regex(##\"\\.{3}|va_list\"##).matches(paramList[i])) { //\u5904\u7406\u8bf8\u5982...\u7684\u51fd\u6570\u53c2\u6570\\n paramsToken += Token(TokenKind.ELLIPSIS)\\n } else {\\n println(\"unknown param:${paramList[i]}\")\\n }\\n if (i != paramList.size - 1) {\\n paramsToken += Token(TokenKind.COMMA)\\n }\\n}\\nlet nameToken = Token(TokenKind.IDENTIFIER, funcName)\\noutTokens += quote(foreign func $(nameToken)($(paramsToken)): $(funcReturn)\\n)\\nfile.close()\\noutTokens"
+    ]
+  }
+}

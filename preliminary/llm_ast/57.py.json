@@ -1,0 +1,533 @@
+{
+    "type": "module",
+    "code": null,
+    "children": [
+        {
+            "type": "import_statement",
+            "code": "import logging",
+            "children": []
+        },
+        {
+            "type": "from_import_statement",
+            "code": "from contextlib import contextmanager",
+            "children": []
+        },
+        {
+            "type": "from_import_statement",
+            "code": "from datetime import datetime",
+            "children": []
+        },
+        {
+            "type": "from_import_statement",
+            "code": "from typing import TYPE_CHECKING",
+            "children": []
+        },
+        {
+            "type": "from_import_statement",
+            "code": "from autogpt_libs.utils.synchronize import RedisKeyedMutex",
+            "children": []
+        },
+        {
+            "type": "import_statement",
+            "code": "from redis.lock import Lock as RedisLock",
+            "children": []
+        },
+        {
+            "type": "from_import_statement",
+            "code": "from backend.data import redis",
+            "children": []
+        },
+        {
+            "type": "from_import_statement",
+            "code": "from backend.data.model import Credentials",
+            "children": []
+        },
+        {
+            "type": "from_import_statement",
+            "code": "from backend.integrations.credentials_store import IntegrationCredentialsStore",
+            "children": []
+        },
+        {
+            "type": "from_import_statement",
+            "code": "from backend.integrations.oauth import HANDLERS_BY_NAME",
+            "children": []
+        },
+        {
+            "type": "from_import_statement",
+            "code": "from backend.util.exceptions import MissingConfigError",
+            "children": []
+        },
+        {
+            "type": "from_import_statement",
+            "code": "from backend.util.settings import Settings",
+            "children": []
+        },
+        {
+            "type": "if_statement",
+            "code": "if TYPE_CHECKING:",
+            "children": [
+                {
+                    "type": "from_import_statement",
+                    "code": "from backend.integrations.oauth import BaseOAuthHandler",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "expression_statement",
+            "code": "logger = logging.getLogger(__name__)",
+            "children": []
+        },
+        {
+            "type": "expression_statement",
+            "code": "settings = Settings()",
+            "children": []
+        },
+        {
+            "type": "class_definition",
+            "code": "class IntegrationCredentialsManager:",
+            "children": [
+                {
+                    "type": "block",
+                    "code": null,
+                    "children": [
+                        {
+                            "type": "expression_statement",
+                            "code": "\"\"\"\nHandles the lifecycle of integration credentials.\n- Automatically refreshes requested credentials if needed.\n- Uses locking mechanisms to ensure system-wide consistency and\n  prevent invalidation of in-use tokens.\n\n### ⚠️ Gotcha\nWith `acquire(..)`, credentials can only be in use in one place at a time (e.g. one\nblock execution).\n\n### Locking mechanism\n- Because *getting* credentials can result in a refresh (= *invalidation* +\n  *replacement*) of the stored credentials, *getting* is an operation that\n  potentially requires read/write access.\n- Checking whether a token has to be refreshed is subject to an additional `refresh`\n  scoped lock to prevent unnecessary sequential refreshes when multiple executions\n  try to access the same credentials simultaneously.\n- We MUST lock credentials while in use to prevent them from being invalidated while\n  they are in use, e.g. because they are being refreshed by a different part\n  of the system.\n- The `!time_sensitive` lock in `acquire(..)` is part of a two-tier locking\n  mechanism in which *updating* gets priority over *getting* credentials.\n  This is to prevent a long queue of waiting *get* requests from blocking essential\n  credential refreshes or user-initiated updates.\n\nIt is possible to implement a reader/writer locking system where either multiple\nreaders or a single writer can have simultaneous access, but this would add a lot of\ncomplexity to the mechanism. I don't expect the current (\"simple\") mechanism to\ncause so much latency that it's worth implementing.\n\"\"\"",
+                            "children": []
+                        },
+                        {
+                            "type": "function_definition",
+                            "code": "def __init__(self):",
+                            "children": [
+                                {
+                                    "type": "block",
+                                    "code": null,
+                                    "children": [
+                                        {
+                                            "type": "assignment",
+                                            "code": "redis_conn = redis.get_redis()",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "assignment",
+                                            "code": "self._locks = RedisKeyedMutex(redis_conn)",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "assignment",
+                                            "code": "self.store = IntegrationCredentialsStore()",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "function_definition",
+                            "code": "def create(self, user_id: str, credentials: Credentials) -> None:",
+                            "children": [
+                                {
+                                    "type": "block",
+                                    "code": null,
+                                    "children": [
+                                        {
+                                            "type": "return_statement",
+                                            "code": "return self.store.add_creds(user_id, credentials)",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "function_definition",
+                            "code": "def exists(self, user_id: str, credentials_id: str) -> bool:",
+                            "children": [
+                                {
+                                    "type": "block",
+                                    "code": null,
+                                    "children": [
+                                        {
+                                            "type": "return_statement",
+                                            "code": "return self.store.get_creds_by_id(user_id, credentials_id) is not None",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "function_definition",
+                            "code": "def get(self, user_id: str, credentials_id: str, lock: bool = True) -> Credentials | None:",
+                            "children": [
+                                {
+                                    "type": "block",
+                                    "code": null,
+                                    "children": [
+                                        {
+                                            "type": "assignment",
+                                            "code": "credentials = self.store.get_creds_by_id(user_id, credentials_id)",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "if_statement",
+                                            "code": "if not credentials:",
+                                            "children": [
+                                                {
+                                                    "type": "return_statement",
+                                                    "code": "return None",
+                                                    "children": []
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "if_statement",
+                                            "code": "if credentials.type == \"oauth2\" and credentials.access_token_expires_at:",
+                                            "children": [
+                                                {
+                                                    "type": "expression_statement",
+                                                    "code": "logger.debug(f\"Credentials #{credentials.id} expire at {datetime.fromtimestamp(credentials.access_token_expires_at)}; current time is {datetime.now()}\")",
+                                                    "children": []
+                                                },
+                                                {
+                                                    "type": "with_statement",
+                                                    "code": "with self._locked(user_id, credentials_id, \"refresh\"):",
+                                                    "children": [
+                                                        {
+                                                            "type": "block",
+                                                            "code": null,
+                                                            "children": [
+                                                                {
+                                                                    "type": "assignment",
+                                                                    "code": "oauth_handler = _get_provider_oauth_handler(credentials.provider)",
+                                                                    "children": []
+                                                                },
+                                                                {
+                                                                    "type": "if_statement",
+                                                                    "code": "if oauth_handler.needs_refresh(credentials):",
+                                                                    "children": [
+                                                                        {
+                                                                            "type": "expression_statement",
+                                                                            "code": "logger.debug(f\"Refreshing '{credentials.provider}' credentials #{credentials.id}\")",
+                                                                            "children": []
+                                                                        },
+                                                                        {
+                                                                            "type": "assignment",
+                                                                            "code": "_lock = None",
+                                                                            "children": []
+                                                                        },
+                                                                        {
+                                                                            "type": "if_statement",
+                                                                            "code": "if lock:",
+                                                                            "children": [
+                                                                                {
+                                                                                    "type": "assignment",
+                                                                                    "code": "_lock = self._acquire_lock(user_id, credentials_id)",
+                                                                                    "children": []
+                                                                                }
+                                                                            ]
+                                                                        },
+                                                                        {
+                                                                            "type": "assignment",
+                                                                            "code": "fresh_credentials = oauth_handler.refresh_tokens(credentials)",
+                                                                            "children": []
+                                                                        },
+                                                                        {
+                                                                            "type": "expression_statement",
+                                                                            "code": "self.store.update_creds(user_id, fresh_credentials)",
+                                                                            "children": []
+                                                                        },
+                                                                        {
+                                                                            "type": "if_statement",
+                                                                            "code": "if _lock and _lock.locked():",
+                                                                            "children": [
+                                                                                {
+                                                                                    "type": "expression_statement",
+                                                                                    "code": "_lock.release()",
+                                                                                    "children": []
+                                                                                }
+                                                                            ]
+                                                                        },
+                                                                        {
+                                                                            "type": "assignment",
+                                                                            "code": "credentials = fresh_credentials",
+                                                                            "children": []
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "else_clause",
+                                            "code": "else:",
+                                            "children": [
+                                                {
+                                                    "type": "expression_statement",
+                                                    "code": "logger.debug(f\"Credentials #{credentials.id} never expire\")",
+                                                    "children": []
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "return_statement",
+                                            "code": "return credentials",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "function_definition",
+                            "code": "def acquire(self, user_id: str, credentials_id: str) -> tuple[Credentials, RedisLock]:",
+                            "children": [
+                                {
+                                    "type": "block",
+                                    "code": null,
+                                    "children": [
+                                        {
+                                            "type": "expression_statement",
+                                            "code": "with self._locked(user_id, credentials_id, \"!time_sensitive\"):",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "assignment",
+                                            "code": "lock = self._acquire_lock(user_id, credentials_id)",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "assignment",
+                                            "code": "credentials = self.get(user_id, credentials_id, lock=False)",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "if_statement",
+                                            "code": "if not credentials:",
+                                            "children": [
+                                                {
+                                                    "type": "raise_statement",
+                                                    "code": "raise ValueError(f\"Credentials #{credentials_id} for user #{user_id} not found\")",
+                                                    "children": []
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "return_statement",
+                                            "code": "return credentials, lock",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "function_definition",
+                            "code": "def update(self, user_id: str, updated: Credentials) -> None:",
+                            "children": [
+                                {
+                                    "type": "block",
+                                    "code": null,
+                                    "children": [
+                                        {
+                                            "type": "with_statement",
+                                            "code": "with self._locked(user_id, updated.id):",
+                                            "children": [
+                                                {
+                                                    "type": "expression_statement",
+                                                    "code": "self.store.update_creds(user_id, updated)",
+                                                    "children": []
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "function_definition",
+                            "code": "def delete(self, user_id: str, credentials_id: str) -> None:",
+                            "children": [
+                                {
+                                    "type": "block",
+                                    "code": null,
+                                    "children": [
+                                        {
+                                            "type": "with_statement",
+                                            "code": "with self._locked(user_id, credentials_id):",
+                                            "children": [
+                                                {
+                                                    "type": "expression_statement",
+                                                    "code": "self.store.delete_creds_by_id(user_id, credentials_id)",
+                                                    "children": []
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "function_definition",
+                            "code": "def _acquire_lock(self, user_id: str, credentials_id: str, *args: str) -> RedisLock:",
+                            "children": [
+                                {
+                                    "type": "block",
+                                    "code": null,
+                                    "children": [
+                                        {
+                                            "type": "assignment",
+                                            "code": "key = (f\"user:{user_id}\", f\"credentials:{credentials_id}\", *args)",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "return_statement",
+                                            "code": "return self._locks.acquire(key)",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "function_definition",
+                            "code": "@contextmanager\ndef _locked(self, user_id: str, credentials_id: str, *args: str):",
+                            "children": [
+                                {
+                                    "type": "block",
+                                    "code": null,
+                                    "children": [
+                                        {
+                                            "type": "assignment",
+                                            "code": "lock = self._acquire_lock(user_id, credentials_id, *args)",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "try_statement",
+                                            "code": "try:",
+                                            "children": [
+                                                {
+                                                    "type": "block",
+                                                    "code": null,
+                                                    "children": [
+                                                        {
+                                                            "type": "yield_statement",
+                                                            "code": "yield",
+                                                            "children": []
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "finally_clause",
+                                            "code": "finally:",
+                                            "children": [
+                                                {
+                                                    "type": "if_statement",
+                                                    "code": "if lock.locked():",
+                                                    "children": [
+                                                        {
+                                                            "type": "expression_statement",
+                                                            "code": "lock.release()",
+                                                            "children": []
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "function_definition",
+                            "code": "def release_all_locks(self):",
+                            "children": [
+                                {
+                                    "type": "block",
+                                    "code": null,
+                                    "children": [
+                                        {
+                                            "type": "expression_statement",
+                                            "code": "self._locks.release_all_locks()",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "expression_statement",
+                                            "code": "self.store.locks.release_all_locks()",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "code": "def _get_provider_oauth_handler(provider_name: str) -> \"BaseOAuthHandler\":",
+            "children": [
+                {
+                    "type": "block",
+                    "code": null,
+                    "children": [
+                        {
+                            "type": "if_statement",
+                            "code": "if provider_name not in HANDLERS_BY_NAME:",
+                            "children": [
+                                {
+                                    "type": "raise_statement",
+                                    "code": "raise KeyError(f\"Unknown provider '{provider_name}'\")",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "assignment",
+                            "code": "client_id = getattr(settings.secrets, f\"{provider_name}_client_id\")",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "code": "client_secret = getattr(settings.secrets, f\"{provider_name}_client_secret\")",
+                            "children": []
+                        },
+                        {
+                            "type": "if_statement",
+                            "code": "if not (client_id and client_secret):",
+                            "children": [
+                                {
+                                    "type": "raise_statement",
+                                    "code": "raise MissingConfigError(f\"Integration with provider '{provider_name}' is not configured\")",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "assignment",
+                            "code": "handler_class = HANDLERS_BY_NAME[provider_name]",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "code": "frontend_base_url = (settings.config.frontend_base_url or settings.config.platform_base_url)",
+                            "children": []
+                        },
+                        {
+                            "type": "return_statement",
+                            "code": "return handler_class(client_id=client_id, client_secret=client_secret, redirect_uri=f\"{frontend_base_url}/auth/integrations/oauth_callback\")",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

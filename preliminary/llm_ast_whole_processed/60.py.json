@@ -1,0 +1,625 @@
+{
+    "type": "module",
+    "start_token": 0,
+    "end_token": 1988,
+    "label": "import json\nimport os\nfrom enum import Enum\nfrom typing import Any, Dict, Generic, List, Set, Tuple, Type, TypeVar\n\nfrom pydantic import BaseModel, Field, PrivateAttr, ValidationInfo, field_validator\nfrom pydantic_settings import (\n    BaseSettings,\n    JsonConfigSettingsSource,\n    PydanticBaseSettingsSource,\n    SettingsConfigDict,\n)\n\nfrom backend.util.data import get_data_path\n\nT = TypeVar(\"T\", bound=BaseSettings)\n\n\nclass AppEnvironment(str, Enum):\n    LOCAL = \"local\"\n    DEVELOPMENT = \"dev\"\n    PRODUCTION = \"prod\"\n\n\nclass BehaveAs(str, Enum):\n    LOCAL = \"local\"\n    CLOUD = \"cloud\"\n\n\nclass UpdateTrackingModel(BaseModel, Generic[T]):\n    _updated_fields: Set[str] = PrivateAttr(default_factory=set)\n\n    def __setattr__(self, name: str, value) -> None:\n        if name in self.model_fields:\n            self._updated_fields.add(name)\n        super().__setattr__(name, value)\n\n    def mark_updated(self, field_name: str) -> None:\n        if field_name in self.model_fields:\n            self._updated_fields.add(field_name)\n\n    def clear_updates(self) -> None:\n        self._updated_fields.clear()\n\n    def get_updates(self) -> Dict[str, Any]:\n        return {field: getattr(self, field) for field in self._updated_fields}\n\n    @property\n    def updated_fields(self):\n        return self._updated_fields\n\n\nclass Config(UpdateTrackingModel[\"Config\"], BaseSettings):\n    \"\"\"Config for the server.\"\"\"\n\n    num_graph_workers: int = Field(\n        default=10,\n        ge=1,\n        le=1000,\n        description=\"Maximum number of workers to use for graph execution.\",\n    )\n    num_node_workers: int = Field(\n        default=5,\n        ge=1,\n        le=1000,\n        description=\"Maximum number of workers to use for node execution within a single graph.\",\n    )\n    pyro_host: str = Field(\n        default=\"localhost\",\n        description=\"The default hostname of the Pyro server.\",\n    )\n    pyro_client_comm_timeout: float = Field(\n        default=15,\n        description=\"The default timeout in seconds, for Pyro client connections.\",\n    )\n    pyro_client_comm_retry: int = Field(\n        default=3,\n        description=\"The default number of retries for Pyro client connections.\",\n    )\n    enable_auth: bool = Field(\n        default=True,\n        description=\"If authentication is enabled or not\",\n    )\n    enable_credit: str = Field(\n        default=\"false\",\n        description=\"If user credit system is enabled or not\",\n    )\n    num_user_credits_refill: int = Field(\n        default=1500,\n        description=\"Number of credits to refill for each user\",\n    )\n    # Add more configuration fields as needed\n\n    model_config = SettingsConfigDict(\n        env_file=\".env\",\n        extra=\"allow\",\n    )\n\n    websocket_server_host: str = Field(\n        default=\"0.0.0.0\",\n        description=\"The host for the websocket server to run on\",\n    )\n\n    websocket_server_port: int = Field(\n        default=8001,\n        description=\"The port for the websocket server to run on\",\n    )\n\n    execution_manager_port: int = Field(\n        default=8002,\n        description=\"The port for execution manager daemon to run on\",\n    )\n\n    execution_scheduler_port: int = Field(\n        default=8003,\n        description=\"The port for execution scheduler daemon to run on\",\n    )\n\n    agent_server_port: int = Field(\n        default=8004,\n        description=\"The port for agent server daemon to run on\",\n    )\n\n    database_api_port: int = Field(\n        default=8005,\n        description=\"The port for database server API to run on\",\n    )\n\n    agent_api_host: str = Field(\n        default=\"0.0.0.0\",\n        description=\"The host for agent server API to run on\",\n    )\n\n    agent_api_port: int = Field(\n        default=8006,\n        description=\"The port for agent server API to run on\",\n    )\n\n    platform_base_url: str = Field(\n        default=\"\",\n        description=\"Must be set so the application knows where it's hosted at. \"\n        \"This is necessary to make sure webhooks find their way.\",\n    )\n\n    frontend_base_url: str = Field(\n        default=\"\",\n        description=\"Can be used to explicitly set the base URL for the frontend. \"\n        \"This value is then used to generate redirect URLs for OAuth flows.\",\n    )\n\n    media_gcs_bucket_name: str = Field(\n        default=\"\",\n        description=\"The name of the Google Cloud Storage bucket for media files\",\n    )\n\n    @field_validator(\"platform_base_url\", \"frontend_base_url\")\n    @classmethod\n    def validate_platform_base_url(cls, v: str, info: ValidationInfo) -> str:\n        if not v:\n            return v\n        if not v.startswith((\"http://\", \"https://\")):\n            raise ValueError(\n                f\"{info.field_name} must be a full URL \"\n                \"including a http:// or https:// schema\"\n            )\n        if v.endswith(\"/\"):\n            return v.rstrip(\"/\")  # Remove trailing slash\n        return v\n\n    app_env: AppEnvironment = Field(\n        default=AppEnvironment.LOCAL,\n        description=\"The name of the app environment: local or dev or prod\",\n    )\n\n    behave_as: BehaveAs = Field(\n        default=BehaveAs.LOCAL,\n        description=\"What environment to behave as: local or cloud\",\n    )\n\n    execution_event_bus_name: str = Field(\n        default=\"execution_event\",\n        description=\"Name of the event bus\",\n    )\n\n    trust_endpoints_for_requests: List[str] = Field(\n        default_factory=list,\n        description=\"A whitelist of trusted internal endpoints for the backend to make requests to.\",\n    )\n\n    backend_cors_allow_origins: List[str] = Field(default_factory=list)\n\n    @field_validator(\"backend_cors_allow_origins\")\n    @classmethod\n    def validate_cors_allow_origins(cls, v: List[str]) -> List[str]:\n        out = []\n        port = None\n        has_localhost = False\n        has_127_0_0_1 = False\n        for url in v:\n            url = url.strip()\n            if url.startswith((\"http://\", \"https://\")):\n                if \"localhost\" in url:\n                    port = url.split(\":\")[2]\n                    has_localhost = True\n                if \"127.0.0.1\" in url:\n                    port = url.split(\":\")[2]\n                    has_127_0_0_1 = True\n                out.append(url)\n            else:\n                raise ValueError(f\"Invalid URL: {url}\")\n\n        if has_127_0_0_1 and not has_localhost:\n            out.append(f\"http://localhost:{port}\")\n        if has_localhost and not has_127_0_0_1:\n            out.append(f\"http://127.0.0.1:{port}\")\n\n        return out\n\n    @classmethod\n    def settings_customise_sources(\n        cls,\n        settings_cls: Type[BaseSettings],\n        init_settings: PydanticBaseSettingsSource,\n        env_settings: PydanticBaseSettingsSource,\n        dotenv_settings: PydanticBaseSettingsSource,\n        file_secret_settings: PydanticBaseSettingsSource,\n    ) -> Tuple[PydanticBaseSettingsSource, ...]:\n        return (\n            env_settings,\n            file_secret_settings,\n            dotenv_settings,\n            JsonConfigSettingsSource(settings_cls),\n            init_settings,\n        )\n\n\nclass Secrets(UpdateTrackingModel[\"Secrets\"], BaseSettings):\n    \"\"\"Secrets for the server.\"\"\"\n\n    supabase_url: str = Field(default=\"\", description=\"Supabase URL\")\n    supabase_service_role_key: str = Field(\n        default=\"\", description=\"Supabase service role key\"\n    )\n\n    encryption_key: str = Field(default=\"\", description=\"Encryption key\")\n\n    # OAuth server credentials for integrations\n    # --8<-- [start:OAuthServerCredentialsExample]\n    github_client_id: str = Field(default=\"\", description=\"GitHub OAuth client ID\")\n    github_client_secret: str = Field(\n        default=\"\", description=\"GitHub OAuth client secret\"\n    )\n    # --8<-- [end:OAuthServerCredentialsExample]\n    google_client_id: str = Field(default=\"\", description=\"Google OAuth client ID\")\n    google_client_secret: str = Field(\n        default=\"\", description=\"Google OAuth client secret\"\n    )\n    notion_client_id: str = Field(default=\"\", description=\"Notion OAuth client ID\")\n    notion_client_secret: str = Field(\n        default=\"\", description=\"Notion OAuth client secret\"\n    )\n\n    openai_api_key: str = Field(default=\"\", description=\"OpenAI API key\")\n    anthropic_api_key: str = Field(default=\"\", description=\"Anthropic API key\")\n    groq_api_key: str = Field(default=\"\", description=\"Groq API key\")\n    open_router_api_key: str = Field(default=\"\", description=\"Open Router API Key\")\n\n    reddit_client_id: str = Field(default=\"\", description=\"Reddit client ID\")\n    reddit_client_secret: str = Field(default=\"\", description=\"Reddit client secret\")\n    reddit_username: str = Field(default=\"\", description=\"Reddit username\")\n    reddit_password: str = Field(default=\"\", description=\"Reddit password\")\n\n    openweathermap_api_key: str = Field(\n        default=\"\", description=\"OpenWeatherMap API key\"\n    )\n\n    medium_api_key: str = Field(default=\"\", description=\"Medium API key\")\n    medium_author_id: str = Field(default=\"\", description=\"Medium author ID\")\n    did_api_key: str = Field(default=\"\", description=\"D-ID API Key\")\n    revid_api_key: str = Field(default=\"\", description=\"revid.ai API key\")\n    discord_bot_token: str = Field(default=\"\", description=\"Discord bot token\")\n\n    smtp_server: str = Field(default=\"\", description=\"SMTP server IP\")\n    smtp_port: str = Field(default=\"\", description=\"SMTP server port\")\n    smtp_username: str = Field(default=\"\", description=\"SMTP username\")\n    smtp_password: str = Field(default=\"\", description=\"SMTP password\")\n\n    sentry_dsn: str = Field(default=\"\", description=\"Sentry DSN\")\n\n    google_maps_api_key: str = Field(default=\"\", description=\"Google Maps API Key\")\n\n    replicate_api_key: str = Field(default=\"\", description=\"Replicate API Key\")\n    unreal_speech_api_key: str = Field(default=\"\", description=\"Unreal Speech API Key\")\n    ideogram_api_key: str = Field(default=\"\", description=\"Ideogram API Key\")\n    jina_api_key: str = Field(default=\"\", description=\"Jina API Key\")\n    unreal_speech_api_key: str = Field(default=\"\", description=\"Unreal Speech API Key\")\n\n    fal_key: str = Field(default=\"\", description=\"FAL API key\")\n\n    # Add more secret fields as needed\n\n    model_config = SettingsConfigDict(\n        env_file=\".env\",\n        env_file_encoding=\"utf-8\",\n        extra=\"allow\",\n    )\n\n\nclass Settings(BaseModel):\n    config: Config = Config()\n    secrets: Secrets = Secrets()\n\n    def save(self) -> None:\n        # Save updated config to JSON file\n        if self.config.updated_fields:\n            config_to_save = self.config.get_updates()\n            config_path = os.path.join(get_data_path(), \"config.json\")\n            if os.path.exists(config_path):\n                with open(config_path, \"r+\") as f:\n                    existing_config: Dict[str, Any] = json.load(f)\n                    existing_config.update(config_to_save)\n                    f.seek(0)\n                    json.dump(existing_config, f, indent=2)\n                    f.truncate()\n            else:\n                with open(config_path, \"w\") as f:\n                    json.dump(config_to_save, f, indent=2)\n            self.config.clear_updates()\n",
+    "children": [
+        {
+            "type": "block",
+            "start_token": 0,
+            "end_token": 1988,
+            "label": "import json\nimport os\nfrom enum import Enum\nfrom typing import Any, Dict, Generic, List, Set, Tuple, Type, TypeVar\n\nfrom pydantic import BaseModel, Field, PrivateAttr, ValidationInfo, field_validator\nfrom pydantic_settings import (\n    BaseSettings,\n    JsonConfigSettingsSource,\n    PydanticBaseSettingsSource,\n    SettingsConfigDict,\n)\n\nfrom backend.util.data import get_data_path\n\nT = TypeVar(\"T\", bound=BaseSettings)\n\n\nclass AppEnvironment(str, Enum):\n    LOCAL = \"local\"\n    DEVELOPMENT = \"dev\"\n    PRODUCTION = \"prod\"\n\n\nclass BehaveAs(str, Enum):\n    LOCAL = \"local\"\n    CLOUD = \"cloud\"\n\n\nclass UpdateTrackingModel(BaseModel, Generic[T]):\n    _updated_fields: Set[str] = PrivateAttr(default_factory=set)\n\n    def __setattr__(self, name: str, value) -> None:\n        if name in self.model_fields:\n            self._updated_fields.add(name)\n        super().__setattr__(name, value)\n\n    def mark_updated(self, field_name: str) -> None:\n        if field_name in self.model_fields:\n            self._updated_fields.add(field_name)\n\n    def clear_updates(self) -> None:\n        self._updated_fields.clear()\n\n    def get_updates(self) -> Dict[str, Any]:\n        return {field: getattr(self, field) for field in self._updated_fields}\n\n    @property\n    def updated_fields(self):\n        return self._updated_fields\n\n\nclass Config(UpdateTrackingModel[\"Config\"], BaseSettings):\n    \"\"\"Config for the server.\"\"\"\n\n    num_graph_workers: int = Field(\n        default=10,\n        ge=1,\n        le=1000,\n        description=\"Maximum number of workers to use for graph execution.\",\n    )\n    num_node_workers: int = Field(\n        default=5,\n        ge=1,\n        le=1000,\n        description=\"Maximum number of workers to use for node execution within a single graph.\",\n    )\n    pyro_host: str = Field(\n        default=\"localhost\",\n        description=\"The default hostname of the Pyro server.\",\n    )\n    pyro_client_comm_timeout: float = Field(\n        default=15,\n        description=\"The default timeout in seconds, for Pyro client connections.\",\n    )\n    pyro_client_comm_retry: int = Field(\n        default=3,\n        description=\"The default number of retries for Pyro client connections.\",\n    )\n    enable_auth: bool = Field(\n        default=True,\n        description=\"If authentication is enabled or not\",\n    )\n    enable_credit: str = Field(\n        default=\"false\",\n        description=\"If user credit system is enabled or not\",\n    )\n    num_user_credits_refill: int = Field(\n        default=1500,\n        description=\"Number of credits to refill for each user\",\n    )\n    # Add more configuration fields as needed\n\n    model_config = SettingsConfigDict(\n        env_file=\".env\",\n        extra=\"allow\",\n    )\n\n    websocket_server_host: str = Field(\n        default=\"0.0.0.0\",\n        description=\"The host for the websocket server to run on\",\n    )\n\n    websocket_server_port: int = Field(\n        default=8001,\n        description=\"The port for the websocket server to run on\",\n    )\n\n    execution_manager_port: int = Field(\n        default=8002,\n        description=\"The port for execution manager daemon to run on\",\n    )\n\n    execution_scheduler_port: int = Field(\n        default=8003,\n        description=\"The port for execution scheduler daemon to run on\",\n    )\n\n    agent_server_port: int = Field(\n        default=8004,\n        description=\"The port for agent server daemon to run on\",\n    )\n\n    database_api_port: int = Field(\n        default=8005,\n        description=\"The port for database server API to run on\",\n    )\n\n    agent_api_host: str = Field(\n        default=\"0.0.0.0\",\n        description=\"The host for agent server API to run on\",\n    )\n\n    agent_api_port: int = Field(\n        default=8006,\n        description=\"The port for agent server API to run on\",\n    )\n\n    platform_base_url: str = Field(\n        default=\"\",\n        description=\"Must be set so the application knows where it's hosted at. \"\n        \"This is necessary to make sure webhooks find their way.\",\n    )\n\n    frontend_base_url: str = Field(\n        default=\"\",\n        description=\"Can be used to explicitly set the base URL for the frontend. \"\n        \"This value is then used to generate redirect URLs for OAuth flows.\",\n    )\n\n    media_gcs_bucket_name: str = Field(\n        default=\"\",\n        description=\"The name of the Google Cloud Storage bucket for media files\",\n    )\n\n    @field_validator(\"platform_base_url\", \"frontend_base_url\")\n    @classmethod\n    def validate_platform_base_url(cls, v: str, info: ValidationInfo) -> str:\n        if not v:\n            return v\n        if not v.startswith((\"http://\", \"https://\")):\n            raise ValueError(\n                f\"{info.field_name} must be a full URL \"\n                \"including a http:// or https:// schema\"\n            )\n        if v.endswith(\"/\"):\n            return v.rstrip(\"/\")  # Remove trailing slash\n        return v\n\n    app_env: AppEnvironment = Field(\n        default=AppEnvironment.LOCAL,\n        description=\"The name of the app environment: local or dev or prod\",\n    )\n\n    behave_as: BehaveAs = Field(\n        default=BehaveAs.LOCAL,\n        description=\"What environment to behave as: local or cloud\",\n    )\n\n    execution_event_bus_name: str = Field(\n        default=\"execution_event\",\n        description=\"Name of the event bus\",\n    )\n\n    trust_endpoints_for_requests: List[str] = Field(\n        default_factory=list,\n        description=\"A whitelist of trusted internal endpoints for the backend to make requests to.\",\n    )\n\n    backend_cors_allow_origins: List[str] = Field(default_factory=list)\n\n    @field_validator(\"backend_cors_allow_origins\")\n    @classmethod\n    def validate_cors_allow_origins(cls, v: List[str]) -> List[str]:\n        out = []\n        port = None\n        has_localhost = False\n        has_127_0_0_1 = False\n        for url in v:\n            url = url.strip()\n            if url.startswith((\"http://\", \"https://\")):\n                if \"localhost\" in url:\n                    port = url.split(\":\")[2]\n                    has_localhost = True\n                if \"127.0.0.1\" in url:\n                    port = url.split(\":\")[2]\n                    has_127_0_0_1 = True\n                out.append(url)\n            else:\n                raise ValueError(f\"Invalid URL: {url}\")\n\n        if has_127_0_0_1 and not has_localhost:\n            out.append(f\"http://localhost:{port}\")\n        if has_localhost and not has_127_0_0_1:\n            out.append(f\"http://127.0.0.1:{port}\")\n\n        return out\n\n    @classmethod\n    def settings_customise_sources(\n        cls,\n        settings_cls: Type[BaseSettings],\n        init_settings: PydanticBaseSettingsSource,\n        env_settings: PydanticBaseSettingsSource,\n        dotenv_settings: PydanticBaseSettingsSource,\n        file_secret_settings: PydanticBaseSettingsSource,\n    ) -> Tuple[PydanticBaseSettingsSource, ...]:\n        return (\n            env_settings,\n            file_secret_settings,\n            dotenv_settings,\n            JsonConfigSettingsSource(settings_cls),\n            init_settings,\n        )\n\n\nclass Secrets(UpdateTrackingModel[\"Secrets\"], BaseSettings):\n    \"\"\"Secrets for the server.\"\"\"\n\n    supabase_url: str = Field(default=\"\", description=\"Supabase URL\")\n    supabase_service_role_key: str = Field(\n        default=\"\", description=\"Supabase service role key\"\n    )\n\n    encryption_key: str = Field(default=\"\", description=\"Encryption key\")\n\n    # OAuth server credentials for integrations\n    # --8<-- [start:OAuthServerCredentialsExample]\n    github_client_id: str = Field(default=\"\", description=\"GitHub OAuth client ID\")\n    github_client_secret: str = Field(\n        default=\"\", description=\"GitHub OAuth client secret\"\n    )\n    # --8<-- [end:OAuthServerCredentialsExample]\n    google_client_id: str = Field(default=\"\", description=\"Google OAuth client ID\")\n    google_client_secret: str = Field(\n        default=\"\", description=\"Google OAuth client secret\"\n    )\n    notion_client_id: str = Field(default=\"\", description=\"Notion OAuth client ID\")\n    notion_client_secret: str = Field(\n        default=\"\", description=\"Notion OAuth client secret\"\n    )\n\n    openai_api_key: str = Field(default=\"\", description=\"OpenAI API key\")\n    anthropic_api_key: str = Field(default=\"\", description=\"Anthropic API key\")\n    groq_api_key: str = Field(default=\"\", description=\"Groq API key\")\n    open_router_api_key: str = Field(default=\"\", description=\"Open Router API Key\")\n\n    reddit_client_id: str = Field(default=\"\", description=\"Reddit client ID\")\n    reddit_client_secret: str = Field(default=\"\", description=\"Reddit client secret\")\n    reddit_username: str = Field(default=\"\", description=\"Reddit username\")\n    reddit_password: str = Field(default=\"\", description=\"Reddit password\")\n\n    openweathermap_api_key: str = Field(\n        default=\"\", description=\"OpenWeatherMap API key\"\n    )\n\n    medium_api_key: str = Field(default=\"\", description=\"Medium API key\")\n    medium_author_id: str = Field(default=\"\", description=\"Medium author ID\")\n    did_api_key: str = Field(default=\"\", description=\"D-ID API Key\")\n    revid_api_key: str = Field(default=\"\", description=\"revid.ai API key\")\n    discord_bot_token: str = Field(default=\"\", description=\"Discord bot token\")\n\n    smtp_server: str = Field(default=\"\", description=\"SMTP server IP\")\n    smtp_port: str = Field(default=\"\", description=\"SMTP server port\")\n    smtp_username: str = Field(default=\"\", description=\"SMTP username\")\n    smtp_password: str = Field(default=\"\", description=\"SMTP password\")\n\n    sentry_dsn: str = Field(default=\"\", description=\"Sentry DSN\")\n\n    google_maps_api_key: str = Field(default=\"\", description=\"Google Maps API Key\")\n\n    replicate_api_key: str = Field(default=\"\", description=\"Replicate API Key\")\n    unreal_speech_api_key: str = Field(default=\"\", description=\"Unreal Speech API Key\")\n    ideogram_api_key: str = Field(default=\"\", description=\"Ideogram API Key\")\n    jina_api_key: str = Field(default=\"\", description=\"Jina API Key\")\n    unreal_speech_api_key: str = Field(default=\"\", description=\"Unreal Speech API Key\")\n\n    fal_key: str = Field(default=\"\", description=\"FAL API key\")\n\n    # Add more secret fields as needed\n\n    model_config = SettingsConfigDict(\n        env_file=\".env\",\n        env_file_encoding=\"utf-8\",\n        extra=\"allow\",\n    )\n\n\nclass Settings(BaseModel):\n    config: Config = Config()\n    secrets: Secrets = Secrets()\n\n    def save(self) -> None:\n        # Save updated config to JSON file\n        if self.config.updated_fields:\n            config_to_save = self.config.get_updates()\n            config_path = os.path.join(get_data_path(), \"config.json\")\n            if os.path.exists(config_path):\n                with open(config_path, \"r+\") as f:\n                    existing_config: Dict[str, Any] = json.load(f)\n                    existing_config.update(config_to_save)\n                    f.seek(0)\n                    json.dump(existing_config, f, indent=2)\n                    f.truncate()\n            else:\n                with open(config_path, \"w\") as f:\n                    json.dump(config_to_save, f, indent=2)\n            self.config.clear_updates()\n",
+            "children": [
+                {
+                    "type": "import_statement",
+                    "start_token": 0,
+                    "end_token": 1,
+                    "label": "import json",
+                    "children": []
+                },
+                {
+                    "type": "import_statement",
+                    "start_token": 3,
+                    "end_token": 4,
+                    "label": "import os",
+                    "children": []
+                },
+                {
+                    "type": "import_from_statement",
+                    "start_token": 6,
+                    "end_token": 9,
+                    "label": "from enum import Enum",
+                    "children": []
+                },
+                {
+                    "type": "import_from_statement",
+                    "start_token": 11,
+                    "end_token": 28,
+                    "label": "from typing import Any, Dict, Generic, List, Set, Tuple, Type, TypeVar",
+                    "children": []
+                },
+                {
+                    "type": "import_from_statement",
+                    "start_token": 31,
+                    "end_token": 42,
+                    "label": "from pydantic import BaseModel, Field, PrivateAttr, ValidationInfo, field_validator",
+                    "children": []
+                },
+                {
+                    "type": "import_from_statement",
+                    "start_token": 44,
+                    "end_token": 61,
+                    "label": "from pydantic_settings import (\n    BaseSettings,\n    JsonConfigSettingsSource,\n    PydanticBaseSettingsSource,\n    SettingsConfigDict,\n)",
+                    "children": [
+                        {
+                            "type": "import_prefix",
+                            "start_token": 44,
+                            "end_token": 46,
+                            "label": "from pydantic_settings import",
+                            "children": []
+                        },
+                        {
+                            "type": "parenthesized_expression",
+                            "start_token": 47,
+                            "end_token": 61,
+                            "label": "(\n    BaseSettings,\n    JsonConfigSettingsSource,\n    PydanticBaseSettingsSource,\n    SettingsConfigDict,\n)",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "import_from_statement",
+                    "start_token": 64,
+                    "end_token": 71,
+                    "label": "from backend.util.data import get_data_path",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "start_token": 74,
+                    "end_token": 83,
+                    "label": "T = TypeVar(\"T\", bound=BaseSettings)",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 74,
+                            "end_token": 74,
+                            "label": "T",
+                            "children": []
+                        },
+                        {
+                            "type": "type",
+                            "start_token": 75,
+                            "end_token": 83,
+                            "label": "= TypeVar(\"T\", bound=BaseSettings)",
+                            "children": [
+                                {
+                                    "type": "identifier",
+                                    "start_token": 76,
+                                    "end_token": 76,
+                                    "label": "TypeVar",
+                                    "children": []
+                                },
+                                {
+                                    "type": "string",
+                                    "start_token": 77,
+                                    "end_token": 79,
+                                    "label": "(\"T\",",
+                                    "children": []
+                                },
+                                {
+                                    "type": "attribute",
+                                    "start_token": 80,
+                                    "end_token": 82,
+                                    "label": "bound=BaseSettings",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "type": "class_definition",
+                    "start_token": 87,
+                    "end_token": 107,
+                    "label": "class AppEnvironment(str, Enum):\n    LOCAL = \"local\"\n    DEVELOPMENT = \"dev\"\n    PRODUCTION = \"prod\"\n",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 88,
+                            "end_token": 92,
+                            "label": "AppEnvironment(str, Enum",
+                            "children": []
+                        },
+                        {
+                            "type": "class_body",
+                            "start_token": 93,
+                            "end_token": 107,
+                            "label": "):\n    LOCAL = \"local\"\n    DEVELOPMENT = \"dev\"\n    PRODUCTION = \"prod\"\n",
+                            "children": [
+                                {
+                                    "type": "assignment",
+                                    "start_token": 96,
+                                    "end_token": 98,
+                                    "label": "LOCAL = \"local\"",
+                                    "children": []
+                                },
+                                {
+                                    "type": "assignment",
+                                    "start_token": 100,
+                                    "end_token": 102,
+                                    "label": "DEVELOPMENT = \"dev\"",
+                                    "children": []
+                                },
+                                {
+                                    "type": "assignment",
+                                    "start_token": 104,
+                                    "end_token": 106,
+                                    "label": "PRODUCTION = \"prod\"",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "type": "class_definition",
+                    "start_token": 110,
+                    "end_token": 125,
+                    "label": "class BehaveAs(str, Enum):\n    LOCAL = \"local\"\n    CLOUD = \"cloud\"",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 111,
+                            "end_token": 115,
+                            "label": "BehaveAs(str, Enum",
+                            "children": []
+                        },
+                        {
+                            "type": "class_body",
+                            "start_token": 116,
+                            "end_token": 125,
+                            "label": "):\n    LOCAL = \"local\"\n    CLOUD = \"cloud\"",
+                            "children": [
+                                {
+                                    "type": "assignment",
+                                    "start_token": 119,
+                                    "end_token": 121,
+                                    "label": "LOCAL = \"local\"",
+                                    "children": []
+                                },
+                                {
+                                    "type": "assignment",
+                                    "start_token": 123,
+                                    "end_token": 125,
+                                    "label": "CLOUD = \"cloud\"",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "type": "class_definition",
+                    "start_token": 129,
+                    "end_token": 299,
+                    "label": "class UpdateTrackingModel(BaseModel, Generic[T]):\n    _updated_fields: Set[str] = PrivateAttr(default_factory=set)\n\n    def __setattr__(self, name: str, value) -> None:\n        if name in self.model_fields:\n            self._updated_fields.add(name)\n        super().__setattr__(name, value)\n\n    def mark_updated(self, field_name: str) -> None:\n        if field_name in self.model_fields:\n            self._updated_fields.add(field_name)\n\n    def clear_updates(self) -> None:\n        self._updated_fields.clear()\n\n    def get_updates(self) -> Dict[str, Any]:\n        return {field: getattr(self, field) for field in self._updated_fields}\n\n    @property\n    def updated_fields(self):\n        return self._updated_fields",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 130,
+                            "end_token": 137,
+                            "label": "UpdateTrackingModel(BaseModel, Generic[T]",
+                            "children": []
+                        },
+                        {
+                            "type": "class_body",
+                            "start_token": 138,
+                            "end_token": 299,
+                            "label": "):\n    _updated_fields: Set[str] = PrivateAttr(default_factory=set)\n\n    def __setattr__(self, name: str, value) -> None:\n        if name in self.model_fields:\n            self._updated_fields.add(name)\n        super().__setattr__(name, value)\n\n    def mark_updated(self, field_name: str) -> None:\n        if field_name in self.model_fields:\n            self._updated_fields.add(field_name)\n\n    def clear_updates(self) -> None:\n        self._updated_fields.clear()\n\n    def get_updates(self) -> Dict[str, Any]:\n        return {field: getattr(self, field) for field in self._updated_fields}\n\n    @property\n    def updated_fields(self):\n        return self._updated_fields",
+                            "children": [
+                                {
+                                    "type": "assignment",
+                                    "start_token": 141,
+                                    "end_token": 153,
+                                    "label": "_updated_fields: Set[str] = PrivateAttr(default_factory=set)",
+                                    "children": [
+                                        {
+                                            "type": "identifier",
+                                            "start_token": 142,
+                                            "end_token": 145,
+                                            "label": ": Set[str",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "attribute",
+                                            "start_token": 148,
+                                            "end_token": 153,
+                                            "label": "PrivateAttr(default_factory=set)",
+                                            "children": []
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "method_definition",
+                                    "start_token": 156,
+                                    "end_token": 220,
+                                    "label": "def __setattr__(self, name: str, value) -> None:\n        if name in self.model_fields:\n            self._updated_fields.add(name)\n        super().__setattr__(name, value)\n\n    def mark_updated(self, field_name: str) -> None:\n        if field_name in self.model_fields",
+                                    "children": [
+                                        {
+                                            "type": "identifier",
+                                            "start_token": 157,
+                                            "end_token": 166,
+                                            "label": "__setattr__(self, name: str, value)",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "parameters",
+                                            "start_token": 167,
+                                            "end_token": 169,
+                                            "label": "-> None",
+                                            "children": [
+                                                {
+                                                    "type": "identifier",
+                                                    "start_token": 161,
+                                                    "end_token": 161,
+                                                    "label": "name",
+                                                    "children": []
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "block",
+                                            "start_token": 170,
+                                            "end_token": 220,
+                                            "label": ":\n        if name in self.model_fields:\n            self._updated_fields.add(name)\n        super().__setattr__(name, value)\n\n    def mark_updated(self, field_name: str) -> None:\n        if field_name in self.model_fields",
+                                            "children": []
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "method_definition",
+                                    "start_token": 201,
+                                    "end_token": 230,
+                                    "label": "def mark_updated(self, field_name: str) -> None:\n        if field_name in self.model_fields:\n            self._updated_fields.add(field_name)",
+                                    "children": [
+                                        {
+                                            "type": "identifier",
+                                            "start_token": 202,
+                                            "end_token": 209,
+                                            "label": "mark_updated(self, field_name: str)",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "parameters",
+                                            "start_token": 210,
+                                            "end_token": 212,
+                                            "label": "-> None",
+                                            "children": [
+                                                {
+                                                    "type": "identifier",
+                                                    "start_token": 205,
+                                                    "end_token": 207,
+                                                    "label": ", field_name:",
+                                                    "children": []
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "block",
+                                            "start_token": 213,
+                                            "end_token": 230,
+                                            "label": ":\n        if field_name in self.model_fields:\n            self._updated_fields.add(field_name)",
+                                            "children": []
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "method_definition",
+                                    "start_token": 233,
+                                    "end_token": 249,
+                                    "label": "def clear_updates(self) -> None:\n        self._updated_fields.clear()",
+                                    "children": [
+                                        {
+                                            "type": "identifier",
+                                            "start_token": 234,
+                                            "end_token": 237,
+                                            "label": "clear_updates(self)",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "parameters",
+                                            "start_token": 238,
+                                            "end_token": 240,
+                                            "label": "-> None",
+                                            "children": [
+                                                {
+                                                    "type": "identifier",
+                                                    "start_token": 236,
+                                                    "end_token": 236,
+                                                    "label": "self",
+                                                    "children": []
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "block",
+                                            "start_token": 241,
+                                            "end_token": 249,
+                                            "label": ":\n        self._updated_fields.clear()",
+                                            "children": []
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "method_definition",
+                                    "start_token": 252,
+                                    "end_token": 283,
+                                    "label": "def get_updates(self) -> Dict[str, Any]:\n        return {field: getattr(self, field) for field in self._updated_fields}",
+                                    "children": [
+                                        {
+                                            "type": "identifier",
+                                            "start_token": 253,
+                                            "end_token": 264,
+                                            "label": "get_updates(self) -> Dict[str, Any]",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "parameters",
+                                            "start_token": 265,
+                                            "end_token": 267,
+                                            "label": ":\n        return",
+                                            "children": [
+                                                {
+                                                    "type": "identifier",
+                                                    "start_token": 256,
+                                                    "end_token": 256,
+                                                    "label": ")",
+                                                    "children": []
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "block",
+                                            "start_token": 268,
+                                            "end_token": 283,
+                                            "label": "{field: getattr(self, field) for field in self._updated_fields}",
+                                            "children": []
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "property",
+                                    "start_token": 286,
+                                    "end_token": 300,
+                                    "label": "@property\n    def updated_fields(self):\n        return self._updated_fields\n",
+                                    "children": [
+                                        {
+                                            "type": "identifier",
+                                            "start_token": 293,
+                                            "end_token": 300,
+                                            "label": "):\n        return self._updated_fields\n",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "type": "class_definition",
+                    "start_token": 303,
+                    "end_token": 517,
+                    "label": "class Config(UpdateTrackingModel[\"Config\"], BaseSettings):\n    \"\"\"Config for the server.\"\"\"\n\n    num_graph_workers: int = Field(\n        default=10,\n        ge=1,\n        le=1000,\n        description=\"Maximum number of workers to use for graph execution.\",\n    )\n    num_node_workers: int = Field(\n        default=5,\n        ge=1,\n        le=1000,\n        description=\"Maximum number of workers to use for node execution within a single graph.\",\n    )\n    pyro_host: str = Field(\n        default=\"localhost\",\n        description=\"The default hostname of the Pyro server.\",\n    )\n    pyro_client_comm_timeout: float = Field(\n        default=15,\n        description=\"The default timeout in seconds, for Pyro client connections.\",\n    )\n    pyro_client_comm_retry: int = Field(\n        default=3,\n        description=\"The default number of retries for Pyro client connections.\",\n    )\n    enable_auth: bool = Field(\n        default=True,\n        description=\"If authentication is enabled or not\",\n    )\n    enable_credit: str = Field(\n        default=\"false\",\n        description=\"If user credit system is enabled or not\",\n    )\n    num_user_credits_refill: int = Field(\n        default=1500,\n        description=\"Number of credits to refill for each user\",\n    )\n    # Add more configuration fields as needed\n\n    model_config = SettingsConfigDict(\n        env_file=\".env\",\n        extra=\"allow\",\n    )\n",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 304,
+                            "end_token": 308,
+                            "label": "Config(UpdateTrackingModel[\"Config\"",
+                            "children": []
+                        },
+                        {
+                            "type": "class_body",
+                            "start_token": 309,
+                            "end_token": 517,
+                            "label": "], BaseSettings):\n    \"\"\"Config for the server.\"\"\"\n\n    num_graph_workers: int = Field(\n        default=10,\n        ge=1,\n        le=1000,\n        description=\"Maximum number of workers to use for graph execution.\",\n    )\n    num_node_workers: int = Field(\n        default=5,\n        ge=1,\n        le=1000,\n        description=\"Maximum number of workers to use for node execution within a single graph.\",\n    )\n    pyro_host: str = Field(\n        default=\"localhost\",\n        description=\"The default hostname of the Pyro server.\",\n    )\n    pyro_client_comm_timeout: float = Field(\n        default=15,\n        description=\"The default timeout in seconds, for Pyro client connections.\",\n    )\n    pyro_client_comm_retry: int = Field(\n        default=3,\n        description=\"The default number of retries for Pyro client connections.\",\n    )\n    enable_auth: bool = Field(\n        default=True,\n        description=\"If authentication is enabled or not\",\n    )\n    enable_credit: str = Field(\n        default=\"false\",\n        description=\"If user credit system is enabled or not\",\n    )\n    num_user_credits_refill: int = Field(\n        default=1500,\n        description=\"Number of credits to refill for each user\",\n    )\n    # Add more configuration fields as needed\n\n    model_config = SettingsConfigDict(\n        env_file=\".env\",\n        extra=\"allow\",\n    )\n",
+                            "children": [
+                                {
+                                    "type": "string",
+                                    "start_token": 315,
+                                    "end_token": 317,
+                                    "label": "\"\"\"Config for the server.\"\"\"",
+                                    "children": []
+                                },
+                                {
+                                    "type": "assignment",
+                                    "start_token": 320,
+                                    "end_token": 488,
+                                    "label": "num_graph_workers: int = Field(\n        default=10,\n        ge=1,\n        le=1000,\n        description=\"Maximum number of workers to use for graph execution.\",\n    )\n    num_node_workers: int = Field(\n        default=5,\n        ge=1,\n        le=1000,\n        description=\"Maximum number of workers to use for node execution within a single graph.\",\n    )\n    pyro_host: str = Field(\n        default=\"localhost\",\n        description=\"The default hostname of the Pyro server.\",\n    )\n    pyro_client_comm_timeout: float = Field(\n        default=15,\n        description=\"The default timeout in seconds, for Pyro client connections.\",\n    )\n    pyro_client_comm_retry: int = Field(\n        default=3,\n        description=\"The default number of retries for Pyro client connections.\",\n    )\n    enable_auth: bool = Field(\n        default=True,\n        description=\"If authentication is enabled or not\",\n    )\n    enable_credit: str = Field(\n        default=\"false\",\n        description=\"If user credit system is enabled or not\",\n    )\n    num_user_credits_refill: int = Field(\n        default=1500,\n        description=\"Number of credits to refill for each user\",",
+                                    "children": [
+                                        {
+                                            "type": "typed_parameter",
+                                            "start_token": 321,
+                                            "end_token": 489,
+                                            "label": ": int = Field(\n        default=10,\n        ge=1,\n        le=1000,\n        description=\"Maximum number of workers to use for graph execution.\",\n    )\n    num_node_workers: int = Field(\n        default=5,\n        ge=1,\n        le=1000,\n        description=\"Maximum number of workers to use for node execution within a single graph.\",\n    )\n    pyro_host: str = Field(\n        default=\"localhost\",\n        description=\"The default hostname of the Pyro server.\",\n    )\n    pyro_client_comm_timeout: float = Field(\n        default=15,\n        description=\"The default timeout in seconds, for Pyro client connections.\",\n    )\n    pyro_client_comm_retry: int = Field(\n        default=3,\n        description=\"The default number of retries for Pyro client connections.\",\n    )\n    enable_auth: bool = Field(\n        default=True,\n        description=\"If authentication is enabled or not\",\n    )\n    enable_credit: str = Field(\n        default=\"false\",\n        description=\"If user credit system is enabled or not\",\n    )\n    num_user_credits_refill: int = Field(\n        default=1500,\n        description=\"Number of credits to refill for each user\",\n",
+                                            "children": [
+                                                {
+                                                    "type": "identifier",
+                                                    "start_token": 323,
+                                                    "end_token": 323,
+                                                    "label": "=",
+                                                    "children": []
+                                                },
+                                                {
+                                                    "type": "type",
+                                                    "start_token": 324,
+                                                    "end_token": 347,
+                                                    "label": "Field(\n        default=10,\n        ge=1,\n        le=1000,\n        description=\"Maximum number of workers to use for graph execution.\",\n    )",
+                                                    "children": []
+                                                },
+                                                {
+                                                    "type": "type_parameters",
+                                                    "start_token": 350,
+                                                    "end_token": 379,
+                                                    "label": ": int = Field(\n        default=5,\n        ge=1,\n        le=1000,\n        description=\"Maximum number of workers to use for node execution within a single graph.\",\n    )\n    pyro_host:",
+                                                    "children": []
+                                                },
+                                                {
+                                                    "type": "type_parameters",
+                                                    "start_token": 383,
+                                                    "end_token": 414,
+                                                    "label": "(\n        default=\"localhost\",\n        description=\"The default hostname of the Pyro server.\",\n    )\n    pyro_client_comm_timeout: float = Field(\n        default=15,\n        description=\"The default timeout in seconds, for Pyro client connections.\",\n    )",
+                                                    "children": []
+                                                },
+                                                {
+                                                    "type": "type_parameters",
+                                                    "start_token": 417,
+                                                    "end_token": 445,
+                                                    "label": ": int = Field(\n        default=3,\n        description=\"The default number of retries for Pyro client connections.\",\n    )\n    enable_auth: bool = Field(\n        default=True,",
+                                                    "children": []
+                                                },
+                                                {
+                                                    "type": "type_parameters",
+                                                    "start_token": 454,
+                                                    "end_token": 469,
+                                                    "label": "enable_credit: str = Field(\n        default=\"false\",\n        description=\"If user credit system is enabled or not\",",
+                                                    "children": []
+                                                },
+                                                {
+                                                    "type": "assignment",
+                                                    "start_token": 473,
+                                                    "end_token": 487,
+                                                    "label": "num_user_credits_refill: int = Field(\n        default=1500,\n        description=\"Number of credits to refill for each user\"",
+                                                    "children": []
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "assignment",
+                                    "start_token": 501,
+                                    "end_token": 516,
+                                    "label": "model_config = SettingsConfigDict(\n        env_file=\".env\",\n        extra=\"allow\",\n    )",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "type": "class_definition",
+                    "start_token": 574,
+                    "end_token": 671,
+                    "label": ",\n    )\n\n    execution_scheduler_port: int = Field(\n        default=8003,\n        description=\"The port for execution scheduler daemon to run on\",\n    )\n\n    agent_server_port: int = Field(\n        default=8004,\n        description=\"The port for agent server daemon to run on\",\n    )\n\n    database_api_port: int = Field(\n        default=8005,\n        description=\"The port for database server API to run on\",\n    )\n\n    agent_api_host: str = Field(\n        default=\"0.0.0.0\",\n        description=\"The host for agent server API to run on\",\n    )\n\n    agent_api_port: int = Field(\n        default=8006,\n        description",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 578,
+                            "end_token": 583,
+                            "label": "\n    execution_scheduler_port: int = Field",
+                            "children": []
+                        },
+                        {
+                            "type": "class_body",
+                            "start_token": 584,
+                            "end_token": 671,
+                            "label": "(\n        default=8003,\n        description=\"The port for execution scheduler daemon to run on\",\n    )\n\n    agent_server_port: int = Field(\n        default=8004,\n        description=\"The port for agent server daemon to run on\",\n    )\n\n    database_api_port: int = Field(\n        default=8005,\n        description=\"The port for database server API to run on\",\n    )\n\n    agent_api_host: str = Field(\n        default=\"0.0.0.0\",\n        description=\"The host for agent server API to run on\",\n    )\n\n    agent_api_port: int = Field(\n        default=8006,\n        description",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "import_from_statement",
+                    "start_token": 809,
+                    "end_token": 880,
+                    "label": "(\"/\"):\n            return v.rstrip(\"/\")  # Remove trailing slash\n        return v\n\n    app_env: AppEnvironment = Field(\n        default=AppEnvironment.LOCAL,\n        description=\"The name of the app environment: local or dev or prod\",\n    )\n\n    behave_as: BehaveAs = Field(\n        default=BehaveAs.LOCAL,\n        description=\"What environment to behave as: local or cloud\",\n    )\n\n    execution_event_bus_name: str = Field(\n",
+                    "children": [
+                        {
+                            "type": "import_prefix",
+                            "start_token": 811,
+                            "end_token": 812,
+                            "label": "):",
+                            "children": []
+                        },
+                        {
+                            "type": "parenthesized_expression",
+                            "start_token": 813,
+                            "end_token": 829,
+                            "label": "\n            return v.rstrip(\"/\")  # Remove trailing slash\n        return v\n\n",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "class_definition",
+                    "start_token": 1015,
+                    "end_token": 1139,
+                    "label": "split(\":\")[2]\n                    has_localhost = True\n                if \"127.0.0.1\" in url:\n                    port = url.split(\":\")[2]\n                    has_127_0_0_1 = True\n                out.append(url)\n            else:\n                raise ValueError(f\"Invalid URL: {url}\")\n\n        if has_127_0_0_1 and not has_localhost:\n            out.append(f\"http://localhost:{port}\")\n        if has_localhost and not has_127_0_0_1:\n            out.append(f\"http://127.0.0.1:{port}\")\n\n        return out\n\n    @classmethod\n    def settings_customise_sources(\n        cls,\n        settings_cls: Type[BaseSettings],\n        init_settings: PydanticBaseSettingsSource,\n        env_settings: PydanticBaseSettingsSource,\n        dotenv_settings: PydanticBaseSettingsSource,\n        file_secret_settings: PydanticBaseSettingsSource,\n",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 1018,
+                            "end_token": 1033,
+                            "label": ")[2]\n                    has_localhost = True\n                if \"127.0.0.1\" in url:\n                    port",
+                            "children": []
+                        },
+                        {
+                            "type": "class_body",
+                            "start_token": 1034,
+                            "end_token": 1139,
+                            "label": "= url.split(\":\")[2]\n                    has_127_0_0_1 = True\n                out.append(url)\n            else:\n                raise ValueError(f\"Invalid URL: {url}\")\n\n        if has_127_0_0_1 and not has_localhost:\n            out.append(f\"http://localhost:{port}\")\n        if has_localhost and not has_127_0_0_1:\n            out.append(f\"http://127.0.0.1:{port}\")\n\n        return out\n\n    @classmethod\n    def settings_customise_sources(\n        cls,\n        settings_cls: Type[BaseSettings],\n        init_settings: PydanticBaseSettingsSource,\n        env_settings: PydanticBaseSettingsSource,\n        dotenv_settings: PydanticBaseSettingsSource,\n        file_secret_settings: PydanticBaseSettingsSource,\n",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "class_definition",
+                    "start_token": 1233,
+                    "end_token": 1489,
+                    "label": "(default=\"\", description=\"Encryption key\")\n\n    # OAuth server credentials for integrations\n    # --8<-- [start:OAuthServerCredentialsExample]\n    github_client_id: str = Field(default=\"\", description=\"GitHub OAuth client ID\")\n    github_client_secret: str = Field(\n        default=\"\", description=\"GitHub OAuth client secret\"\n    )\n    # --8<-- [end:OAuthServerCredentialsExample]\n    google_client_id: str = Field(default=\"\", description=\"Google OAuth client ID\")\n    google_client_secret: str = Field(\n        default=\"\", description=\"Google OAuth client secret\"\n    )\n    notion_client_id: str = Field(default=\"\", description=\"Notion OAuth client ID\")\n    notion_client_secret: str = Field(\n        default=\"\", description=\"Notion OAuth client secret\"\n    )\n\n    openai_api_key: str = Field(default=\"\", description=\"OpenAI API key\")\n    anthropic_api_key: str = Field(default=\"\", description=\"Anthropic API key\")\n    groq_api_key: str = Field(default=\"\", description=\"Groq API key\")\n    open_router_api_key: str = Field(default=\"\", description=\"Open Router API Key\")\n\n    reddit_client_id: str = Field(default=\"\", description=\"Reddit client ID\")\n    reddit_client_secret: str = Field(default=\"\", description=\"Reddit client secret\")\n    reddit_username: str = Field(default=\"\", description=\"Reddit username\")\n    reddit_password: str = Field(default=\"\",",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 1234,
+                            "end_token": 1241,
+                            "label": "default=\"\", description=\"Encryption key\")",
+                            "children": []
+                        },
+                        {
+                            "type": "class_body",
+                            "start_token": 1242,
+                            "end_token": 1489,
+                            "label": "\n\n    # OAuth server credentials for integrations\n    # --8<-- [start:OAuthServerCredentialsExample]\n    github_client_id: str = Field(default=\"\", description=\"GitHub OAuth client ID\")\n    github_client_secret: str = Field(\n        default=\"\", description=\"GitHub OAuth client secret\"\n    )\n    # --8<-- [end:OAuthServerCredentialsExample]\n    google_client_id: str = Field(default=\"\", description=\"Google OAuth client ID\")\n    google_client_secret: str = Field(\n        default=\"\", description=\"Google OAuth client secret\"\n    )\n    notion_client_id: str = Field(default=\"\", description=\"Notion OAuth client ID\")\n    notion_client_secret: str = Field(\n        default=\"\", description=\"Notion OAuth client secret\"\n    )\n\n    openai_api_key: str = Field(default=\"\", description=\"OpenAI API key\")\n    anthropic_api_key: str = Field(default=\"\", description=\"Anthropic API key\")\n    groq_api_key: str = Field(default=\"\", description=\"Groq API key\")\n    open_router_api_key: str = Field(default=\"\", description=\"Open Router API Key\")\n\n    reddit_client_id: str = Field(default=\"\", description=\"Reddit client ID\")\n    reddit_client_secret: str = Field(default=\"\", description=\"Reddit client secret\")\n    reddit_username: str = Field(default=\"\", description=\"Reddit username\")\n    reddit_password: str = Field(default=\"\",",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "class_definition",
+                    "start_token": 1533,
+                    "end_token": 1791,
+                    "label": "Field(default=\"\", description=\"Medium author ID\")\n    did_api_key: str = Field(default=\"\", description=\"D-ID API Key\")\n    revid_api_key: str = Field(default=\"\", description=\"revid.ai API key\")\n    discord_bot_token: str = Field(default=\"\", description=\"Discord bot token\")\n\n    smtp_server: str = Field(default=\"\", description=\"SMTP server IP\")\n    smtp_port: str = Field(default=\"\", description=\"SMTP server port\")\n    smtp_username: str = Field(default=\"\", description=\"SMTP username\")\n    smtp_password: str = Field(default=\"\", description=\"SMTP password\")\n\n    sentry_dsn: str = Field(default=\"\", description=\"Sentry DSN\")\n\n    google_maps_api_key: str = Field(default=\"\", description=\"Google Maps API Key\")\n\n    replicate_api_key: str = Field(default=\"\", description=\"Replicate API Key\")\n    unreal_speech_api_key: str = Field(default=\"\", description=\"Unreal Speech API Key\")\n    ideogram_api_key: str = Field(default=\"\", description=\"Ideogram API Key\")\n    jina_api_key: str = Field(default=\"\", description=\"Jina API Key\")\n    unreal_speech_api_key: str = Field(default=\"\", description=\"Unreal Speech API Key\")\n\n    fal_key: str = Field(default=\"\", description=\"FAL API key\")\n\n    # Add more secret fields as needed\n\n    model_config = SettingsConfigDict(\n        env_file=\".env\"",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 1534,
+                            "end_token": 1540,
+                            "label": "(default=\"\", description=",
+                            "children": []
+                        },
+                        {
+                            "type": "class_body",
+                            "start_token": 1541,
+                            "end_token": 1791,
+                            "label": "\"Medium author ID\")\n    did_api_key: str = Field(default=\"\", description=\"D-ID API Key\")\n    revid_api_key: str = Field(default=\"\", description=\"revid.ai API key\")\n    discord_bot_token: str = Field(default=\"\", description=\"Discord bot token\")\n\n    smtp_server: str = Field(default=\"\", description=\"SMTP server IP\")\n    smtp_port: str = Field(default=\"\", description=\"SMTP server port\")\n    smtp_username: str = Field(default=\"\", description=\"SMTP username\")\n    smtp_password: str = Field(default=\"\", description=\"SMTP password\")\n\n    sentry_dsn: str = Field(default=\"\", description=\"Sentry DSN\")\n\n    google_maps_api_key: str = Field(default=\"\", description=\"Google Maps API Key\")\n\n    replicate_api_key: str = Field(default=\"\", description=\"Replicate API Key\")\n    unreal_speech_api_key: str = Field(default=\"\", description=\"Unreal Speech API Key\")\n    ideogram_api_key: str = Field(default=\"\", description=\"Ideogram API Key\")\n    jina_api_key: str = Field(default=\"\", description=\"Jina API Key\")\n    unreal_speech_api_key: str = Field(default=\"\", description=\"Unreal Speech API Key\")\n\n    fal_key: str = Field(default=\"\", description=\"FAL API key\")\n\n    # Add more secret fields as needed\n\n    model_config = SettingsConfigDict(\n        env_file=\".env\"",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

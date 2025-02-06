@@ -1,0 +1,635 @@
+{
+    "type": "module",
+    "start_token": 0,
+    "end_token": 519,
+    "label": "import logging\n\nimport requests\nfrom fastapi import Request\n\nfrom backend.data import integrations\nfrom backend.data.model import APIKeyCredentials, Credentials\nfrom backend.integrations.providers import ProviderName\nfrom backend.integrations.webhooks._base import BaseWebhooksManager\n\nlogger = logging.getLogger(__name__)\n\n\nclass Slant3DWebhooksManager(BaseWebhooksManager):\n    \"\"\"Manager for Slant3D webhooks\"\"\"\n\n    PROVIDER_NAME = ProviderName.SLANT3D\n    BASE_URL = \"https://www.slant3dapi.com/api\"\n\n    async def _register_webhook(\n        self,\n        credentials: Credentials,\n        webhook_type: str,\n        resource: str,\n        events: list[str],\n        ingress_url: str,\n        secret: str,\n    ) -> tuple[str, dict]:\n        \"\"\"Register a new webhook with Slant3D\"\"\"\n\n        if not isinstance(credentials, APIKeyCredentials):\n            raise ValueError(\"API key is required to register a webhook\")\n\n        headers = {\n            \"api-key\": credentials.api_key.get_secret_value(),\n            \"Content-Type\": \"application/json\",\n        }\n\n        # Slant3D's API doesn't use events list, just register for all order updates\n        payload = {\"endPoint\": ingress_url}\n\n        response = requests.post(\n            f\"{self.BASE_URL}/customer/webhookSubscribe\", headers=headers, json=payload\n        )\n\n        if not response.ok:\n            error = response.json().get(\"error\", \"Unknown error\")\n            raise RuntimeError(f\"Failed to register webhook: {error}\")\n\n        webhook_config = {\n            \"endpoint\": ingress_url,\n            \"provider\": self.PROVIDER_NAME,\n            \"events\": [\"order.shipped\"],  # Currently the only supported event\n            \"type\": webhook_type,\n        }\n\n        return \"\", webhook_config\n\n    @classmethod\n    async def validate_payload(\n        cls, webhook: integrations.Webhook, request: Request\n    ) -> tuple[dict, str]:\n        \"\"\"Validate incoming webhook payload from Slant3D\"\"\"\n\n        payload = await request.json()\n\n        # Validate required fields from Slant3D API spec\n        required_fields = [\"orderId\", \"status\", \"trackingNumber\", \"carrierCode\"]\n        missing_fields = [field for field in required_fields if field not in payload]\n\n        if missing_fields:\n            raise ValueError(f\"Missing required fields: {', '.join(missing_fields)}\")\n\n        # Normalize payload structure\n        normalized_payload = {\n            \"orderId\": payload[\"orderId\"],\n            \"status\": payload[\"status\"],\n            \"trackingNumber\": payload[\"trackingNumber\"],\n            \"carrierCode\": payload[\"carrierCode\"],\n        }\n\n        # Currently Slant3D only sends shipping notifications\n        # Convert status to lowercase for event format compatibility\n        event_type = f\"order.{payload['status'].lower()}\"\n\n        return normalized_payload, event_type\n\n    async def _deregister_webhook(\n        self, webhook: integrations.Webhook, credentials: Credentials\n    ) -> None:\n        \"\"\"\n        Note: Slant3D API currently doesn't provide a deregistration endpoint.\n        This would need to be handled through support.\n        \"\"\"\n        # Log warning since we can't properly deregister\n        logger.warning(\n            f\"Warning: Manual deregistration required for webhook {webhook.id}\"\n        )\n        pass\n",
+    "children": [
+        {
+            "type": "import_statement",
+            "start_token": 0,
+            "end_token": 1,
+            "label": "import logging",
+            "children": []
+        },
+        {
+            "type": "import_statement",
+            "start_token": 4,
+            "end_token": 5,
+            "label": "import requests",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 7,
+            "end_token": 10,
+            "label": "from fastapi import Request",
+            "children": [
+                {
+                    "type": "dotted_name",
+                    "start_token": 8,
+                    "end_token": 8,
+                    "label": "fastapi",
+                    "children": []
+                },
+                {
+                    "type": "identifier",
+                    "start_token": 10,
+                    "end_token": 10,
+                    "label": "Request",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 13,
+            "end_token": 18,
+            "label": "from backend.data import integrations",
+            "children": [
+                {
+                    "type": "dotted_name",
+                    "start_token": 14,
+                    "end_token": 16,
+                    "label": "backend.data",
+                    "children": []
+                },
+                {
+                    "type": "identifier",
+                    "start_token": 18,
+                    "end_token": 18,
+                    "label": "integrations",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 20,
+            "end_token": 29,
+            "label": "from backend.data.model import APIKeyCredentials, Credentials",
+            "children": [
+                {
+                    "type": "dotted_name",
+                    "start_token": 21,
+                    "end_token": 25,
+                    "label": "backend.data.model",
+                    "children": []
+                },
+                {
+                    "type": "identifier",
+                    "start_token": 27,
+                    "end_token": 29,
+                    "label": "APIKeyCredentials, Credentials",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 31,
+            "end_token": 38,
+            "label": "from backend.integrations.providers import ProviderName",
+            "children": [
+                {
+                    "type": "dotted_name",
+                    "start_token": 32,
+                    "end_token": 36,
+                    "label": "backend.integrations.providers",
+                    "children": []
+                },
+                {
+                    "type": "identifier",
+                    "start_token": 38,
+                    "end_token": 38,
+                    "label": "ProviderName",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 40,
+            "end_token": 49,
+            "label": "from backend.integrations.webhooks._base import BaseWebhooksManager",
+            "children": [
+                {
+                    "type": "dotted_name",
+                    "start_token": 41,
+                    "end_token": 47,
+                    "label": "backend.integrations.webhooks._base",
+                    "children": []
+                },
+                {
+                    "type": "identifier",
+                    "start_token": 49,
+                    "end_token": 49,
+                    "label": "BaseWebhooksManager",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "assignment",
+            "start_token": 52,
+            "end_token": 59,
+            "label": "logger = logging.getLogger(__name__)",
+            "children": [
+                {
+                    "type": "attribute",
+                    "start_token": 55,
+                    "end_token": 58,
+                    "label": ".getLogger(__name__",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "class_definition",
+            "start_token": 63,
+            "end_token": 298,
+            "label": "class Slant3DWebhooksManager(BaseWebhooksManager):\n    \"\"\"Manager for Slant3D webhooks\"\"\"\n\n    PROVIDER_NAME = ProviderName.SLANT3D\n    BASE_URL = \"https://www.slant3dapi.com/api\"\n\n    async def _register_webhook(\n        self,\n        credentials: Credentials,\n        webhook_type: str,\n        resource: str,\n        events: list[str],\n        ingress_url: str,\n        secret: str,\n    ) -> tuple[str, dict]:\n        \"\"\"Register a new webhook with Slant3D\"\"\"\n\n        if not isinstance(credentials, APIKeyCredentials):\n            raise ValueError(\"API key is required to register a webhook\")\n\n        headers = {\n            \"api-key\": credentials.api_key.get_secret_value(),\n            \"Content-Type\": \"application/json\",\n        }\n\n        # Slant3D's API doesn't use events list, just register for all order updates\n        payload = {\"endPoint\": ingress_url}\n\n        response = requests.post(\n            f\"{self.BASE_URL}/customer/webhookSubscribe\", headers=headers, json=payload\n        )\n\n        if not response.ok:\n            error = response.json().get(\"error\", \"Unknown error\")\n            raise RuntimeError(f\"Failed to register webhook: {error}\")\n\n        webhook_config = {\n            \"endpoint\": ingress_url,\n            \"provider\": self.PROVIDER_NAME,\n            \"events\": [\"order.shipped\"],  # Currently the only supported event\n            \"type\": webhook_type,\n        }\n\n        return \"\", webhook_config",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 64,
+                    "end_token": 64,
+                    "label": "Slant3DWebhooksManager",
+                    "children": []
+                },
+                {
+                    "type": "block",
+                    "start_token": 68,
+                    "end_token": 298,
+                    "label": ":\n    \"\"\"Manager for Slant3D webhooks\"\"\"\n\n    PROVIDER_NAME = ProviderName.SLANT3D\n    BASE_URL = \"https://www.slant3dapi.com/api\"\n\n    async def _register_webhook(\n        self,\n        credentials: Credentials,\n        webhook_type: str,\n        resource: str,\n        events: list[str],\n        ingress_url: str,\n        secret: str,\n    ) -> tuple[str, dict]:\n        \"\"\"Register a new webhook with Slant3D\"\"\"\n\n        if not isinstance(credentials, APIKeyCredentials):\n            raise ValueError(\"API key is required to register a webhook\")\n\n        headers = {\n            \"api-key\": credentials.api_key.get_secret_value(),\n            \"Content-Type\": \"application/json\",\n        }\n\n        # Slant3D's API doesn't use events list, just register for all order updates\n        payload = {\"endPoint\": ingress_url}\n\n        response = requests.post(\n            f\"{self.BASE_URL}/customer/webhookSubscribe\", headers=headers, json=payload\n        )\n\n        if not response.ok:\n            error = response.json().get(\"error\", \"Unknown error\")\n            raise RuntimeError(f\"Failed to register webhook: {error}\")\n\n        webhook_config = {\n            \"endpoint\": ingress_url,\n            \"provider\": self.PROVIDER_NAME,\n            \"events\": [\"order.shipped\"],  # Currently the only supported event\n            \"type\": webhook_type,\n        }\n\n        return \"\", webhook_config",
+                    "children": [
+                        {
+                            "type": "assignment",
+                            "start_token": 75,
+                            "end_token": 79,
+                            "label": "PROVIDER_NAME = ProviderName.SLANT3D",
+                            "children": [
+                                {
+                                    "type": "attribute",
+                                    "start_token": 78,
+                                    "end_token": 79,
+                                    "label": ".SLANT3D",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 81,
+                            "end_token": 83,
+                            "label": "BASE_URL = \"https://www.slant3dapi.com/api\"",
+                            "children": [
+                                {
+                                    "type": "string",
+                                    "start_token": 83,
+                                    "end_token": 83,
+                                    "label": "\"https://www.slant3dapi.com/api\"",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "function_definition",
+                            "start_token": 86,
+                            "end_token": 299,
+                            "label": "async def _register_webhook(\n        self,\n        credentials: Credentials,\n        webhook_type: str,\n        resource: str,\n        events: list[str],\n        ingress_url: str,\n        secret: str,\n    ) -> tuple[str, dict]:\n        \"\"\"Register a new webhook with Slant3D\"\"\"\n\n        if not isinstance(credentials, APIKeyCredentials):\n            raise ValueError(\"API key is required to register a webhook\")\n\n        headers = {\n            \"api-key\": credentials.api_key.get_secret_value(),\n            \"Content-Type\": \"application/json\",\n        }\n\n        # Slant3D's API doesn't use events list, just register for all order updates\n        payload = {\"endPoint\": ingress_url}\n\n        response = requests.post(\n            f\"{self.BASE_URL}/customer/webhookSubscribe\", headers=headers, json=payload\n        )\n\n        if not response.ok:\n            error = response.json().get(\"error\", \"Unknown error\")\n            raise RuntimeError(f\"Failed to register webhook: {error}\")\n\n        webhook_config = {\n            \"endpoint\": ingress_url,\n            \"provider\": self.PROVIDER_NAME,\n            \"events\": [\"order.shipped\"],  # Currently the only supported event\n            \"type\": webhook_type,\n        }\n\n        return \"\", webhook_config\n",
+                            "children": [
+                                {
+                                    "type": "identifier",
+                                    "start_token": 88,
+                                    "end_token": 88,
+                                    "label": "_register_webhook",
+                                    "children": []
+                                },
+                                {
+                                    "type": "parameters",
+                                    "start_token": 89,
+                                    "end_token": 127,
+                                    "label": "(\n        self,\n        credentials: Credentials,\n        webhook_type: str,\n        resource: str,\n        events: list[str],\n        ingress_url: str,\n        secret: str,\n    )",
+                                    "children": [
+                                        {
+                                            "type": "typed_parameter",
+                                            "start_token": 94,
+                                            "end_token": 96,
+                                            "label": "credentials: Credentials",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "typed_parameter",
+                                            "start_token": 99,
+                                            "end_token": 101,
+                                            "label": "webhook_type: str",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "typed_parameter",
+                                            "start_token": 104,
+                                            "end_token": 106,
+                                            "label": "resource: str",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "typed_parameter",
+                                            "start_token": 109,
+                                            "end_token": 114,
+                                            "label": "events: list[str]",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "typed_parameter",
+                                            "start_token": 117,
+                                            "end_token": 119,
+                                            "label": "ingress_url: str",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "typed_parameter",
+                                            "start_token": 122,
+                                            "end_token": 124,
+                                            "label": "secret: str",
+                                            "children": []
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "block",
+                                    "start_token": 136,
+                                    "end_token": 299,
+                                    "label": ":\n        \"\"\"Register a new webhook with Slant3D\"\"\"\n\n        if not isinstance(credentials, APIKeyCredentials):\n            raise ValueError(\"API key is required to register a webhook\")\n\n        headers = {\n            \"api-key\": credentials.api_key.get_secret_value(),\n            \"Content-Type\": \"application/json\",\n        }\n\n        # Slant3D's API doesn't use events list, just register for all order updates\n        payload = {\"endPoint\": ingress_url}\n\n        response = requests.post(\n            f\"{self.BASE_URL}/customer/webhookSubscribe\", headers=headers, json=payload\n        )\n\n        if not response.ok:\n            error = response.json().get(\"error\", \"Unknown error\")\n            raise RuntimeError(f\"Failed to register webhook: {error}\")\n\n        webhook_config = {\n            \"endpoint\": ingress_url,\n            \"provider\": self.PROVIDER_NAME,\n            \"events\": [\"order.shipped\"],  # Currently the only supported event\n            \"type\": webhook_type,\n        }\n\n        return \"\", webhook_config\n",
+                                    "children": [
+                                        {
+                                            "type": "if_statement",
+                                            "start_token": 143,
+                                            "end_token": 157,
+                                            "label": "if not isinstance(credentials, APIKeyCredentials):\n            raise ValueError(\"API key is required to register a webhook\")",
+                                            "children": [
+                                                {
+                                                    "type": "raise_statement",
+                                                    "start_token": 153,
+                                                    "end_token": 157,
+                                                    "label": "raise ValueError(\"API key is required to register a webhook\")",
+                                                    "children": []
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "assignment",
+                                            "start_token": 160,
+                                            "end_token": 180,
+                                            "label": "headers = {\n            \"api-key\": credentials.api_key.get_secret_value(),\n            \"Content-Type\": \"application/json\",\n        }",
+                                            "children": [
+                                                {
+                                                    "type": "dictionary",
+                                                    "start_token": 162,
+                                                    "end_token": 180,
+                                                    "label": "{\n            \"api-key\": credentials.api_key.get_secret_value(),\n            \"Content-Type\": \"application/json\",\n        }",
+                                                    "children": [
+                                                        {
+                                                            "type": "pair",
+                                                            "start_token": 164,
+                                                            "end_token": 172,
+                                                            "label": "\"api-key\": credentials.api_key.get_secret_value()",
+                                                            "children": []
+                                                        },
+                                                        {
+                                                            "type": "pair",
+                                                            "start_token": 175,
+                                                            "end_token": 178,
+                                                            "label": "\"Content-Type\": \"application/json\",",
+                                                            "children": []
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "assignment",
+                                            "start_token": 198,
+                                            "end_token": 204,
+                                            "label": "payload = {\"endPoint\": ingress_url}",
+                                            "children": [
+                                                {
+                                                    "type": "dictionary",
+                                                    "start_token": 200,
+                                                    "end_token": 204,
+                                                    "label": "{\"endPoint\": ingress_url}",
+                                                    "children": [
+                                                        {
+                                                            "type": "pair",
+                                                            "start_token": 201,
+                                                            "end_token": 203,
+                                                            "label": "\"endPoint\": ingress_url",
+                                                            "children": []
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "call",
+                                            "start_token": 207,
+                                            "end_token": 225,
+                                            "label": "response = requests.post(\n            f\"{self.BASE_URL}/customer/webhookSubscribe\", headers=headers, json=payload\n        )",
+                                            "children": [
+                                                {
+                                                    "type": "attribute",
+                                                    "start_token": 209,
+                                                    "end_token": 211,
+                                                    "label": "requests.post",
+                                                    "children": []
+                                                },
+                                                {
+                                                    "type": "argument_list",
+                                                    "start_token": 212,
+                                                    "end_token": 224,
+                                                    "label": "(\n            f\"{self.BASE_URL}/customer/webhookSubscribe\", headers=headers, json=payload\n",
+                                                    "children": [
+                                                        {
+                                                            "type": "dotted_name",
+                                                            "start_token": 215,
+                                                            "end_token": 215,
+                                                            "label": "\"{self.BASE_URL}/customer/webhookSubscribe\"",
+                                                            "children": []
+                                                        },
+                                                        {
+                                                            "type": "keyword_argument",
+                                                            "start_token": 217,
+                                                            "end_token": 219,
+                                                            "label": "headers=headers",
+                                                            "children": []
+                                                        },
+                                                        {
+                                                            "type": "keyword_argument",
+                                                            "start_token": 221,
+                                                            "end_token": 223,
+                                                            "label": "json=payload",
+                                                            "children": []
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "if_statement",
+                                            "start_token": 228,
+                                            "end_token": 255,
+                                            "label": "if not response.ok:\n            error = response.json().get(\"error\", \"Unknown error\")\n            raise RuntimeError(f\"Failed to register webhook: {error}\")",
+                                            "children": [
+                                                {
+                                                    "type": "raise_statement",
+                                                    "start_token": 250,
+                                                    "end_token": 255,
+                                                    "label": "raise RuntimeError(f\"Failed to register webhook: {error}\")",
+                                                    "children": []
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "assignment",
+                                            "start_token": 258,
+                                            "end_token": 292,
+                                            "label": "webhook_config = {\n            \"endpoint\": ingress_url,\n            \"provider\": self.PROVIDER_NAME,\n            \"events\": [\"order.shipped\"],  # Currently the only supported event\n            \"type\": webhook_type,\n        }",
+                                            "children": [
+                                                {
+                                                    "type": "dictionary",
+                                                    "start_token": 260,
+                                                    "end_token": 292,
+                                                    "label": "{\n            \"endpoint\": ingress_url,\n            \"provider\": self.PROVIDER_NAME,\n            \"events\": [\"order.shipped\"],  # Currently the only supported event\n            \"type\": webhook_type,\n        }",
+                                                    "children": [
+                                                        {
+                                                            "type": "pair",
+                                                            "start_token": 262,
+                                                            "end_token": 265,
+                                                            "label": "\"endpoint\": ingress_url,",
+                                                            "children": []
+                                                        },
+                                                        {
+                                                            "type": "pair",
+                                                            "start_token": 267,
+                                                            "end_token": 272,
+                                                            "label": "\"provider\": self.PROVIDER_NAME,",
+                                                            "children": []
+                                                        },
+                                                        {
+                                                            "type": "pair",
+                                                            "start_token": 274,
+                                                            "end_token": 286,
+                                                            "label": "\"events\": [\"order.shipped\"],  # Currently the only supported event\n",
+                                                            "children": []
+                                                        },
+                                                        {
+                                                            "type": "pair",
+                                                            "start_token": 288,
+                                                            "end_token": 290,
+                                                            "label": ": webhook_type,",
+                                                            "children": []
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "return_statement",
+                                            "start_token": 295,
+                                            "end_token": 298,
+                                            "label": "return \"\", webhook_config",
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "decorated_definition",
+            "start_token": 301,
+            "end_token": 467,
+            "label": "@classmethod\n    async def validate_payload(\n        cls, webhook: integrations.Webhook, request: Request\n    ) -> tuple[dict, str]:\n        \"\"\"Validate incoming webhook payload from Slant3D\"\"\"\n\n        payload = await request.json()\n\n        # Validate required fields from Slant3D API spec\n        required_fields = [\"orderId\", \"status\", \"trackingNumber\", \"carrierCode\"]\n        missing_fields = [field for field in required_fields if field not in payload]\n\n        if missing_fields:\n            raise ValueError(f\"Missing required fields: {', '.join(missing_fields)}\")\n\n        # Normalize payload structure\n        normalized_payload = {\n            \"orderId\": payload[\"orderId\"],\n            \"status\": payload[\"status\"],\n            \"trackingNumber\": payload[\"trackingNumber\"],\n            \"carrierCode\": payload[\"carrierCode\"],\n        }\n\n        # Currently Slant3D only sends shipping notifications\n        # Convert status to lowercase for event format compatibility\n        event_type = f\"order.{payload['status'].lower()}\"\n\n        return normalized_payload, event_type",
+            "children": [
+                {
+                    "type": "decorator",
+                    "start_token": 301,
+                    "end_token": 302,
+                    "label": "@classmethod",
+                    "children": []
+                },
+                {
+                    "type": "function_definition",
+                    "start_token": 304,
+                    "end_token": 467,
+                    "label": "async def validate_payload(\n        cls, webhook: integrations.Webhook, request: Request\n    ) -> tuple[dict, str]:\n        \"\"\"Validate incoming webhook payload from Slant3D\"\"\"\n\n        payload = await request.json()\n\n        # Validate required fields from Slant3D API spec\n        required_fields = [\"orderId\", \"status\", \"trackingNumber\", \"carrierCode\"]\n        missing_fields = [field for field in required_fields if field not in payload]\n\n        if missing_fields:\n            raise ValueError(f\"Missing required fields: {', '.join(missing_fields)}\")\n\n        # Normalize payload structure\n        normalized_payload = {\n            \"orderId\": payload[\"orderId\"],\n            \"status\": payload[\"status\"],\n            \"trackingNumber\": payload[\"trackingNumber\"],\n            \"carrierCode\": payload[\"carrierCode\"],\n        }\n\n        # Currently Slant3D only sends shipping notifications\n        # Convert status to lowercase for event format compatibility\n        event_type = f\"order.{payload['status'].lower()}\"\n\n        return normalized_payload, event_type",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 306,
+                            "end_token": 306,
+                            "label": "validate_payload",
+                            "children": []
+                        },
+                        {
+                            "type": "parameters",
+                            "start_token": 307,
+                            "end_token": 320,
+                            "label": "(\n        cls, webhook: integrations.Webhook, request: Request\n",
+                            "children": [
+                                {
+                                    "type": "typed_parameter",
+                                    "start_token": 312,
+                                    "end_token": 316,
+                                    "label": ": integrations.Webhook,",
+                                    "children": []
+                                },
+                                {
+                                    "type": "typed_parameter",
+                                    "start_token": 318,
+                                    "end_token": 319,
+                                    "label": ": Request",
+                                    "children": []
+                                }
+                            ]
+                        },
+                        {
+                            "type": "block",
+                            "start_token": 330,
+                            "end_token": 467,
+                            "label": ":\n        \"\"\"Validate incoming webhook payload from Slant3D\"\"\"\n\n        payload = await request.json()\n\n        # Validate required fields from Slant3D API spec\n        required_fields = [\"orderId\", \"status\", \"trackingNumber\", \"carrierCode\"]\n        missing_fields = [field for field in required_fields if field not in payload]\n\n        if missing_fields:\n            raise ValueError(f\"Missing required fields: {', '.join(missing_fields)}\")\n\n        # Normalize payload structure\n        normalized_payload = {\n            \"orderId\": payload[\"orderId\"],\n            \"status\": payload[\"status\"],\n            \"trackingNumber\": payload[\"trackingNumber\"],\n            \"carrierCode\": payload[\"carrierCode\"],\n        }\n\n        # Currently Slant3D only sends shipping notifications\n        # Convert status to lowercase for event format compatibility\n        event_type = f\"order.{payload['status'].lower()}\"\n\n        return normalized_payload, event_type",
+                            "children": [
+                                {
+                                    "type": "assignment",
+                                    "start_token": 337,
+                                    "end_token": 344,
+                                    "label": "payload = await request.json()",
+                                    "children": []
+                                },
+                                {
+                                    "type": "for_statement",
+                                    "start_token": 348,
+                                    "end_token": 381,
+                                    "label": "Validate required fields from Slant3D API spec\n        required_fields = [\"orderId\", \"status\", \"trackingNumber\", \"carrierCode\"]\n        missing_fields = [field for field in required_fields if field not in payload]",
+                                    "children": [
+                                        {
+                                            "type": "pattern_list",
+                                            "start_token": 371,
+                                            "end_token": 375,
+                                            "label": "field for field in required_fields",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "if_statement",
+                                            "start_token": 375,
+                                            "end_token": 387,
+                                            "label": "required_fields if field not in payload]\n\n        if missing_fields:\n",
+                                            "children": [
+                                                {
+                                                    "type": "raise_statement",
+                                                    "start_token": 388,
+                                                    "end_token": 393,
+                                                    "label": "raise ValueError(f\"Missing required fields: {', '.join(missing_fields)}\")",
+                                                    "children": []
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "assignment",
+                                    "start_token": 401,
+                                    "end_token": 435,
+                                    "label": "normalized_payload = {\n            \"orderId\": payload[\"orderId\"],\n            \"status\": payload[\"status\"],\n            \"trackingNumber\": payload[\"trackingNumber\"],\n            \"carrierCode\": payload[\"carrierCode\"],",
+                                    "children": []
+                                },
+                                {
+                                    "type": "assignment",
+                                    "start_token": 458,
+                                    "end_token": 462,
+                                    "label": "event_type = f\"order.{payload['status'].lower()}\"\n",
+                                    "children": []
+                                },
+                                {
+                                    "type": "return_statement",
+                                    "start_token": 464,
+                                    "end_token": 467,
+                                    "label": "return normalized_payload, event_type",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "start_token": 470,
+            "end_token": 518,
+            "label": "async def _deregister_webhook(\n        self, webhook: integrations.Webhook, credentials: Credentials\n    ) -> None:\n        \"\"\"\n        Note: Slant3D API currently doesn't provide a deregistration endpoint.\n        This would need to be handled through support.\n        \"\"\"\n        # Log warning since we can't properly deregister\n        logger.warning(\n            f\"Warning: Manual deregistration required for webhook {webhook.id}\"\n        )\n        pass",
+            "children": [
+                {
+                    "type": "identifier",
+                    "start_token": 472,
+                    "end_token": 472,
+                    "label": "_deregister_webhook",
+                    "children": []
+                },
+                {
+                    "type": "parameters",
+                    "start_token": 473,
+                    "end_token": 486,
+                    "label": "(\n        self, webhook: integrations.Webhook, credentials: Credentials\n",
+                    "children": [
+                        {
+                            "type": "typed_parameter",
+                            "start_token": 478,
+                            "end_token": 482,
+                            "label": ": integrations.Webhook,",
+                            "children": []
+                        },
+                        {
+                            "type": "typed_parameter",
+                            "start_token": 484,
+                            "end_token": 485,
+                            "label": ": Credentials",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "block",
+                    "start_token": 491,
+                    "end_token": 518,
+                    "label": ":\n        \"\"\"\n        Note: Slant3D API currently doesn't provide a deregistration endpoint.\n        This would need to be handled through support.\n        \"\"\"\n        # Log warning since we can't properly deregister\n        logger.warning(\n            f\"Warning: Manual deregistration required for webhook {webhook.id}\"\n        )\n        pass",
+                    "children": [
+                        {
+                            "type": "attribute",
+                            "start_token": 508,
+                            "end_token": 510,
+                            "label": "logger.warning",
+                            "children": []
+                        },
+                        {
+                            "type": "call",
+                            "start_token": 511,
+                            "end_token": 515,
+                            "label": "(\n            f\"Warning: Manual deregistration required for webhook {webhook.id}\"\n",
+                            "children": []
+                        },
+                        {
+                            "type": "pass_statement",
+                            "start_token": 518,
+                            "end_token": 518,
+                            "label": "pass",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

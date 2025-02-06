@@ -1,0 +1,447 @@
+{
+    "type": "module",
+    "start_token": 0,
+    "end_token": 882,
+    "label": "import logging\nimport time\nfrom typing import Sequence\n\nfrom backend.data import db\nfrom backend.data.block import Block, initialize_blocks\nfrom backend.data.execution import ExecutionResult, ExecutionStatus\nfrom backend.data.model import CREDENTIALS_FIELD_NAME\nfrom backend.data.user import create_default_user\nfrom backend.executor import DatabaseManager, ExecutionManager, ExecutionScheduler\nfrom backend.server.rest_api import AgentServer\nfrom backend.server.utils import get_user_id\n\nlog = logging.getLogger(__name__)\n\n\nclass SpinTestServer:\n    def __init__(self):\n        self.db_api = DatabaseManager()\n        self.exec_manager = ExecutionManager()\n        self.agent_server = AgentServer()\n        self.scheduler = ExecutionScheduler()\n\n    @staticmethod\n    def test_get_user_id():\n        return \"3e53486c-cf57-477e-ba2a-cb02dc828e1a\"\n\n    async def __aenter__(self):\n        self.setup_dependency_overrides()\n        self.db_api.__enter__()\n        self.agent_server.__enter__()\n        self.exec_manager.__enter__()\n        self.scheduler.__enter__()\n\n        await db.connect()\n        await initialize_blocks()\n        await create_default_user()\n\n        return self\n\n    async def __aexit__(self, exc_type, exc_val, exc_tb):\n        await db.disconnect()\n\n        self.scheduler.__exit__(exc_type, exc_val, exc_tb)\n        self.exec_manager.__exit__(exc_type, exc_val, exc_tb)\n        self.agent_server.__exit__(exc_type, exc_val, exc_tb)\n        self.db_api.__exit__(exc_type, exc_val, exc_tb)\n\n    def setup_dependency_overrides(self):\n        # Override get_user_id for testing\n        self.agent_server.set_test_dependency_overrides(\n            {get_user_id: self.test_get_user_id}\n        )\n\n\nasync def wait_execution(\n    user_id: str,\n    graph_id: str,\n    graph_exec_id: str,\n    timeout: int = 20,\n) -> Sequence[ExecutionResult]:\n    async def is_execution_completed():\n        status = await AgentServer().test_get_graph_run_status(graph_exec_id, user_id)\n        log.info(f\"Execution status: {status}\")\n        if status == ExecutionStatus.FAILED:\n            log.info(\"Execution failed\")\n            raise Exception(\"Execution failed\")\n        return status == ExecutionStatus.COMPLETED\n\n    # Wait for the executions to complete\n    for i in range(timeout):\n        if await is_execution_completed():\n            return await AgentServer().test_get_graph_run_node_execution_results(\n                graph_id, graph_exec_id, user_id\n            )\n        time.sleep(1)\n\n    assert False, \"Execution did not complete in time.\"\n\n\ndef execute_block_test(block: Block):\n    prefix = f\"[Test-{block.name}]\"\n\n    if not block.test_input or not block.test_output:\n        log.info(f\"{prefix} No test data provided\")\n        return\n    if not isinstance(block.test_input, list):\n        block.test_input = [block.test_input]\n    if not isinstance(block.test_output, list):\n        block.test_output = [block.test_output]\n\n    output_index = 0\n    log.info(f\"{prefix} Executing {len(block.test_input)} tests...\")\n    prefix = \" \" * 4 + prefix\n\n    for mock_name, mock_obj in (block.test_mock or {}).items():\n        log.info(f\"{prefix} mocking {mock_name}...\")\n        if hasattr(block, mock_name):\n            setattr(block, mock_name, mock_obj)\n        else:\n            log.info(f\"{prefix} mock {mock_name} not found in block\")\n\n    extra_exec_kwargs = {}\n\n    if CREDENTIALS_FIELD_NAME in block.input_schema.model_fields:\n        if not block.test_credentials:\n            raise ValueError(\n                f\"{prefix} requires credentials but has no test_credentials\"\n            )\n        extra_exec_kwargs[CREDENTIALS_FIELD_NAME] = block.test_credentials\n\n    for input_data in block.test_input:\n        log.info(f\"{prefix} in: {input_data}\")\n\n        for output_name, output_data in block.execute(input_data, **extra_exec_kwargs):\n            if output_index >= len(block.test_output):\n                raise ValueError(f\"{prefix} produced output more than expected\")\n            ex_output_name, ex_output_data = block.test_output[output_index]\n\n            def compare(data, expected_data):\n                if data == expected_data:\n                    is_matching = True\n                elif isinstance(expected_data, type):\n                    is_matching = isinstance(data, expected_data)\n                elif callable(expected_data):\n                    is_matching = expected_data(data)\n                else:\n                    is_matching = False\n\n                mark = \"✅\" if is_matching else \"❌\"\n                log.info(f\"{prefix} {mark} comparing `{data}` vs `{expected_data}`\")\n                if not is_matching:\n                    raise ValueError(\n                        f\"{prefix}: wrong output {data} vs {expected_data}\"\n                    )\n\n            compare(output_data, ex_output_data)\n            compare(output_name, ex_output_name)\n            output_index += 1\n\n    if output_index < len(block.test_output):\n        raise ValueError(\n            f\"{prefix} produced output less than expected. output_index={output_index}, len(block.test_output)={len(block.test_output)}\"\n        )\n",
+    "children": [
+        {
+            "type": "import_statement",
+            "start_token": 0,
+            "end_token": 2,
+            "label": "import logging\n",
+            "children": []
+        },
+        {
+            "type": "import_statement",
+            "start_token": 3,
+            "end_token": 5,
+            "label": "import time\n",
+            "children": []
+        },
+        {
+            "type": "import_from_statement",
+            "start_token": 6,
+            "end_token": 10,
+            "label": "from typing import Sequence\n",
+            "children": []
+        },
+        {
+            "type": "relative_import",
+            "start_token": 12,
+            "end_token": 18,
+            "label": "from backend.data import db\n",
+            "children": []
+        },
+        {
+            "type": "relative_import",
+            "start_token": 19,
+            "end_token": 29,
+            "label": "from backend.data.block import Block, initialize_blocks\n",
+            "children": []
+        },
+        {
+            "type": "relative_import",
+            "start_token": 30,
+            "end_token": 40,
+            "label": "from backend.data.execution import ExecutionResult, ExecutionStatus\n",
+            "children": []
+        },
+        {
+            "type": "relative_import",
+            "start_token": 41,
+            "end_token": 49,
+            "label": "from backend.data.model import CREDENTIALS_FIELD_NAME\n",
+            "children": []
+        },
+        {
+            "type": "relative_import",
+            "start_token": 50,
+            "end_token": 58,
+            "label": "from backend.data.user import create_default_user\n",
+            "children": []
+        },
+        {
+            "type": "relative_import",
+            "start_token": 59,
+            "end_token": 69,
+            "label": "from backend.executor import DatabaseManager, ExecutionManager, ExecutionScheduler\n",
+            "children": []
+        },
+        {
+            "type": "relative_import",
+            "start_token": 70,
+            "end_token": 78,
+            "label": "from backend.server.rest_api import AgentServer\n",
+            "children": []
+        },
+        {
+            "type": "relative_import",
+            "start_token": 79,
+            "end_token": 87,
+            "label": "from backend.server.utils import get_user_id\n",
+            "children": []
+        },
+        {
+            "type": "assignment",
+            "start_token": 89,
+            "end_token": 96,
+            "label": "log = logging.getLogger(__name__)",
+            "children": []
+        },
+        {
+            "type": "class_definition",
+            "start_token": 100,
+            "end_token": 299,
+            "label": "class SpinTestServer:\n    def __init__(self):\n        self.db_api = DatabaseManager()\n        self.exec_manager = ExecutionManager()\n        self.agent_server = AgentServer()\n        self.scheduler = ExecutionScheduler()\n\n    @staticmethod\n    def test_get_user_id():\n        return \"3e53486c-cf57-477e-ba2a-cb02dc828e1a\"\n\n    async def __aenter__(self):\n        self.setup_dependency_overrides()\n        self.db_api.__enter__()\n        self.agent_server.__enter__()\n        self.exec_manager.__enter__()\n        self.scheduler.__enter__()\n\n        await db.connect()\n        await initialize_blocks()\n        await create_default_user()\n\n        return self\n\n    async def __aexit__(self, exc_type, exc_val, exc_tb):\n        await db.disconnect()\n\n        self.scheduler.__exit__(exc_type, exc_val, exc_tb)\n        self.exec_manager.__exit__(exc_type, exc_val, exc_tb)\n        self.agent_server.__exit__(exc_type, exc_val, exc_tb)\n        self.db_api.__exit__(exc_type, exc_val, exc_tb)\n",
+            "children": [
+                {
+                    "type": "function_definition",
+                    "start_token": 104,
+                    "end_token": 150,
+                    "label": "def __init__(self):\n        self.db_api = DatabaseManager()\n        self.exec_manager = ExecutionManager()\n        self.agent_server = AgentServer()\n        self.scheduler = ExecutionScheduler()\n\n    @staticmethod\n    def test_get_user_id()",
+                    "children": [
+                        {
+                            "type": "assignment",
+                            "start_token": 111,
+                            "end_token": 117,
+                            "label": "self.db_api = DatabaseManager()",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 119,
+                            "end_token": 125,
+                            "label": "self.exec_manager = ExecutionManager()",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 127,
+                            "end_token": 133,
+                            "label": "self.agent_server = AgentServer()",
+                            "children": []
+                        },
+                        {
+                            "type": "assignment",
+                            "start_token": 135,
+                            "end_token": 141,
+                            "label": "self.scheduler = ExecutionScheduler()",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "decorated_definition",
+                    "start_token": 144,
+                    "end_token": 153,
+                    "label": "@staticmethod\n    def test_get_user_id():\n        return",
+                    "children": [
+                        {
+                            "type": "decorator",
+                            "start_token": 144,
+                            "end_token": 146,
+                            "label": "@staticmethod\n",
+                            "children": []
+                        },
+                        {
+                            "type": "function_definition",
+                            "start_token": 147,
+                            "end_token": 153,
+                            "label": "def test_get_user_id():\n        return",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "await",
+                    "start_token": 204,
+                    "end_token": 209,
+                    "label": "await db.connect()",
+                    "children": []
+                },
+                {
+                    "type": "await",
+                    "start_token": 211,
+                    "end_token": 214,
+                    "label": "await initialize_blocks()",
+                    "children": []
+                },
+                {
+                    "type": "await",
+                    "start_token": 216,
+                    "end_token": 219,
+                    "label": "await create_default_user()",
+                    "children": []
+                },
+                {
+                    "type": "assignment",
+                    "start_token": 222,
+                    "end_token": 224,
+                    "label": "return self\n",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "start_token": 226,
+            "end_token": 298,
+            "label": "async def __aexit__(self, exc_type, exc_val, exc_tb):\n        await db.disconnect()\n\n        self.scheduler.__exit__(exc_type, exc_val, exc_tb)\n        self.exec_manager.__exit__(exc_type, exc_val, exc_tb)\n        self.agent_server.__exit__(exc_type, exc_val, exc_tb)\n        self.db_api.__exit__(exc_type, exc_val, exc_tb)",
+            "children": [
+                {
+                    "type": "await",
+                    "start_token": 240,
+                    "end_token": 245,
+                    "label": "await db.disconnect()",
+                    "children": []
+                },
+                {
+                    "type": "call",
+                    "start_token": 248,
+                    "end_token": 259,
+                    "label": "self.scheduler.__exit__(exc_type, exc_val, exc_tb)",
+                    "children": [
+                        {
+                            "type": "argument_list",
+                            "start_token": 254,
+                            "end_token": 259,
+                            "label": "exc_type, exc_val, exc_tb)",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "call",
+                    "start_token": 261,
+                    "end_token": 272,
+                    "label": "self.exec_manager.__exit__(exc_type, exc_val, exc_tb)",
+                    "children": [
+                        {
+                            "type": "argument_list",
+                            "start_token": 267,
+                            "end_token": 272,
+                            "label": "exc_type, exc_val, exc_tb)",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "call",
+                    "start_token": 274,
+                    "end_token": 285,
+                    "label": "self.agent_server.__exit__(exc_type, exc_val, exc_tb)",
+                    "children": [
+                        {
+                            "type": "argument_list",
+                            "start_token": 280,
+                            "end_token": 285,
+                            "label": "exc_type, exc_val, exc_tb)",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "call",
+                    "start_token": 287,
+                    "end_token": 298,
+                    "label": "self.db_api.__exit__(exc_type, exc_val, exc_tb)",
+                    "children": [
+                        {
+                            "type": "argument_list",
+                            "start_token": 293,
+                            "end_token": 298,
+                            "label": "exc_type, exc_val, exc_tb)",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "start_token": 301,
+            "end_token": 330,
+            "label": "def setup_dependency_overrides(self):\n        # Override get_user_id for testing\n        self.agent_server.set_test_dependency_overrides(\n            {get_user_id: self.test_get_user_id}\n        )\n",
+            "children": [
+                {
+                    "type": "assignment",
+                    "start_token": 314,
+                    "end_token": 328,
+                    "label": "self.agent_server.set_test_dependency_overrides(\n            {get_user_id: self.test_get_user_id}\n",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "start_token": 333,
+            "end_token": 482,
+            "label": "async def wait_execution(\n    user_id: str,\n    graph_id: str,\n    graph_exec_id: str,\n    timeout: int = 20,\n) -> Sequence[ExecutionResult]:\n    async def is_execution_completed():\n        status = await AgentServer().test_get_graph_run_status(graph_exec_id, user_id)\n        log.info(f\"Execution status: {status}\")\n        if status == ExecutionStatus.FAILED:\n            log.info(\"Execution failed\")\n            raise Exception(\"Execution failed\")\n        return status == ExecutionStatus.COMPLETED\n\n    # Wait for the executions to complete\n    for i in range(timeout):\n        if await is_execution_completed():\n            return await AgentServer().test_get_graph_run_node_execution_results(\n                graph_id, graph_exec_id, user_id\n            )\n        time.sleep(1)\n\n    assert False, \"Execution did not complete in time.\"\n",
+            "children": [
+                {
+                    "type": "call",
+                    "start_token": 370,
+                    "end_token": 388,
+                    "label": "def is_execution_completed():\n        status = await AgentServer().test_get_graph_run_status(graph_exec_id, user_id)",
+                    "children": [
+                        {
+                            "type": "argument_list",
+                            "start_token": 385,
+                            "end_token": 388,
+                            "label": "graph_exec_id, user_id)",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "call",
+                    "start_token": 390,
+                    "end_token": 396,
+                    "label": "log.info(f\"Execution status: {status}\")",
+                    "children": [
+                        {
+                            "type": "argument_list",
+                            "start_token": 395,
+                            "end_token": 396,
+                            "label": "\"Execution status: {status}\")",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "if_statement",
+                    "start_token": 398,
+                    "end_token": 427,
+                    "label": "if status == ExecutionStatus.FAILED:\n            log.info(\"Execution failed\")\n            raise Exception(\"Execution failed\")\n        return status == ExecutionStatus.COMPLETED\n",
+                    "children": [
+                        {
+                            "type": "comparison_operator",
+                            "start_token": 400,
+                            "end_token": 402,
+                            "label": "== ExecutionStatus",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "for_statement",
+                    "start_token": 437,
+                    "end_token": 468,
+                    "label": "for i in range(timeout):\n        if await is_execution_completed():\n            return await AgentServer().test_get_graph_run_node_execution_results(\n                graph_id, graph_exec_id, user_id\n            )",
+                    "children": []
+                },
+                {
+                    "type": "assert_statement",
+                    "start_token": 478,
+                    "end_token": 481,
+                    "label": "assert False, \"Execution did not complete in time.\"",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "function_definition",
+            "start_token": 485,
+            "end_token": 881,
+            "label": "def execute_block_test(block: Block):\n    prefix = f\"[Test-{block.name}]\"\n\n    if not block.test_input or not block.test_output:\n        log.info(f\"{prefix} No test data provided\")\n        return\n    if not isinstance(block.test_input, list):\n        block.test_input = [block.test_input]\n    if not isinstance(block.test_output, list):\n        block.test_output = [block.test_output]\n\n    output_index = 0\n    log.info(f\"{prefix} Executing {len(block.test_input)} tests...\")\n    prefix = \" \" * 4 + prefix\n\n    for mock_name, mock_obj in (block.test_mock or {}).items():\n        log.info(f\"{prefix} mocking {mock_name}...\")\n        if hasattr(block, mock_name):\n            setattr(block, mock_name, mock_obj)\n        else:\n            log.info(f\"{prefix} mock {mock_name} not found in block\")\n\n    extra_exec_kwargs = {}\n\n    if CREDENTIALS_FIELD_NAME in block.input_schema.model_fields:\n        if not block.test_credentials:\n            raise ValueError(\n                f\"{prefix} requires credentials but has no test_credentials\"\n            )\n        extra_exec_kwargs[CREDENTIALS_FIELD_NAME] = block.test_credentials\n\n    for input_data in block.test_input:\n        log.info(f\"{prefix} in: {input_data}\")\n\n        for output_name, output_data in block.execute(input_data, **extra_exec_kwargs):\n            if output_index >= len(block.test_output):\n                raise ValueError(f\"{prefix} produced output more than expected\")\n            ex_output_name, ex_output_data = block.test_output[output_index]\n\n            def compare(data, expected_data):\n                if data == expected_data:\n                    is_matching = True\n                elif isinstance(expected_data, type):\n                    is_matching = isinstance(data, expected_data)\n                elif callable(expected_data):\n                    is_matching = expected_data(data)\n                else:\n                    is_matching = False\n\n                mark = \"✅\" if is_matching else \"❌\"\n                log.info(f\"{prefix} {mark} comparing `{data}` vs `{expected_data}`\")\n                if not is_matching:\n                    raise ValueError(\n                        f\"{prefix}: wrong output {data} vs {expected_data}\"\n                    )\n\n            compare(output_data, ex_output_data)\n            compare(output_name, ex_output_name)\n            output_index += 1\n\n    if output_index < len(block.test_output):\n        raise ValueError(\n            f\"{prefix} produced output less than expected. output_index={output_index}, len(block.test_output)={len(block.test_output)}\"\n        )",
+            "children": [
+                {
+                    "type": "if_statement",
+                    "start_token": 500,
+                    "end_token": 520,
+                    "label": "if not block.test_input or not block.test_output:\n        log.info(f\"{prefix} No test data provided\")\n        return",
+                    "children": []
+                },
+                {
+                    "type": "if_statement",
+                    "start_token": 522,
+                    "end_token": 532,
+                    "label": "if not isinstance(block.test_input, list):",
+                    "children": []
+                },
+                {
+                    "type": "if_statement",
+                    "start_token": 544,
+                    "end_token": 554,
+                    "label": "if not isinstance(block.test_output, list):",
+                    "children": []
+                },
+                {
+                    "type": "for_statement",
+                    "start_token": 567,
+                    "end_token": 578,
+                    "label": "output_index = 0\n    log.info(f\"{prefix} Executing {len(block.test_input)} tests...\")\n",
+                    "children": []
+                },
+                {
+                    "type": "for_statement",
+                    "start_token": 588,
+                    "end_token": 643,
+                    "label": "for mock_name, mock_obj in (block.test_mock or {}).items():\n        log.info(f\"{prefix} mocking {mock_name}...\")\n        if hasattr(block, mock_name):\n            setattr(block, mock_name, mock_obj)\n        else:\n            log.info(f\"{prefix} mock {mock_name} not found in block\")\n",
+                    "children": [
+                        {
+                            "type": "call",
+                            "start_token": 607,
+                            "end_token": 613,
+                            "label": "log.info(f\"{prefix} mocking {mock_name}...\")",
+                            "children": [
+                                {
+                                    "type": "argument_list",
+                                    "start_token": 612,
+                                    "end_token": 613,
+                                    "label": "\"{prefix} mocking {mock_name}...\")",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "type": "if_statement",
+                    "start_token": 651,
+                    "end_token": 675,
+                    "label": "if CREDENTIALS_FIELD_NAME in block.input_schema.model_fields:\n        if not block.test_credentials:\n            raise ValueError(\n                f\"{prefix} requires credentials but has no test_credentials\"\n            )",
+                    "children": []
+                },
+                {
+                    "type": "for_statement",
+                    "start_token": 687,
+                    "end_token": 739,
+                    "label": "for input_data in block.test_input:\n        log.info(f\"{prefix} in: {input_data}\")\n\n        for output_name, output_data in block.execute(input_data, **extra_exec_kwargs):\n            if output_index >= len(block.test_output):\n                raise ValueError(f\"{prefix} produced output more than expected\")\n",
+                    "children": [
+                        {
+                            "type": "call",
+                            "start_token": 695,
+                            "end_token": 701,
+                            "label": "log.info(f\"{prefix} in: {input_data}\")",
+                            "children": [
+                                {
+                                    "type": "argument_list",
+                                    "start_token": 700,
+                                    "end_token": 701,
+                                    "label": "\"{prefix} in: {input_data}\")",
+                                    "children": []
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "type": "function_definition",
+                    "start_token": 752,
+                    "end_token": 870,
+                    "label": "def compare(data, expected_data):\n                if data == expected_data:\n                    is_matching = True\n                elif isinstance(expected_data, type):\n                    is_matching = isinstance(data, expected_data)\n                elif callable(expected_data):\n                    is_matching = expected_data(data)\n                else:\n                    is_matching = False\n\n                mark = \"✅\" if is_matching else \"❌\"\n                log.info(f\"{prefix} {mark} comparing `{data}` vs `{expected_data}`\")\n                if not is_matching:\n                    raise ValueError(\n                        f\"{prefix}: wrong output {data} vs {expected_data}\"\n                    )\n\n            compare(output_data, ex_output_data)\n            compare(output_name, ex_output_name)\n            output_index += 1\n\n    if output_index < len(block.test_output",
+                    "children": [
+                        {
+                            "type": "if_statement",
+                            "start_token": 761,
+                            "end_token": 831,
+                            "label": "if data == expected_data:\n                    is_matching = True\n                elif isinstance(expected_data, type):\n                    is_matching = isinstance(data, expected_data)\n                elif callable(expected_data):\n                    is_matching = expected_data(data)\n                else:\n                    is_matching = False\n\n                mark = \"✅\" if is_matching else \"❌\"\n                log.info(f\"{prefix} {mark} comparing `{data}` vs `{expected_data}`\")\n                if not is_matching:",
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

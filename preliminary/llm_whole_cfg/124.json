@@ -1,0 +1,437 @@
+{
+  "source_file": "124.py",
+  "cfg": {
+    "blocks": [
+      {
+        "id": 1,
+        "start_line": 1,
+        "end_line": 3,
+        "label": "import hashlib\nimport hmac\nimport logging",
+        "successors": [
+          2
+        ]
+      },
+      {
+        "id": 2,
+        "start_line": 4,
+        "end_line": 7,
+        "label": "import requests\nfrom fastapi import HTTPException, Request\nfrom strenum import StrEnum",
+        "successors": [
+          3
+        ]
+      },
+      {
+        "id": 3,
+        "start_line": 8,
+        "end_line": 11,
+        "label": "from backend.data import integrations\nfrom backend.data.model import Credentials\nfrom backend.integrations.providers import ProviderName",
+        "successors": [
+          4
+        ]
+      },
+      {
+        "id": 4,
+        "start_line": 12,
+        "end_line": 13,
+        "label": "from ._base import BaseWebhooksManager",
+        "successors": [
+          5
+        ]
+      },
+      {
+        "id": 5,
+        "start_line": 14,
+        "end_line": 15,
+        "label": "logger = logging.getLogger(__name__)",
+        "successors": [
+          6
+        ]
+      },
+      {
+        "id": 6,
+        "start_line": 16,
+        "end_line": 18,
+        "label": "# --8<-- [start:GithubWebhooksManager]",
+        "successors": [
+          7
+        ]
+      },
+      {
+        "id": 7,
+        "start_line": 19,
+        "end_line": 20,
+        "label": "class GithubWebhookType(StrEnum):\n    REPO = \"repo\"",
+        "successors": [
+          8
+        ]
+      },
+      {
+        "id": 8,
+        "start_line": 21,
+        "end_line": 23,
+        "label": "class GithubWebhooksManager(BaseWebhooksManager):",
+        "successors": [
+          9
+        ]
+      },
+      {
+        "id": 9,
+        "start_line": 24,
+        "end_line": 29,
+        "label": "    PROVIDER_NAME = ProviderName.GITHUB\n    WebhookType = GithubWebhookType\n    GITHUB_API_URL = \"https://api.github.com\"\n    GITHUB_API_DEFAULT_HEADERS = {\"Accept\": \"application/vnd.github.v3+json\"}",
+        "successors": [
+          10
+        ]
+      },
+      {
+        "id": 10,
+        "start_line": 30,
+        "end_line": 34,
+        "label": "    @classmethod\n    async def validate_payload(\n        cls, webhook: integrations.Webhook, request: Request\n    ) -> tuple[dict, str]:",
+        "successors": [
+          11
+        ]
+      },
+      {
+        "id": 11,
+        "start_line": 35,
+        "end_line": 38,
+        "label": "        if not (event_type := request.headers.get(\"X-GitHub-Event\")):\n            raise HTTPException(\n                status_code=400, detail=\"X-GitHub-Event header is missing!\")",
+        "successors": [
+          12
+        ]
+      },
+      {
+        "id": 12,
+        "start_line": 39,
+        "end_line": 43,
+        "label": "        if not (signature_header := request.headers.get(\"X-Hub-Signature-256\")):\n            raise HTTPException(\n                status_code=403, detail=\"X-Hub-Signature-256 header is missing!\")",
+        "successors": [
+          13
+        ]
+      },
+      {
+        "id": 13,
+        "start_line": 44,
+        "end_line": 49,
+        "label": "        payload_body = await request.body()\n        hash_object = hmac.new(\n            webhook.secret.encode(\"utf-8\"), msg=payload_body, digestmod=hashlib.sha256)\n        expected_signature = \"sha256=\" + hash_object.hexdigest()",
+        "successors": [
+          14
+        ]
+      },
+      {
+        "id": 14,
+        "start_line": 50,
+        "end_line": 53,
+        "label": "        if not hmac.compare_digest(expected_signature, signature_header):\n            raise HTTPException(\n                status_code=403, detail=\"Request signatures didn't match!\")",
+        "successors": [
+          15
+        ]
+      },
+      {
+        "id": 15,
+        "start_line": 54,
+        "end_line": 60,
+        "label": "        payload = await request.json()\n        if action := payload.get(\"action\"):\n            event_type += f\".{action}\"\n        return payload, event_type",
+        "successors": [
+          16
+        ]
+      },
+      {
+        "id": 16,
+        "start_line": 61,
+        "end_line": 62,
+        "label": "    async def trigger_ping(\n        self, webhook: integrations.Webhook, credentials: Credentials | None)",
+        "successors": [
+          17
+        ]
+      },
+      {
+        "id": 17,
+        "start_line": 63,
+        "end_line": 66,
+        "label": "    ) -> None:\n        if not credentials:\n            raise ValueError(\"Credentials are required but were not passed\")",
+        "successors": [
+          18
+        ]
+      },
+      {
+        "id": 18,
+        "start_line": 67,
+        "end_line": 71,
+        "label": "        headers = {\n            **self.GITHUB_API_DEFAULT_HEADERS,\n            \"Authorization\": credentials.bearer(),\n        }",
+        "successors": [
+          19
+        ]
+      },
+      {
+        "id": 19,
+        "start_line": 72,
+        "end_line": 74,
+        "label": "        repo, github_hook_id = webhook.resource, webhook.provider_webhook_id\n        ping_url = f\"{self.GITHUB_API_URL}/repos/{repo}/hooks/{github_hook_id}/pings\"",
+        "successors": [
+          20
+        ]
+      },
+      {
+        "id": 20,
+        "start_line": 75,
+        "end_line": 76,
+        "label": "        response = requests.post(ping_url, headers=headers)",
+        "successors": [
+          21
+        ]
+      },
+      {
+        "id": 21,
+        "start_line": 77,
+        "end_line": 80,
+        "label": "        if response.status_code != 204:\n            error_msg = extract_github_error_msg(response)\n            raise ValueError(f\"Failed to ping GitHub webhook: {error_msg}\")",
+        "successors": [
+          22
+        ]
+      },
+      {
+        "id": 22,
+        "start_line": 81,
+        "end_line": 82,
+        "label": "    async def _register_webhook(\n        self,",
+        "successors": [
+          23
+        ]
+      },
+      {
+        "id": 23,
+        "start_line": 83,
+        "end_line": 89,
+        "label": "        credentials: Credentials,\n        webhook_type: GithubWebhookType,\n        resource: str,\n        events: list[str],\n        ingress_url: str,\n        secret: str,",
+        "successors": [
+          24
+        ]
+      },
+      {
+        "id": 24,
+        "start_line": 90,
+        "end_line": 92,
+        "label": "    ) -> tuple[str, dict]:\n        if webhook_type == self.WebhookType.REPO and resource.count(\"/\") > 1:\n            raise ValueError(\"Invalid repo format: expected 'owner/repo'\")",
+        "successors": [
+          25
+        ]
+      },
+      {
+        "id": 25,
+        "start_line": 93,
+        "end_line": 104,
+        "label": "        # Extract main event, e.g. `pull_request.opened` -> `pull_request`\n        github_events = list({event.split(\".\")[0] for event in events})\n        headers = {\n            **self.GITHUB_API_DEFAULT_HEADERS,\n            \"Authorization\": credentials.bearer(),\n        }\n        webhook_data = {\n            \"name\": \"web\",\n            \"active\": True,\n            \"events\": github_events,",
+        "successors": [
+          26
+        ]
+      },
+      {
+        "id": 26,
+        "start_line": 105,
+        "end_line": 110,
+        "label": "            \"config\": {\n                \"url\": ingress_url,\n                \"content_type\": \"json\",\n                \"insecure_ssl\": \"0\",\n                \"secret\": secret,\n            },",
+        "successors": [
+          27
+        ]
+      },
+      {
+        "id": 27,
+        "start_line": 111,
+        "end_line": 113,
+        "label": "        }\n        response = requests.post(\n            f\"{self.GITHUB_API_URL}/repos/{resource}/hooks\",",
+        "successors": [
+          28
+        ]
+      },
+      {
+        "id": 28,
+        "start_line": 114,
+        "end_line": 116,
+        "label": "            headers=headers,\n            json=webhook_data,\n        )",
+        "successors": [
+          29
+        ]
+      },
+      {
+        "id": 29,
+        "start_line": 117,
+        "end_line": 121,
+        "label": "        if response.status_code != 201:\n            error_msg = extract_github_error_msg(response)\n            if \"not found\" in error_msg.lower():\n                error_msg = (",
+        "successors": [
+          30
+        ]
+      },
+      {
+        "id": 30,
+        "start_line": 122,
+        "end_line": 125,
+        "label": "                    f\"{error_msg} \"\n                    \"(Make sure the GitHub account or API key has 'repo' or \"\n                    f\"webhook create permissions to '{resource}')\"",
+        "successors": [
+          31
+        ]
+      },
+      {
+        "id": 31,
+        "start_line": 126,
+        "end_line": 127,
+        "label": "                )\n            raise ValueError(f\"Failed to create GitHub webhook: {error_msg}\")",
+        "successors": [
+          32
+        ]
+      },
+      {
+        "id": 32,
+        "start_line": 128,
+        "end_line": 132,
+        "label": "        webhook_id = response.json()[\"id\"]\n        config = response.json()[\"config\"]\n        return str(webhook_id), config",
+        "successors": [
+          33
+        ]
+      },
+      {
+        "id": 33,
+        "start_line": 133,
+        "end_line": 137,
+        "label": "    async def _deregister_webhook(\n        self, webhook: integrations.Webhook, credentials: Credentials\n    ) -> None:\n        webhook_type = self.WebhookType(webhook.webhook_type)",
+        "successors": [
+          34
+        ]
+      },
+      {
+        "id": 34,
+        "start_line": 138,
+        "end_line": 141,
+        "label": "        if webhook.credentials_id != credentials.id:\n            raise ValueError(\n                f\"Webhook #{webhook.id} does not belong to credentials {credentials.id}\")",
+        "successors": [
+          35
+        ]
+      },
+      {
+        "id": 35,
+        "start_line": 142,
+        "end_line": 145,
+        "label": "        headers = {\n            **self.GITHUB_API_DEFAULT_HEADERS,\n            \"Authorization\": credentials.bearer(),\n        }",
+        "successors": [
+          36
+        ]
+      },
+      {
+        "id": 36,
+        "start_line": 146,
+        "end_line": 149,
+        "label": "        if webhook_type == self.WebhookType.REPO:\n            repo = webhook.resource\n            delete_url = f\"{self.GITHUB_API_URL}/repos/{repo}/hooks/{webhook.provider_webhook_id}\"  # noqa",
+        "successors": [
+          37
+        ]
+      },
+      {
+        "id": 37,
+        "start_line": 150,
+        "end_line": 152,
+        "label": "        else:\n            raise NotImplementedError(",
+        "successors": [
+          38
+        ]
+      },
+      {
+        "id": 38,
+        "start_line": 153,
+        "end_line": 154,
+        "label": "                f\"Unsupported webhook type '{webhook.webhook_type}'\")",
+        "successors": [
+          39
+        ]
+      },
+      {
+        "id": 39,
+        "start_line": 155,
+        "end_line": 156,
+        "label": "        response = requests.delete(delete_url, headers=headers)",
+        "successors": [
+          40
+        ]
+      },
+      {
+        "id": 40,
+        "start_line": 157,
+        "end_line": 161,
+        "label": "        if response.status_code not in [204, 404]:\n            # 204 means successful deletion, 404 means the webhook was already deleted\n            error_msg = extract_github_error_msg(response)\n            raise ValueError(f\"Failed to delete GitHub webhook: {error_msg}\")",
+        "successors": [
+          41
+        ]
+      },
+      {
+        "id": 41,
+        "start_line": 162,
+        "end_line": 166,
+        "label": "        # If we reach here, the webhook was successfully deleted or didn't exist\n        # --8<-- [end:GithubWebhooksManager]",
+        "successors": [
+          42
+        ]
+      },
+      {
+        "id": 42,
+        "start_line": 167,
+        "end_line": 169,
+        "label": "def extract_github_error_msg(response: requests.Response) -> str:",
+        "successors": [
+          43
+        ]
+      },
+      {
+        "id": 43,
+        "start_line": 170,
+        "end_line": 171,
+        "label": "    error_msgs = []\n    resp = response.json()",
+        "successors": [
+          44
+        ]
+      },
+      {
+        "id": 44,
+        "start_line": 172,
+        "end_line": 173,
+        "label": "    if resp.get(\"message\"):\n        error_msgs.append(resp[\"message\"])",
+        "successors": [
+          45
+        ]
+      },
+      {
+        "id": 45,
+        "start_line": 174,
+        "end_line": 175,
+        "label": "    if resp.get(\"errors\"):\n        error_msgs.extend(f\"* {err.get('message', err)}\" for err in resp[\"errors\"])",
+        "successors": [
+          46
+        ]
+      },
+      {
+        "id": 46,
+        "start_line": 176,
+        "end_line": 177,
+        "label": "    if resp.get(\"error\"):\n        if isinstance(resp[\"error\"], dict):",
+        "successors": [
+          47
+        ]
+      },
+      {
+        "id": 47,
+        "start_line": 178,
+        "end_line": 180,
+        "label": "            error_msgs.append(resp[\"error\"].get(\"message\", resp[\"error\"]))\n        else:\n            error_msgs.append(resp[\"error\"])",
+        "successors": [
+          48
+        ]
+      },
+      {
+        "id": 48,
+        "start_line": 181,
+        "end_line": 181,
+        "label": "    return \"\\n\".join(error_msgs)"
+      }
+    ]
+  },
+  "code_length": 181
+}
