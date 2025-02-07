@@ -1,0 +1,2342 @@
+{
+  "type": "SourceFile",
+  "label": "import { BedrockEmbeddings } from '@langchain/aws';\nimport {\n\tNodeConnectionType,\n\ttype INodeType,\n\ttype INodeTypeDescription,\n\ttype ISupplyDataFunctions,\n\ttype SupplyData,\n} from 'n8n-workflow';\nimport { logWrapper } from '../../../utils/logWrapper';\nimport { getConnectionHintNoticeField } from '../../../utils/sharedFields';\nexport class EmbeddingsAwsBedrock implements INodeType {\n\tdescription: INodeTypeDescription = {\n\t\tdisplayName: 'Embeddings AWS Bedrock',\n\t\tname: 'embeddingsAwsBedrock',\n\t\ticon: 'file:bedrock.svg',\n\t\tcredentials: [\n\t\t\t{\n\t\t\t\tname: 'aws',\n\t\t\t\trequired: true,\n\t\t\t},\n\t\t],\n\t\tgroup: ['transform'],\n\t\tversion: 1,\n\t\tdescription: 'Use Embeddings AWS Bedrock',\n\t\tdefaults: {\n\t\t\tname: 'Embeddings AWS Bedrock',\n\t\t},\n\t\tcodex: {\n\t\t\tcategories: ['AI'],\n\t\t\tsubcategories: {\n\t\t\t\tAI: ['Embeddings'],\n\t\t\t},\n\t\t\tresources: {\n\t\t\t\tprimaryDocumentation: [\n\t\t\t\t\t{\n\t\t\t\t\t\turl: 'https://docs.n8n.io/integrations/builtin/cluster-nodes/sub-nodes/n8n-nodes-langchain.embeddingsawsbedrock/',\n\t\t\t\t\t},\n\t\t\t\t],\n\t\t\t},\n\t\t},\n\t\t// eslint-disable-next-line n8n-nodes-base/node-class-description-inputs-wrong-regular-node\n\t\tinputs: [],\n\t\t// eslint-disable-next-line n8n-nodes-base/node-class-description-outputs-wrong\n\t\toutputs: [NodeConnectionType.AiEmbedding],\n\t\toutputNames: ['Embeddings'],\n\t\trequestDefaults: {\n\t\t\tignoreHttpStatusErrors: true,\n\t\t\tbaseURL: '=https://bedrock.{{$credentials?.region ?? \"eu-central-1\"}}.amazonaws.com',\n\t\t},\n\t\tproperties: [\n\t\t\tgetConnectionHintNoticeField([NodeConnectionType.AiVectorStore]),\n\t\t\t{\n\t\t\t\tdisplayName: 'Model',\n\t\t\t\tname: 'model',\n\t\t\t\ttype: 'options',\n\t\t\t\tdescription:\n\t\t\t\t\t'The model which will generate the completion. <a href=\"https://docs.aws.amazon.com/bedrock/latest/userguide/foundation-models.html\">Learn more</a>.',\n\t\t\t\ttypeOptions: {\n\t\t\t\t\tloadOptions: {\n\t\t\t\t\t\trouting: {\n\t\t\t\t\t\t\trequest: {\n\t\t\t\t\t\t\t\tmethod: 'GET',\n\t\t\t\t\t\t\t\turl: '/foundation-models?byInferenceType=ON_DEMAND&byOutputModality=EMBEDDING',\n\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\toutput: {\n\t\t\t\t\t\t\t\tpostReceive: [\n\t\t\t\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\t\t\ttype: 'rootProperty',\n\t\t\t\t\t\t\t\t\t\tproperties: {\n\t\t\t\t\t\t\t\t\t\t\tproperty: 'modelSummaries',\n\t\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\t\t\ttype: 'setKeyValue',\n\t\t\t\t\t\t\t\t\t\tproperties: {\n\t\t\t\t\t\t\t\t\t\t\tname: '={{$responseItem.modelName}}',\n\t\t\t\t\t\t\t\t\t\t\tdescription: '={{$responseItem.modelArn}}',\n\t\t\t\t\t\t\t\t\t\t\tvalue: '={{$responseItem.modelId}}',\n\t\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\t\t\ttype: 'sort',\n\t\t\t\t\t\t\t\t\t\tproperties: {\n\t\t\t\t\t\t\t\t\t\t\tkey: 'name',\n\t\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t],\n\t\t\t\t\t\t\t},\n\t\t\t\t\t\t},\n\t\t\t\t\t},\n\t\t\t\t},\n\t\t\t\trouting: {\n\t\t\t\t\tsend: {\n\t\t\t\t\t\ttype: 'body',\n\t\t\t\t\t\tproperty: 'model',\n\t\t\t\t\t},\n\t\t\t\t},\n\t\t\t\tdefault: '',\n\t\t\t},\n\t\t],\n\t};\n\tasync supplyData(this: ISupplyDataFunctions, itemIndex: number): Promise<SupplyData> {\n\t\tconst credentials = await this.getCredentials('aws');\n\t\tconst modelName = this.getNodeParameter('model', itemIndex) as string;\n\t\tconst embeddings = new BedrockEmbeddings({\n\t\t\tregion: credentials.region as string,\n\t\t\tmodel: modelName,\n\t\t\tmaxRetries: 3,\n\t\t\tcredentials: {\n\t\t\t\tsecretAccessKey: credentials.secretAccessKey as string,\n\t\t\t\taccessKeyId: credentials.accessKeyId as string,\n\t\t\t\tsessionToken: credentials.sessionToken as string,\n\t\t\t},\n\t\t});\n\t\treturn {\n\t\t\tresponse: logWrapper(embeddings, this),\n\t\t};\n\t}\n}",
+  "start_token": 0,
+  "end_token": 438,
+  "children": [
+    {
+      "type": "ImportDeclaration",
+      "label": "import { BedrockEmbeddings } from '@langchain/aws';",
+      "start_token": 0,
+      "end_token": 6,
+      "children": [
+        {
+          "type": "ImportClause",
+          "label": "{ BedrockEmbeddings }",
+          "start_token": 1,
+          "end_token": 3,
+          "children": [
+            {
+              "type": "NamedImports",
+              "label": "{ BedrockEmbeddings }",
+              "start_token": 1,
+              "end_token": 3,
+              "children": [
+                {
+                  "type": "ImportSpecifier",
+                  "label": "BedrockEmbeddings",
+                  "start_token": 2,
+                  "end_token": 2,
+                  "children": [
+                    {
+                      "type": "Identifier",
+                      "label": "BedrockEmbeddings",
+                      "start_token": 2,
+                      "end_token": 2,
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "StringLiteral",
+          "label": "'@langchain/aws'",
+          "start_token": 5,
+          "end_token": 5,
+          "children": []
+        }
+      ]
+    },
+    {
+      "type": "ImportDeclaration",
+      "label": "import {\n\tNodeConnectionType,\n\ttype INodeType,\n\ttype INodeTypeDescription,\n\ttype ISupplyDataFunctions,\n\ttype SupplyData,\n} from 'n8n-workflow';",
+      "start_token": 7,
+      "end_token": 26,
+      "children": [
+        {
+          "type": "ImportClause",
+          "label": "{\n\tNodeConnectionType,\n\ttype INodeType,\n\ttype INodeTypeDescription,\n\ttype ISupplyDataFunctions,\n\ttype SupplyData,\n}",
+          "start_token": 8,
+          "end_token": 23,
+          "children": [
+            {
+              "type": "NamedImports",
+              "label": "{\n\tNodeConnectionType,\n\ttype INodeType,\n\ttype INodeTypeDescription,\n\ttype ISupplyDataFunctions,\n\ttype SupplyData,\n}",
+              "start_token": 8,
+              "end_token": 23,
+              "children": [
+                {
+                  "type": "ImportSpecifier",
+                  "label": "NodeConnectionType",
+                  "start_token": 9,
+                  "end_token": 9,
+                  "children": [
+                    {
+                      "type": "Identifier",
+                      "label": "NodeConnectionType",
+                      "start_token": 9,
+                      "end_token": 9,
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "type": "ImportSpecifier",
+                  "label": "type INodeType",
+                  "start_token": 11,
+                  "end_token": 12,
+                  "children": [
+                    {
+                      "type": "Identifier",
+                      "label": "INodeType",
+                      "start_token": 12,
+                      "end_token": 12,
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "type": "ImportSpecifier",
+                  "label": "type INodeTypeDescription",
+                  "start_token": 14,
+                  "end_token": 15,
+                  "children": [
+                    {
+                      "type": "Identifier",
+                      "label": "INodeTypeDescription",
+                      "start_token": 15,
+                      "end_token": 15,
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "type": "ImportSpecifier",
+                  "label": "type ISupplyDataFunctions",
+                  "start_token": 17,
+                  "end_token": 18,
+                  "children": [
+                    {
+                      "type": "Identifier",
+                      "label": "ISupplyDataFunctions",
+                      "start_token": 18,
+                      "end_token": 18,
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "type": "ImportSpecifier",
+                  "label": "type SupplyData",
+                  "start_token": 20,
+                  "end_token": 21,
+                  "children": [
+                    {
+                      "type": "Identifier",
+                      "label": "SupplyData",
+                      "start_token": 21,
+                      "end_token": 21,
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "StringLiteral",
+          "label": "'n8n-workflow'",
+          "start_token": 25,
+          "end_token": 25,
+          "children": []
+        }
+      ]
+    },
+    {
+      "type": "ImportDeclaration",
+      "label": "import { logWrapper } from '../../../utils/logWrapper';",
+      "start_token": 27,
+      "end_token": 33,
+      "children": [
+        {
+          "type": "ImportClause",
+          "label": "{ logWrapper }",
+          "start_token": 28,
+          "end_token": 30,
+          "children": [
+            {
+              "type": "NamedImports",
+              "label": "{ logWrapper }",
+              "start_token": 28,
+              "end_token": 30,
+              "children": [
+                {
+                  "type": "ImportSpecifier",
+                  "label": "logWrapper",
+                  "start_token": 29,
+                  "end_token": 29,
+                  "children": [
+                    {
+                      "type": "Identifier",
+                      "label": "logWrapper",
+                      "start_token": 29,
+                      "end_token": 29,
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "StringLiteral",
+          "label": "'../../../utils/logWrapper'",
+          "start_token": 32,
+          "end_token": 32,
+          "children": []
+        }
+      ]
+    },
+    {
+      "type": "ImportDeclaration",
+      "label": "import { getConnectionHintNoticeField } from '../../../utils/sharedFields';",
+      "start_token": 34,
+      "end_token": 40,
+      "children": [
+        {
+          "type": "ImportClause",
+          "label": "{ getConnectionHintNoticeField }",
+          "start_token": 35,
+          "end_token": 37,
+          "children": [
+            {
+              "type": "NamedImports",
+              "label": "{ getConnectionHintNoticeField }",
+              "start_token": 35,
+              "end_token": 37,
+              "children": [
+                {
+                  "type": "ImportSpecifier",
+                  "label": "getConnectionHintNoticeField",
+                  "start_token": 36,
+                  "end_token": 36,
+                  "children": [
+                    {
+                      "type": "Identifier",
+                      "label": "getConnectionHintNoticeField",
+                      "start_token": 36,
+                      "end_token": 36,
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "StringLiteral",
+          "label": "'../../../utils/sharedFields'",
+          "start_token": 39,
+          "end_token": 39,
+          "children": []
+        }
+      ]
+    },
+    {
+      "type": "ClassDeclaration",
+      "label": "export class EmbeddingsAwsBedrock implements INodeType {\n\tdescription: INodeTypeDescription = {\n\t\tdisplayName: 'Embeddings AWS Bedrock',\n\t\tname: 'embeddingsAwsBedrock',\n\t\ticon: 'file:bedrock.svg',\n\t\tcredentials: [\n\t\t\t{\n\t\t\t\tname: 'aws',\n\t\t\t\trequired: true,\n\t\t\t},\n\t\t],\n\t\tgroup: ['transform'],\n\t\tversion: 1,\n\t\tdescription: 'Use Embeddings AWS Bedrock',\n\t\tdefaults: {\n\t\t\tname: 'Embeddings AWS Bedrock',\n\t\t},\n\t\tcodex: {\n\t\t\tcategories: ['AI'],\n\t\t\tsubcategories: {\n\t\t\t\tAI: ['Embeddings'],\n\t\t\t},\n\t\t\tresources: {\n\t\t\t\tprimaryDocumentation: [\n\t\t\t\t\t{\n\t\t\t\t\t\turl: 'https://docs.n8n.io/integrations/builtin/cluster-nodes/sub-nodes/n8n-nodes-langchain.embeddingsawsbedrock/',\n\t\t\t\t\t},\n\t\t\t\t],\n\t\t\t},\n\t\t},\n\t\t// eslint-disable-next-line n8n-nodes-base/node-class-description-inputs-wrong-regular-node\n\t\tinputs: [],\n\t\t// eslint-disable-next-line n8n-nodes-base/node-class-description-outputs-wrong\n\t\toutputs: [NodeConnectionType.AiEmbedding],\n\t\toutputNames: ['Embeddings'],\n\t\trequestDefaults: {\n\t\t\tignoreHttpStatusErrors: true,\n\t\t\tbaseURL: '=https://bedrock.{{$credentials?.region ?? \"eu-central-1\"}}.amazonaws.com',\n\t\t},\n\t\tproperties: [\n\t\t\tgetConnectionHintNoticeField([NodeConnectionType.AiVectorStore]),\n\t\t\t{\n\t\t\t\tdisplayName: 'Model',\n\t\t\t\tname: 'model',\n\t\t\t\ttype: 'options',\n\t\t\t\tdescription:\n\t\t\t\t\t'The model which will generate the completion. <a href=\"https://docs.aws.amazon.com/bedrock/latest/userguide/foundation-models.html\">Learn more</a>.',\n\t\t\t\ttypeOptions: {\n\t\t\t\t\tloadOptions: {\n\t\t\t\t\t\trouting: {\n\t\t\t\t\t\t\trequest: {\n\t\t\t\t\t\t\t\tmethod: 'GET',\n\t\t\t\t\t\t\t\turl: '/foundation-models?byInferenceType=ON_DEMAND&byOutputModality=EMBEDDING',\n\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\toutput: {\n\t\t\t\t\t\t\t\tpostReceive: [\n\t\t\t\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\t\t\ttype: 'rootProperty',\n\t\t\t\t\t\t\t\t\t\tproperties: {\n\t\t\t\t\t\t\t\t\t\t\tproperty: 'modelSummaries',\n\t\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\t\t\ttype: 'setKeyValue',\n\t\t\t\t\t\t\t\t\t\tproperties: {\n\t\t\t\t\t\t\t\t\t\t\tname: '={{$responseItem.modelName}}',\n\t\t\t\t\t\t\t\t\t\t\tdescription: '={{$responseItem.modelArn}}',\n\t\t\t\t\t\t\t\t\t\t\tvalue: '={{$responseItem.modelId}}',\n\t\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\t\t\ttype: 'sort',\n\t\t\t\t\t\t\t\t\t\tproperties: {\n\t\t\t\t\t\t\t\t\t\t\tkey: 'name',\n\t\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t],\n\t\t\t\t\t\t\t},\n\t\t\t\t\t\t},\n\t\t\t\t\t},\n\t\t\t\t},\n\t\t\t\trouting: {\n\t\t\t\t\tsend: {\n\t\t\t\t\t\ttype: 'body',\n\t\t\t\t\t\tproperty: 'model',\n\t\t\t\t\t},\n\t\t\t\t},\n\t\t\t\tdefault: '',\n\t\t\t},\n\t\t],\n\t};\n\tasync supplyData(this: ISupplyDataFunctions, itemIndex: number): Promise<SupplyData> {\n\t\tconst credentials = await this.getCredentials('aws');\n\t\tconst modelName = this.getNodeParameter('model', itemIndex) as string;\n\t\tconst embeddings = new BedrockEmbeddings({\n\t\t\tregion: credentials.region as string,\n\t\t\tmodel: modelName,\n\t\t\tmaxRetries: 3,\n\t\t\tcredentials: {\n\t\t\t\tsecretAccessKey: credentials.secretAccessKey as string,\n\t\t\t\taccessKeyId: credentials.accessKeyId as string,\n\t\t\t\tsessionToken: credentials.sessionToken as string,\n\t\t\t},\n\t\t});\n\t\treturn {\n\t\t\tresponse: logWrapper(embeddings, this),\n\t\t};\n\t}\n}",
+      "start_token": 41,
+      "end_token": 438,
+      "children": [
+        {
+          "type": "ExportKeyword",
+          "label": "export",
+          "start_token": 41,
+          "end_token": 41,
+          "children": []
+        },
+        {
+          "type": "Identifier",
+          "label": "EmbeddingsAwsBedrock",
+          "start_token": 43,
+          "end_token": 43,
+          "children": []
+        },
+        {
+          "type": "HeritageClause",
+          "label": "implements INodeType",
+          "start_token": 44,
+          "end_token": 45,
+          "children": [
+            {
+              "type": "ExpressionWithTypeArguments",
+              "label": "INodeType",
+              "start_token": 45,
+              "end_token": 45,
+              "children": [
+                {
+                  "type": "Identifier",
+                  "label": "INodeType",
+                  "start_token": 45,
+                  "end_token": 45,
+                  "children": []
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "PropertyDeclaration",
+          "label": "description: INodeTypeDescription = {\n\t\tdisplayName: 'Embeddings AWS Bedrock',\n\t\tname: 'embeddingsAwsBedrock',\n\t\ticon: 'file:bedrock.svg',\n\t\tcredentials: [\n\t\t\t{\n\t\t\t\tname: 'aws',\n\t\t\t\trequired: true,\n\t\t\t},\n\t\t],\n\t\tgroup: ['transform'],\n\t\tversion: 1,\n\t\tdescription: 'Use Embeddings AWS Bedrock',\n\t\tdefaults: {\n\t\t\tname: 'Embeddings AWS Bedrock',\n\t\t},\n\t\tcodex: {\n\t\t\tcategories: ['AI'],\n\t\t\tsubcategories: {\n\t\t\t\tAI: ['Embeddings'],\n\t\t\t},\n\t\t\tresources: {\n\t\t\t\tprimaryDocumentation: [\n\t\t\t\t\t{\n\t\t\t\t\t\turl: 'https://docs.n8n.io/integrations/builtin/cluster-nodes/sub-nodes/n8n-nodes-langchain.embeddingsawsbedrock/',\n\t\t\t\t\t},\n\t\t\t\t],\n\t\t\t},\n\t\t},\n\t\t// eslint-disable-next-line n8n-nodes-base/node-class-description-inputs-wrong-regular-node\n\t\tinputs: [],\n\t\t// eslint-disable-next-line n8n-nodes-base/node-class-description-outputs-wrong\n\t\toutputs: [NodeConnectionType.AiEmbedding],\n\t\toutputNames: ['Embeddings'],\n\t\trequestDefaults: {\n\t\t\tignoreHttpStatusErrors: true,\n\t\t\tbaseURL: '=https://bedrock.{{$credentials?.region ?? \"eu-central-1\"}}.amazonaws.com',\n\t\t},\n\t\tproperties: [\n\t\t\tgetConnectionHintNoticeField([NodeConnectionType.AiVectorStore]),\n\t\t\t{\n\t\t\t\tdisplayName: 'Model',\n\t\t\t\tname: 'model',\n\t\t\t\ttype: 'options',\n\t\t\t\tdescription:\n\t\t\t\t\t'The model which will generate the completion. <a href=\"https://docs.aws.amazon.com/bedrock/latest/userguide/foundation-models.html\">Learn more</a>.',\n\t\t\t\ttypeOptions: {\n\t\t\t\t\tloadOptions: {\n\t\t\t\t\t\trouting: {\n\t\t\t\t\t\t\trequest: {\n\t\t\t\t\t\t\t\tmethod: 'GET',\n\t\t\t\t\t\t\t\turl: '/foundation-models?byInferenceType=ON_DEMAND&byOutputModality=EMBEDDING',\n\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\toutput: {\n\t\t\t\t\t\t\t\tpostReceive: [\n\t\t\t\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\t\t\ttype: 'rootProperty',\n\t\t\t\t\t\t\t\t\t\tproperties: {\n\t\t\t\t\t\t\t\t\t\t\tproperty: 'modelSummaries',\n\t\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\t\t\ttype: 'setKeyValue',\n\t\t\t\t\t\t\t\t\t\tproperties: {\n\t\t\t\t\t\t\t\t\t\t\tname: '={{$responseItem.modelName}}',\n\t\t\t\t\t\t\t\t\t\t\tdescription: '={{$responseItem.modelArn}}',\n\t\t\t\t\t\t\t\t\t\t\tvalue: '={{$responseItem.modelId}}',\n\t\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\t\t\ttype: 'sort',\n\t\t\t\t\t\t\t\t\t\tproperties: {\n\t\t\t\t\t\t\t\t\t\t\tkey: 'name',\n\t\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t],\n\t\t\t\t\t\t\t},\n\t\t\t\t\t\t},\n\t\t\t\t\t},\n\t\t\t\t},\n\t\t\t\trouting: {\n\t\t\t\t\tsend: {\n\t\t\t\t\t\ttype: 'body',\n\t\t\t\t\t\tproperty: 'model',\n\t\t\t\t\t},\n\t\t\t\t},\n\t\t\t\tdefault: '',\n\t\t\t},\n\t\t],\n\t};",
+          "start_token": 47,
+          "end_token": 326,
+          "children": [
+            {
+              "type": "Identifier",
+              "label": "description",
+              "start_token": 47,
+              "end_token": 47,
+              "children": []
+            },
+            {
+              "type": "TypeReference",
+              "label": "INodeTypeDescription",
+              "start_token": 49,
+              "end_token": 49,
+              "children": [
+                {
+                  "type": "Identifier",
+                  "label": "INodeTypeDescription",
+                  "start_token": 49,
+                  "end_token": 49,
+                  "children": []
+                }
+              ]
+            },
+            {
+              "type": "ObjectLiteralExpression",
+              "label": "{\n\t\tdisplayName: 'Embeddings AWS Bedrock',\n\t\tname: 'embeddingsAwsBedrock',\n\t\ticon: 'file:bedrock.svg',\n\t\tcredentials: [\n\t\t\t{\n\t\t\t\tname: 'aws',\n\t\t\t\trequired: true,\n\t\t\t},\n\t\t],\n\t\tgroup: ['transform'],\n\t\tversion: 1,\n\t\tdescription: 'Use Embeddings AWS Bedrock',\n\t\tdefaults: {\n\t\t\tname: 'Embeddings AWS Bedrock',\n\t\t},\n\t\tcodex: {\n\t\t\tcategories: ['AI'],\n\t\t\tsubcategories: {\n\t\t\t\tAI: ['Embeddings'],\n\t\t\t},\n\t\t\tresources: {\n\t\t\t\tprimaryDocumentation: [\n\t\t\t\t\t{\n\t\t\t\t\t\turl: 'https://docs.n8n.io/integrations/builtin/cluster-nodes/sub-nodes/n8n-nodes-langchain.embeddingsawsbedrock/',\n\t\t\t\t\t},\n\t\t\t\t],\n\t\t\t},\n\t\t},\n\t\t// eslint-disable-next-line n8n-nodes-base/node-class-description-inputs-wrong-regular-node\n\t\tinputs: [],\n\t\t// eslint-disable-next-line n8n-nodes-base/node-class-description-outputs-wrong\n\t\toutputs: [NodeConnectionType.AiEmbedding],\n\t\toutputNames: ['Embeddings'],\n\t\trequestDefaults: {\n\t\t\tignoreHttpStatusErrors: true,\n\t\t\tbaseURL: '=https://bedrock.{{$credentials?.region ?? \"eu-central-1\"}}.amazonaws.com',\n\t\t},\n\t\tproperties: [\n\t\t\tgetConnectionHintNoticeField([NodeConnectionType.AiVectorStore]),\n\t\t\t{\n\t\t\t\tdisplayName: 'Model',\n\t\t\t\tname: 'model',\n\t\t\t\ttype: 'options',\n\t\t\t\tdescription:\n\t\t\t\t\t'The model which will generate the completion. <a href=\"https://docs.aws.amazon.com/bedrock/latest/userguide/foundation-models.html\">Learn more</a>.',\n\t\t\t\ttypeOptions: {\n\t\t\t\t\tloadOptions: {\n\t\t\t\t\t\trouting: {\n\t\t\t\t\t\t\trequest: {\n\t\t\t\t\t\t\t\tmethod: 'GET',\n\t\t\t\t\t\t\t\turl: '/foundation-models?byInferenceType=ON_DEMAND&byOutputModality=EMBEDDING',\n\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\toutput: {\n\t\t\t\t\t\t\t\tpostReceive: [\n\t\t\t\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\t\t\ttype: 'rootProperty',\n\t\t\t\t\t\t\t\t\t\tproperties: {\n\t\t\t\t\t\t\t\t\t\t\tproperty: 'modelSummaries',\n\t\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\t\t\ttype: 'setKeyValue',\n\t\t\t\t\t\t\t\t\t\tproperties: {\n\t\t\t\t\t\t\t\t\t\t\tname: '={{$responseItem.modelName}}',\n\t\t\t\t\t\t\t\t\t\t\tdescription: '={{$responseItem.modelArn}}',\n\t\t\t\t\t\t\t\t\t\t\tvalue: '={{$responseItem.modelId}}',\n\t\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\t\t\ttype: 'sort',\n\t\t\t\t\t\t\t\t\t\tproperties: {\n\t\t\t\t\t\t\t\t\t\t\tkey: 'name',\n\t\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t],\n\t\t\t\t\t\t\t},\n\t\t\t\t\t\t},\n\t\t\t\t\t},\n\t\t\t\t},\n\t\t\t\trouting: {\n\t\t\t\t\tsend: {\n\t\t\t\t\t\ttype: 'body',\n\t\t\t\t\t\tproperty: 'model',\n\t\t\t\t\t},\n\t\t\t\t},\n\t\t\t\tdefault: '',\n\t\t\t},\n\t\t],\n\t}",
+              "start_token": 51,
+              "end_token": 325,
+              "children": [
+                {
+                  "type": "PropertyAssignment",
+                  "label": "displayName: 'Embeddings AWS Bedrock'",
+                  "start_token": 52,
+                  "end_token": 54,
+                  "children": [
+                    {
+                      "type": "Identifier",
+                      "label": "displayName",
+                      "start_token": 52,
+                      "end_token": 52,
+                      "children": []
+                    },
+                    {
+                      "type": "StringLiteral",
+                      "label": "'Embeddings AWS Bedrock'",
+                      "start_token": 54,
+                      "end_token": 54,
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "type": "PropertyAssignment",
+                  "label": "name: 'embeddingsAwsBedrock'",
+                  "start_token": 56,
+                  "end_token": 58,
+                  "children": [
+                    {
+                      "type": "Identifier",
+                      "label": "name",
+                      "start_token": 56,
+                      "end_token": 56,
+                      "children": []
+                    },
+                    {
+                      "type": "StringLiteral",
+                      "label": "'embeddingsAwsBedrock'",
+                      "start_token": 58,
+                      "end_token": 58,
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "type": "PropertyAssignment",
+                  "label": "icon: 'file:bedrock.svg'",
+                  "start_token": 60,
+                  "end_token": 62,
+                  "children": [
+                    {
+                      "type": "Identifier",
+                      "label": "icon",
+                      "start_token": 60,
+                      "end_token": 60,
+                      "children": []
+                    },
+                    {
+                      "type": "StringLiteral",
+                      "label": "'file:bedrock.svg'",
+                      "start_token": 62,
+                      "end_token": 62,
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "type": "PropertyAssignment",
+                  "label": "credentials: [\n\t\t\t{\n\t\t\t\tname: 'aws',\n\t\t\t\trequired: true,\n\t\t\t},\n\t\t]",
+                  "start_token": 64,
+                  "end_token": 78,
+                  "children": [
+                    {
+                      "type": "Identifier",
+                      "label": "credentials",
+                      "start_token": 64,
+                      "end_token": 64,
+                      "children": []
+                    },
+                    {
+                      "type": "ArrayLiteralExpression",
+                      "label": "[\n\t\t\t{\n\t\t\t\tname: 'aws',\n\t\t\t\trequired: true,\n\t\t\t},\n\t\t]",
+                      "start_token": 66,
+                      "end_token": 78,
+                      "children": [
+                        {
+                          "type": "ObjectLiteralExpression",
+                          "label": "{\n\t\t\t\tname: 'aws',\n\t\t\t\trequired: true,\n\t\t\t}",
+                          "start_token": 67,
+                          "end_token": 76,
+                          "children": [
+                            {
+                              "type": "PropertyAssignment",
+                              "label": "name: 'aws'",
+                              "start_token": 68,
+                              "end_token": 70,
+                              "children": [
+                                {
+                                  "type": "Identifier",
+                                  "label": "name",
+                                  "start_token": 68,
+                                  "end_token": 68,
+                                  "children": []
+                                },
+                                {
+                                  "type": "StringLiteral",
+                                  "label": "'aws'",
+                                  "start_token": 70,
+                                  "end_token": 70,
+                                  "children": []
+                                }
+                              ]
+                            },
+                            {
+                              "type": "PropertyAssignment",
+                              "label": "required: true",
+                              "start_token": 72,
+                              "end_token": 74,
+                              "children": [
+                                {
+                                  "type": "Identifier",
+                                  "label": "required",
+                                  "start_token": 72,
+                                  "end_token": 72,
+                                  "children": []
+                                },
+                                {
+                                  "type": "TrueKeyword",
+                                  "label": "true",
+                                  "start_token": 74,
+                                  "end_token": 74,
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "PropertyAssignment",
+                  "label": "group: ['transform']",
+                  "start_token": 80,
+                  "end_token": 84,
+                  "children": [
+                    {
+                      "type": "Identifier",
+                      "label": "group",
+                      "start_token": 80,
+                      "end_token": 80,
+                      "children": []
+                    },
+                    {
+                      "type": "ArrayLiteralExpression",
+                      "label": "['transform']",
+                      "start_token": 82,
+                      "end_token": 84,
+                      "children": [
+                        {
+                          "type": "StringLiteral",
+                          "label": "'transform'",
+                          "start_token": 83,
+                          "end_token": 83,
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "PropertyAssignment",
+                  "label": "version: 1",
+                  "start_token": 86,
+                  "end_token": 88,
+                  "children": [
+                    {
+                      "type": "Identifier",
+                      "label": "version",
+                      "start_token": 86,
+                      "end_token": 86,
+                      "children": []
+                    },
+                    {
+                      "type": "FirstLiteralToken",
+                      "label": "1",
+                      "start_token": 88,
+                      "end_token": 88,
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "type": "PropertyAssignment",
+                  "label": "description: 'Use Embeddings AWS Bedrock'",
+                  "start_token": 90,
+                  "end_token": 92,
+                  "children": [
+                    {
+                      "type": "Identifier",
+                      "label": "description",
+                      "start_token": 90,
+                      "end_token": 90,
+                      "children": []
+                    },
+                    {
+                      "type": "StringLiteral",
+                      "label": "'Use Embeddings AWS Bedrock'",
+                      "start_token": 92,
+                      "end_token": 92,
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "type": "PropertyAssignment",
+                  "label": "defaults: {\n\t\t\tname: 'Embeddings AWS Bedrock',\n\t\t}",
+                  "start_token": 94,
+                  "end_token": 101,
+                  "children": [
+                    {
+                      "type": "Identifier",
+                      "label": "defaults",
+                      "start_token": 94,
+                      "end_token": 94,
+                      "children": []
+                    },
+                    {
+                      "type": "ObjectLiteralExpression",
+                      "label": "{\n\t\t\tname: 'Embeddings AWS Bedrock',\n\t\t}",
+                      "start_token": 96,
+                      "end_token": 101,
+                      "children": [
+                        {
+                          "type": "PropertyAssignment",
+                          "label": "name: 'Embeddings AWS Bedrock'",
+                          "start_token": 97,
+                          "end_token": 99,
+                          "children": [
+                            {
+                              "type": "Identifier",
+                              "label": "name",
+                              "start_token": 97,
+                              "end_token": 97,
+                              "children": []
+                            },
+                            {
+                              "type": "StringLiteral",
+                              "label": "'Embeddings AWS Bedrock'",
+                              "start_token": 99,
+                              "end_token": 99,
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "PropertyAssignment",
+                  "label": "codex: {\n\t\t\tcategories: ['AI'],\n\t\t\tsubcategories: {\n\t\t\t\tAI: ['Embeddings'],\n\t\t\t},\n\t\t\tresources: {\n\t\t\t\tprimaryDocumentation: [\n\t\t\t\t\t{\n\t\t\t\t\t\turl: 'https://docs.n8n.io/integrations/builtin/cluster-nodes/sub-nodes/n8n-nodes-langchain.embeddingsawsbedrock/',\n\t\t\t\t\t},\n\t\t\t\t],\n\t\t\t},\n\t\t}",
+                  "start_token": 103,
+                  "end_token": 140,
+                  "children": [
+                    {
+                      "type": "Identifier",
+                      "label": "codex",
+                      "start_token": 103,
+                      "end_token": 103,
+                      "children": []
+                    },
+                    {
+                      "type": "ObjectLiteralExpression",
+                      "label": "{\n\t\t\tcategories: ['AI'],\n\t\t\tsubcategories: {\n\t\t\t\tAI: ['Embeddings'],\n\t\t\t},\n\t\t\tresources: {\n\t\t\t\tprimaryDocumentation: [\n\t\t\t\t\t{\n\t\t\t\t\t\turl: 'https://docs.n8n.io/integrations/builtin/cluster-nodes/sub-nodes/n8n-nodes-langchain.embeddingsawsbedrock/',\n\t\t\t\t\t},\n\t\t\t\t],\n\t\t\t},\n\t\t}",
+                      "start_token": 105,
+                      "end_token": 140,
+                      "children": [
+                        {
+                          "type": "PropertyAssignment",
+                          "label": "categories: ['AI']",
+                          "start_token": 106,
+                          "end_token": 110,
+                          "children": [
+                            {
+                              "type": "Identifier",
+                              "label": "categories",
+                              "start_token": 106,
+                              "end_token": 106,
+                              "children": []
+                            },
+                            {
+                              "type": "ArrayLiteralExpression",
+                              "label": "['AI']",
+                              "start_token": 108,
+                              "end_token": 110,
+                              "children": [
+                                {
+                                  "type": "StringLiteral",
+                                  "label": "'AI'",
+                                  "start_token": 109,
+                                  "end_token": 109,
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "PropertyAssignment",
+                          "label": "subcategories: {\n\t\t\t\tAI: ['Embeddings'],\n\t\t\t}",
+                          "start_token": 112,
+                          "end_token": 121,
+                          "children": [
+                            {
+                              "type": "Identifier",
+                              "label": "subcategories",
+                              "start_token": 112,
+                              "end_token": 112,
+                              "children": []
+                            },
+                            {
+                              "type": "ObjectLiteralExpression",
+                              "label": "{\n\t\t\t\tAI: ['Embeddings'],\n\t\t\t}",
+                              "start_token": 114,
+                              "end_token": 121,
+                              "children": [
+                                {
+                                  "type": "PropertyAssignment",
+                                  "label": "AI: ['Embeddings']",
+                                  "start_token": 115,
+                                  "end_token": 119,
+                                  "children": [
+                                    {
+                                      "type": "Identifier",
+                                      "label": "AI",
+                                      "start_token": 115,
+                                      "end_token": 115,
+                                      "children": []
+                                    },
+                                    {
+                                      "type": "ArrayLiteralExpression",
+                                      "label": "['Embeddings']",
+                                      "start_token": 117,
+                                      "end_token": 119,
+                                      "children": [
+                                        {
+                                          "type": "StringLiteral",
+                                          "label": "'Embeddings'",
+                                          "start_token": 118,
+                                          "end_token": 118,
+                                          "children": []
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "PropertyAssignment",
+                          "label": "resources: {\n\t\t\t\tprimaryDocumentation: [\n\t\t\t\t\t{\n\t\t\t\t\t\turl: 'https://docs.n8n.io/integrations/builtin/cluster-nodes/sub-nodes/n8n-nodes-langchain.embeddingsawsbedrock/',\n\t\t\t\t\t},\n\t\t\t\t],\n\t\t\t}",
+                          "start_token": 123,
+                          "end_token": 138,
+                          "children": [
+                            {
+                              "type": "Identifier",
+                              "label": "resources",
+                              "start_token": 123,
+                              "end_token": 123,
+                              "children": []
+                            },
+                            {
+                              "type": "ObjectLiteralExpression",
+                              "label": "{\n\t\t\t\tprimaryDocumentation: [\n\t\t\t\t\t{\n\t\t\t\t\t\turl: 'https://docs.n8n.io/integrations/builtin/cluster-nodes/sub-nodes/n8n-nodes-langchain.embeddingsawsbedrock/',\n\t\t\t\t\t},\n\t\t\t\t],\n\t\t\t}",
+                              "start_token": 125,
+                              "end_token": 138,
+                              "children": [
+                                {
+                                  "type": "PropertyAssignment",
+                                  "label": "primaryDocumentation: [\n\t\t\t\t\t{\n\t\t\t\t\t\turl: 'https://docs.n8n.io/integrations/builtin/cluster-nodes/sub-nodes/n8n-nodes-langchain.embeddingsawsbedrock/',\n\t\t\t\t\t},\n\t\t\t\t]",
+                                  "start_token": 126,
+                                  "end_token": 136,
+                                  "children": [
+                                    {
+                                      "type": "Identifier",
+                                      "label": "primaryDocumentation",
+                                      "start_token": 126,
+                                      "end_token": 126,
+                                      "children": []
+                                    },
+                                    {
+                                      "type": "ArrayLiteralExpression",
+                                      "label": "[\n\t\t\t\t\t{\n\t\t\t\t\t\turl: 'https://docs.n8n.io/integrations/builtin/cluster-nodes/sub-nodes/n8n-nodes-langchain.embeddingsawsbedrock/',\n\t\t\t\t\t},\n\t\t\t\t]",
+                                      "start_token": 128,
+                                      "end_token": 136,
+                                      "children": [
+                                        {
+                                          "type": "ObjectLiteralExpression",
+                                          "label": "{\n\t\t\t\t\t\turl: 'https://docs.n8n.io/integrations/builtin/cluster-nodes/sub-nodes/n8n-nodes-langchain.embeddingsawsbedrock/',\n\t\t\t\t\t}",
+                                          "start_token": 129,
+                                          "end_token": 134,
+                                          "children": [
+                                            {
+                                              "type": "PropertyAssignment",
+                                              "label": "url: 'https://docs.n8n.io/integrations/builtin/cluster-nodes/sub-nodes/n8n-nodes-langchain.embeddingsawsbedrock/'",
+                                              "start_token": 130,
+                                              "end_token": 132,
+                                              "children": [
+                                                {
+                                                  "type": "Identifier",
+                                                  "label": "url",
+                                                  "start_token": 130,
+                                                  "end_token": 130,
+                                                  "children": []
+                                                },
+                                                {
+                                                  "type": "StringLiteral",
+                                                  "label": "'https://docs.n8n.io/integrations/builtin/cluster-nodes/sub-nodes/n8n-nodes-langchain.embeddingsawsbedrock/'",
+                                                  "start_token": 132,
+                                                  "end_token": 132,
+                                                  "children": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "PropertyAssignment",
+                  "label": "inputs: []",
+                  "start_token": 143,
+                  "end_token": 146,
+                  "children": [
+                    {
+                      "type": "Identifier",
+                      "label": "inputs",
+                      "start_token": 143,
+                      "end_token": 143,
+                      "children": []
+                    },
+                    {
+                      "type": "ArrayLiteralExpression",
+                      "label": "[]",
+                      "start_token": 145,
+                      "end_token": 146,
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "type": "PropertyAssignment",
+                  "label": "outputs: [NodeConnectionType.AiEmbedding]",
+                  "start_token": 149,
+                  "end_token": 155,
+                  "children": [
+                    {
+                      "type": "Identifier",
+                      "label": "outputs",
+                      "start_token": 149,
+                      "end_token": 149,
+                      "children": []
+                    },
+                    {
+                      "type": "ArrayLiteralExpression",
+                      "label": "[NodeConnectionType.AiEmbedding]",
+                      "start_token": 151,
+                      "end_token": 155,
+                      "children": [
+                        {
+                          "type": "PropertyAccessExpression",
+                          "label": "NodeConnectionType.AiEmbedding",
+                          "start_token": 152,
+                          "end_token": 154,
+                          "children": [
+                            {
+                              "type": "Identifier",
+                              "label": "NodeConnectionType",
+                              "start_token": 152,
+                              "end_token": 152,
+                              "children": []
+                            },
+                            {
+                              "type": "Identifier",
+                              "label": "AiEmbedding",
+                              "start_token": 154,
+                              "end_token": 154,
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "PropertyAssignment",
+                  "label": "outputNames: ['Embeddings']",
+                  "start_token": 157,
+                  "end_token": 161,
+                  "children": [
+                    {
+                      "type": "Identifier",
+                      "label": "outputNames",
+                      "start_token": 157,
+                      "end_token": 157,
+                      "children": []
+                    },
+                    {
+                      "type": "ArrayLiteralExpression",
+                      "label": "['Embeddings']",
+                      "start_token": 159,
+                      "end_token": 161,
+                      "children": [
+                        {
+                          "type": "StringLiteral",
+                          "label": "'Embeddings'",
+                          "start_token": 160,
+                          "end_token": 160,
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "PropertyAssignment",
+                  "label": "requestDefaults: {\n\t\t\tignoreHttpStatusErrors: true,\n\t\t\tbaseURL: '=https://bedrock.{{$credentials?.region ?? \"eu-central-1\"}}.amazonaws.com',\n\t\t}",
+                  "start_token": 163,
+                  "end_token": 174,
+                  "children": [
+                    {
+                      "type": "Identifier",
+                      "label": "requestDefaults",
+                      "start_token": 163,
+                      "end_token": 163,
+                      "children": []
+                    },
+                    {
+                      "type": "ObjectLiteralExpression",
+                      "label": "{\n\t\t\tignoreHttpStatusErrors: true,\n\t\t\tbaseURL: '=https://bedrock.{{$credentials?.region ?? \"eu-central-1\"}}.amazonaws.com',\n\t\t}",
+                      "start_token": 165,
+                      "end_token": 174,
+                      "children": [
+                        {
+                          "type": "PropertyAssignment",
+                          "label": "ignoreHttpStatusErrors: true",
+                          "start_token": 166,
+                          "end_token": 168,
+                          "children": [
+                            {
+                              "type": "Identifier",
+                              "label": "ignoreHttpStatusErrors",
+                              "start_token": 166,
+                              "end_token": 166,
+                              "children": []
+                            },
+                            {
+                              "type": "TrueKeyword",
+                              "label": "true",
+                              "start_token": 168,
+                              "end_token": 168,
+                              "children": []
+                            }
+                          ]
+                        },
+                        {
+                          "type": "PropertyAssignment",
+                          "label": "baseURL: '=https://bedrock.{{$credentials?.region ?? \"eu-central-1\"}}.amazonaws.com'",
+                          "start_token": 170,
+                          "end_token": 172,
+                          "children": [
+                            {
+                              "type": "Identifier",
+                              "label": "baseURL",
+                              "start_token": 170,
+                              "end_token": 170,
+                              "children": []
+                            },
+                            {
+                              "type": "StringLiteral",
+                              "label": "'=https://bedrock.{{$credentials?.region ?? \"eu-central-1\"}}.amazonaws.com'",
+                              "start_token": 172,
+                              "end_token": 172,
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "PropertyAssignment",
+                  "label": "properties: [\n\t\t\tgetConnectionHintNoticeField([NodeConnectionType.AiVectorStore]),\n\t\t\t{\n\t\t\t\tdisplayName: 'Model',\n\t\t\t\tname: 'model',\n\t\t\t\ttype: 'options',\n\t\t\t\tdescription:\n\t\t\t\t\t'The model which will generate the completion. <a href=\"https://docs.aws.amazon.com/bedrock/latest/userguide/foundation-models.html\">Learn more</a>.',\n\t\t\t\ttypeOptions: {\n\t\t\t\t\tloadOptions: {\n\t\t\t\t\t\trouting: {\n\t\t\t\t\t\t\trequest: {\n\t\t\t\t\t\t\t\tmethod: 'GET',\n\t\t\t\t\t\t\t\turl: '/foundation-models?byInferenceType=ON_DEMAND&byOutputModality=EMBEDDING',\n\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\toutput: {\n\t\t\t\t\t\t\t\tpostReceive: [\n\t\t\t\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\t\t\ttype: 'rootProperty',\n\t\t\t\t\t\t\t\t\t\tproperties: {\n\t\t\t\t\t\t\t\t\t\t\tproperty: 'modelSummaries',\n\t\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\t\t\ttype: 'setKeyValue',\n\t\t\t\t\t\t\t\t\t\tproperties: {\n\t\t\t\t\t\t\t\t\t\t\tname: '={{$responseItem.modelName}}',\n\t\t\t\t\t\t\t\t\t\t\tdescription: '={{$responseItem.modelArn}}',\n\t\t\t\t\t\t\t\t\t\t\tvalue: '={{$responseItem.modelId}}',\n\t\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\t\t\ttype: 'sort',\n\t\t\t\t\t\t\t\t\t\tproperties: {\n\t\t\t\t\t\t\t\t\t\t\tkey: 'name',\n\t\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t],\n\t\t\t\t\t\t\t},\n\t\t\t\t\t\t},\n\t\t\t\t\t},\n\t\t\t\t},\n\t\t\t\trouting: {\n\t\t\t\t\tsend: {\n\t\t\t\t\t\ttype: 'body',\n\t\t\t\t\t\tproperty: 'model',\n\t\t\t\t\t},\n\t\t\t\t},\n\t\t\t\tdefault: '',\n\t\t\t},\n\t\t]",
+                  "start_token": 176,
+                  "end_token": 323,
+                  "children": [
+                    {
+                      "type": "Identifier",
+                      "label": "properties",
+                      "start_token": 176,
+                      "end_token": 176,
+                      "children": []
+                    },
+                    {
+                      "type": "ArrayLiteralExpression",
+                      "label": "[\n\t\t\tgetConnectionHintNoticeField([NodeConnectionType.AiVectorStore]),\n\t\t\t{\n\t\t\t\tdisplayName: 'Model',\n\t\t\t\tname: 'model',\n\t\t\t\ttype: 'options',\n\t\t\t\tdescription:\n\t\t\t\t\t'The model which will generate the completion. <a href=\"https://docs.aws.amazon.com/bedrock/latest/userguide/foundation-models.html\">Learn more</a>.',\n\t\t\t\ttypeOptions: {\n\t\t\t\t\tloadOptions: {\n\t\t\t\t\t\trouting: {\n\t\t\t\t\t\t\trequest: {\n\t\t\t\t\t\t\t\tmethod: 'GET',\n\t\t\t\t\t\t\t\turl: '/foundation-models?byInferenceType=ON_DEMAND&byOutputModality=EMBEDDING',\n\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\toutput: {\n\t\t\t\t\t\t\t\tpostReceive: [\n\t\t\t\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\t\t\ttype: 'rootProperty',\n\t\t\t\t\t\t\t\t\t\tproperties: {\n\t\t\t\t\t\t\t\t\t\t\tproperty: 'modelSummaries',\n\t\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\t\t\ttype: 'setKeyValue',\n\t\t\t\t\t\t\t\t\t\tproperties: {\n\t\t\t\t\t\t\t\t\t\t\tname: '={{$responseItem.modelName}}',\n\t\t\t\t\t\t\t\t\t\t\tdescription: '={{$responseItem.modelArn}}',\n\t\t\t\t\t\t\t\t\t\t\tvalue: '={{$responseItem.modelId}}',\n\t\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\t\t\ttype: 'sort',\n\t\t\t\t\t\t\t\t\t\tproperties: {\n\t\t\t\t\t\t\t\t\t\t\tkey: 'name',\n\t\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t],\n\t\t\t\t\t\t\t},\n\t\t\t\t\t\t},\n\t\t\t\t\t},\n\t\t\t\t},\n\t\t\t\trouting: {\n\t\t\t\t\tsend: {\n\t\t\t\t\t\ttype: 'body',\n\t\t\t\t\t\tproperty: 'model',\n\t\t\t\t\t},\n\t\t\t\t},\n\t\t\t\tdefault: '',\n\t\t\t},\n\t\t]",
+                      "start_token": 178,
+                      "end_token": 323,
+                      "children": [
+                        {
+                          "type": "CallExpression",
+                          "label": "getConnectionHintNoticeField([NodeConnectionType.AiVectorStore])",
+                          "start_token": 179,
+                          "end_token": 186,
+                          "children": [
+                            {
+                              "type": "Identifier",
+                              "label": "getConnectionHintNoticeField",
+                              "start_token": 179,
+                              "end_token": 179,
+                              "children": []
+                            },
+                            {
+                              "type": "ArrayLiteralExpression",
+                              "label": "[NodeConnectionType.AiVectorStore]",
+                              "start_token": 181,
+                              "end_token": 185,
+                              "children": [
+                                {
+                                  "type": "PropertyAccessExpression",
+                                  "label": "NodeConnectionType.AiVectorStore",
+                                  "start_token": 182,
+                                  "end_token": 184,
+                                  "children": [
+                                    {
+                                      "type": "Identifier",
+                                      "label": "NodeConnectionType",
+                                      "start_token": 182,
+                                      "end_token": 182,
+                                      "children": []
+                                    },
+                                    {
+                                      "type": "Identifier",
+                                      "label": "AiVectorStore",
+                                      "start_token": 184,
+                                      "end_token": 184,
+                                      "children": []
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "ObjectLiteralExpression",
+                          "label": "{\n\t\t\t\tdisplayName: 'Model',\n\t\t\t\tname: 'model',\n\t\t\t\ttype: 'options',\n\t\t\t\tdescription:\n\t\t\t\t\t'The model which will generate the completion. <a href=\"https://docs.aws.amazon.com/bedrock/latest/userguide/foundation-models.html\">Learn more</a>.',\n\t\t\t\ttypeOptions: {\n\t\t\t\t\tloadOptions: {\n\t\t\t\t\t\trouting: {\n\t\t\t\t\t\t\trequest: {\n\t\t\t\t\t\t\t\tmethod: 'GET',\n\t\t\t\t\t\t\t\turl: '/foundation-models?byInferenceType=ON_DEMAND&byOutputModality=EMBEDDING',\n\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\toutput: {\n\t\t\t\t\t\t\t\tpostReceive: [\n\t\t\t\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\t\t\ttype: 'rootProperty',\n\t\t\t\t\t\t\t\t\t\tproperties: {\n\t\t\t\t\t\t\t\t\t\t\tproperty: 'modelSummaries',\n\t\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\t\t\ttype: 'setKeyValue',\n\t\t\t\t\t\t\t\t\t\tproperties: {\n\t\t\t\t\t\t\t\t\t\t\tname: '={{$responseItem.modelName}}',\n\t\t\t\t\t\t\t\t\t\t\tdescription: '={{$responseItem.modelArn}}',\n\t\t\t\t\t\t\t\t\t\t\tvalue: '={{$responseItem.modelId}}',\n\t\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\t\t\ttype: 'sort',\n\t\t\t\t\t\t\t\t\t\tproperties: {\n\t\t\t\t\t\t\t\t\t\t\tkey: 'name',\n\t\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t],\n\t\t\t\t\t\t\t},\n\t\t\t\t\t\t},\n\t\t\t\t\t},\n\t\t\t\t},\n\t\t\t\trouting: {\n\t\t\t\t\tsend: {\n\t\t\t\t\t\ttype: 'body',\n\t\t\t\t\t\tproperty: 'model',\n\t\t\t\t\t},\n\t\t\t\t},\n\t\t\t\tdefault: '',\n\t\t\t}",
+                          "start_token": 188,
+                          "end_token": 321,
+                          "children": [
+                            {
+                              "type": "PropertyAssignment",
+                              "label": "displayName: 'Model'",
+                              "start_token": 189,
+                              "end_token": 191,
+                              "children": [
+                                {
+                                  "type": "Identifier",
+                                  "label": "displayName",
+                                  "start_token": 189,
+                                  "end_token": 189,
+                                  "children": []
+                                },
+                                {
+                                  "type": "StringLiteral",
+                                  "label": "'Model'",
+                                  "start_token": 191,
+                                  "end_token": 191,
+                                  "children": []
+                                }
+                              ]
+                            },
+                            {
+                              "type": "PropertyAssignment",
+                              "label": "name: 'model'",
+                              "start_token": 193,
+                              "end_token": 195,
+                              "children": [
+                                {
+                                  "type": "Identifier",
+                                  "label": "name",
+                                  "start_token": 193,
+                                  "end_token": 193,
+                                  "children": []
+                                },
+                                {
+                                  "type": "StringLiteral",
+                                  "label": "'model'",
+                                  "start_token": 195,
+                                  "end_token": 195,
+                                  "children": []
+                                }
+                              ]
+                            },
+                            {
+                              "type": "PropertyAssignment",
+                              "label": "type: 'options'",
+                              "start_token": 197,
+                              "end_token": 199,
+                              "children": [
+                                {
+                                  "type": "Identifier",
+                                  "label": "type",
+                                  "start_token": 197,
+                                  "end_token": 197,
+                                  "children": []
+                                },
+                                {
+                                  "type": "StringLiteral",
+                                  "label": "'options'",
+                                  "start_token": 199,
+                                  "end_token": 199,
+                                  "children": []
+                                }
+                              ]
+                            },
+                            {
+                              "type": "PropertyAssignment",
+                              "label": "description:\n\t\t\t\t\t'The model which will generate the completion. <a href=\"https://docs.aws.amazon.com/bedrock/latest/userguide/foundation-models.html\">Learn more</a>.'",
+                              "start_token": 201,
+                              "end_token": 203,
+                              "children": [
+                                {
+                                  "type": "Identifier",
+                                  "label": "description",
+                                  "start_token": 201,
+                                  "end_token": 201,
+                                  "children": []
+                                },
+                                {
+                                  "type": "StringLiteral",
+                                  "label": "'The model which will generate the completion. <a href=\"https://docs.aws.amazon.com/bedrock/latest/userguide/foundation-models.html\">Learn more</a>.'",
+                                  "start_token": 203,
+                                  "end_token": 203,
+                                  "children": []
+                                }
+                              ]
+                            },
+                            {
+                              "type": "PropertyAssignment",
+                              "label": "typeOptions: {\n\t\t\t\t\tloadOptions: {\n\t\t\t\t\t\trouting: {\n\t\t\t\t\t\t\trequest: {\n\t\t\t\t\t\t\t\tmethod: 'GET',\n\t\t\t\t\t\t\t\turl: '/foundation-models?byInferenceType=ON_DEMAND&byOutputModality=EMBEDDING',\n\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\toutput: {\n\t\t\t\t\t\t\t\tpostReceive: [\n\t\t\t\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\t\t\ttype: 'rootProperty',\n\t\t\t\t\t\t\t\t\t\tproperties: {\n\t\t\t\t\t\t\t\t\t\t\tproperty: 'modelSummaries',\n\t\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\t\t\ttype: 'setKeyValue',\n\t\t\t\t\t\t\t\t\t\tproperties: {\n\t\t\t\t\t\t\t\t\t\t\tname: '={{$responseItem.modelName}}',\n\t\t\t\t\t\t\t\t\t\t\tdescription: '={{$responseItem.modelArn}}',\n\t\t\t\t\t\t\t\t\t\t\tvalue: '={{$responseItem.modelId}}',\n\t\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\t\t\ttype: 'sort',\n\t\t\t\t\t\t\t\t\t\tproperties: {\n\t\t\t\t\t\t\t\t\t\t\tkey: 'name',\n\t\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t],\n\t\t\t\t\t\t\t},\n\t\t\t\t\t\t},\n\t\t\t\t\t},\n\t\t\t\t}",
+                              "start_token": 205,
+                              "end_token": 297,
+                              "children": [
+                                {
+                                  "type": "Identifier",
+                                  "label": "typeOptions",
+                                  "start_token": 205,
+                                  "end_token": 205,
+                                  "children": []
+                                },
+                                {
+                                  "type": "ObjectLiteralExpression",
+                                  "label": "{\n\t\t\t\t\tloadOptions: {\n\t\t\t\t\t\trouting: {\n\t\t\t\t\t\t\trequest: {\n\t\t\t\t\t\t\t\tmethod: 'GET',\n\t\t\t\t\t\t\t\turl: '/foundation-models?byInferenceType=ON_DEMAND&byOutputModality=EMBEDDING',\n\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\toutput: {\n\t\t\t\t\t\t\t\tpostReceive: [\n\t\t\t\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\t\t\ttype: 'rootProperty',\n\t\t\t\t\t\t\t\t\t\tproperties: {\n\t\t\t\t\t\t\t\t\t\t\tproperty: 'modelSummaries',\n\t\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\t\t\ttype: 'setKeyValue',\n\t\t\t\t\t\t\t\t\t\tproperties: {\n\t\t\t\t\t\t\t\t\t\t\tname: '={{$responseItem.modelName}}',\n\t\t\t\t\t\t\t\t\t\t\tdescription: '={{$responseItem.modelArn}}',\n\t\t\t\t\t\t\t\t\t\t\tvalue: '={{$responseItem.modelId}}',\n\t\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\t\t\ttype: 'sort',\n\t\t\t\t\t\t\t\t\t\tproperties: {\n\t\t\t\t\t\t\t\t\t\t\tkey: 'name',\n\t\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t],\n\t\t\t\t\t\t\t},\n\t\t\t\t\t\t},\n\t\t\t\t\t},\n\t\t\t\t}",
+                                  "start_token": 207,
+                                  "end_token": 297,
+                                  "children": [
+                                    {
+                                      "type": "PropertyAssignment",
+                                      "label": "loadOptions: {\n\t\t\t\t\t\trouting: {\n\t\t\t\t\t\t\trequest: {\n\t\t\t\t\t\t\t\tmethod: 'GET',\n\t\t\t\t\t\t\t\turl: '/foundation-models?byInferenceType=ON_DEMAND&byOutputModality=EMBEDDING',\n\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\toutput: {\n\t\t\t\t\t\t\t\tpostReceive: [\n\t\t\t\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\t\t\ttype: 'rootProperty',\n\t\t\t\t\t\t\t\t\t\tproperties: {\n\t\t\t\t\t\t\t\t\t\t\tproperty: 'modelSummaries',\n\t\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\t\t\ttype: 'setKeyValue',\n\t\t\t\t\t\t\t\t\t\tproperties: {\n\t\t\t\t\t\t\t\t\t\t\tname: '={{$responseItem.modelName}}',\n\t\t\t\t\t\t\t\t\t\t\tdescription: '={{$responseItem.modelArn}}',\n\t\t\t\t\t\t\t\t\t\t\tvalue: '={{$responseItem.modelId}}',\n\t\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\t\t\ttype: 'sort',\n\t\t\t\t\t\t\t\t\t\tproperties: {\n\t\t\t\t\t\t\t\t\t\t\tkey: 'name',\n\t\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t],\n\t\t\t\t\t\t\t},\n\t\t\t\t\t\t},\n\t\t\t\t\t}",
+                                      "start_token": 208,
+                                      "end_token": 295,
+                                      "children": [
+                                        {
+                                          "type": "Identifier",
+                                          "label": "loadOptions",
+                                          "start_token": 208,
+                                          "end_token": 208,
+                                          "children": []
+                                        },
+                                        {
+                                          "type": "ObjectLiteralExpression",
+                                          "label": "{\n\t\t\t\t\t\trouting: {\n\t\t\t\t\t\t\trequest: {\n\t\t\t\t\t\t\t\tmethod: 'GET',\n\t\t\t\t\t\t\t\turl: '/foundation-models?byInferenceType=ON_DEMAND&byOutputModality=EMBEDDING',\n\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\toutput: {\n\t\t\t\t\t\t\t\tpostReceive: [\n\t\t\t\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\t\t\ttype: 'rootProperty',\n\t\t\t\t\t\t\t\t\t\tproperties: {\n\t\t\t\t\t\t\t\t\t\t\tproperty: 'modelSummaries',\n\t\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\t\t\ttype: 'setKeyValue',\n\t\t\t\t\t\t\t\t\t\tproperties: {\n\t\t\t\t\t\t\t\t\t\t\tname: '={{$responseItem.modelName}}',\n\t\t\t\t\t\t\t\t\t\t\tdescription: '={{$responseItem.modelArn}}',\n\t\t\t\t\t\t\t\t\t\t\tvalue: '={{$responseItem.modelId}}',\n\t\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\t\t\ttype: 'sort',\n\t\t\t\t\t\t\t\t\t\tproperties: {\n\t\t\t\t\t\t\t\t\t\t\tkey: 'name',\n\t\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t],\n\t\t\t\t\t\t\t},\n\t\t\t\t\t\t},\n\t\t\t\t\t}",
+                                          "start_token": 210,
+                                          "end_token": 295,
+                                          "children": [
+                                            {
+                                              "type": "PropertyAssignment",
+                                              "label": "routing: {\n\t\t\t\t\t\t\trequest: {\n\t\t\t\t\t\t\t\tmethod: 'GET',\n\t\t\t\t\t\t\t\turl: '/foundation-models?byInferenceType=ON_DEMAND&byOutputModality=EMBEDDING',\n\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\toutput: {\n\t\t\t\t\t\t\t\tpostReceive: [\n\t\t\t\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\t\t\ttype: 'rootProperty',\n\t\t\t\t\t\t\t\t\t\tproperties: {\n\t\t\t\t\t\t\t\t\t\t\tproperty: 'modelSummaries',\n\t\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\t\t\ttype: 'setKeyValue',\n\t\t\t\t\t\t\t\t\t\tproperties: {\n\t\t\t\t\t\t\t\t\t\t\tname: '={{$responseItem.modelName}}',\n\t\t\t\t\t\t\t\t\t\t\tdescription: '={{$responseItem.modelArn}}',\n\t\t\t\t\t\t\t\t\t\t\tvalue: '={{$responseItem.modelId}}',\n\t\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\t\t\ttype: 'sort',\n\t\t\t\t\t\t\t\t\t\tproperties: {\n\t\t\t\t\t\t\t\t\t\t\tkey: 'name',\n\t\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t],\n\t\t\t\t\t\t\t},\n\t\t\t\t\t\t}",
+                                              "start_token": 211,
+                                              "end_token": 293,
+                                              "children": [
+                                                {
+                                                  "type": "Identifier",
+                                                  "label": "routing",
+                                                  "start_token": 211,
+                                                  "end_token": 211,
+                                                  "children": []
+                                                },
+                                                {
+                                                  "type": "ObjectLiteralExpression",
+                                                  "label": "{\n\t\t\t\t\t\t\trequest: {\n\t\t\t\t\t\t\t\tmethod: 'GET',\n\t\t\t\t\t\t\t\turl: '/foundation-models?byInferenceType=ON_DEMAND&byOutputModality=EMBEDDING',\n\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\toutput: {\n\t\t\t\t\t\t\t\tpostReceive: [\n\t\t\t\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\t\t\ttype: 'rootProperty',\n\t\t\t\t\t\t\t\t\t\tproperties: {\n\t\t\t\t\t\t\t\t\t\t\tproperty: 'modelSummaries',\n\t\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\t\t\ttype: 'setKeyValue',\n\t\t\t\t\t\t\t\t\t\tproperties: {\n\t\t\t\t\t\t\t\t\t\t\tname: '={{$responseItem.modelName}}',\n\t\t\t\t\t\t\t\t\t\t\tdescription: '={{$responseItem.modelArn}}',\n\t\t\t\t\t\t\t\t\t\t\tvalue: '={{$responseItem.modelId}}',\n\t\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\t\t\ttype: 'sort',\n\t\t\t\t\t\t\t\t\t\tproperties: {\n\t\t\t\t\t\t\t\t\t\t\tkey: 'name',\n\t\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t],\n\t\t\t\t\t\t\t},\n\t\t\t\t\t\t}",
+                                                  "start_token": 213,
+                                                  "end_token": 293,
+                                                  "children": [
+                                                    {
+                                                      "type": "PropertyAssignment",
+                                                      "label": "request: {\n\t\t\t\t\t\t\t\tmethod: 'GET',\n\t\t\t\t\t\t\t\turl: '/foundation-models?byInferenceType=ON_DEMAND&byOutputModality=EMBEDDING',\n\t\t\t\t\t\t\t}",
+                                                      "start_token": 214,
+                                                      "end_token": 225,
+                                                      "children": [
+                                                        {
+                                                          "type": "Identifier",
+                                                          "label": "request",
+                                                          "start_token": 214,
+                                                          "end_token": 214,
+                                                          "children": []
+                                                        },
+                                                        {
+                                                          "type": "ObjectLiteralExpression",
+                                                          "label": "{\n\t\t\t\t\t\t\t\tmethod: 'GET',\n\t\t\t\t\t\t\t\turl: '/foundation-models?byInferenceType=ON_DEMAND&byOutputModality=EMBEDDING',\n\t\t\t\t\t\t\t}",
+                                                          "start_token": 216,
+                                                          "end_token": 225,
+                                                          "children": [
+                                                            {
+                                                              "type": "PropertyAssignment",
+                                                              "label": "method: 'GET'",
+                                                              "start_token": 217,
+                                                              "end_token": 219,
+                                                              "children": [
+                                                                {
+                                                                  "type": "Identifier",
+                                                                  "label": "method",
+                                                                  "start_token": 217,
+                                                                  "end_token": 217,
+                                                                  "children": []
+                                                                },
+                                                                {
+                                                                  "type": "StringLiteral",
+                                                                  "label": "'GET'",
+                                                                  "start_token": 219,
+                                                                  "end_token": 219,
+                                                                  "children": []
+                                                                }
+                                                              ]
+                                                            },
+                                                            {
+                                                              "type": "PropertyAssignment",
+                                                              "label": "url: '/foundation-models?byInferenceType=ON_DEMAND&byOutputModality=EMBEDDING'",
+                                                              "start_token": 221,
+                                                              "end_token": 223,
+                                                              "children": [
+                                                                {
+                                                                  "type": "Identifier",
+                                                                  "label": "url",
+                                                                  "start_token": 221,
+                                                                  "end_token": 221,
+                                                                  "children": []
+                                                                },
+                                                                {
+                                                                  "type": "StringLiteral",
+                                                                  "label": "'/foundation-models?byInferenceType=ON_DEMAND&byOutputModality=EMBEDDING'",
+                                                                  "start_token": 223,
+                                                                  "end_token": 223,
+                                                                  "children": []
+                                                                }
+                                                              ]
+                                                            }
+                                                          ]
+                                                        }
+                                                      ]
+                                                    },
+                                                    {
+                                                      "type": "PropertyAssignment",
+                                                      "label": "output: {\n\t\t\t\t\t\t\t\tpostReceive: [\n\t\t\t\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\t\t\ttype: 'rootProperty',\n\t\t\t\t\t\t\t\t\t\tproperties: {\n\t\t\t\t\t\t\t\t\t\t\tproperty: 'modelSummaries',\n\t\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\t\t\ttype: 'setKeyValue',\n\t\t\t\t\t\t\t\t\t\tproperties: {\n\t\t\t\t\t\t\t\t\t\t\tname: '={{$responseItem.modelName}}',\n\t\t\t\t\t\t\t\t\t\t\tdescription: '={{$responseItem.modelArn}}',\n\t\t\t\t\t\t\t\t\t\t\tvalue: '={{$responseItem.modelId}}',\n\t\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\t\t\ttype: 'sort',\n\t\t\t\t\t\t\t\t\t\tproperties: {\n\t\t\t\t\t\t\t\t\t\t\tkey: 'name',\n\t\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t],\n\t\t\t\t\t\t\t}",
+                                                      "start_token": 227,
+                                                      "end_token": 291,
+                                                      "children": [
+                                                        {
+                                                          "type": "Identifier",
+                                                          "label": "output",
+                                                          "start_token": 227,
+                                                          "end_token": 227,
+                                                          "children": []
+                                                        },
+                                                        {
+                                                          "type": "ObjectLiteralExpression",
+                                                          "label": "{\n\t\t\t\t\t\t\t\tpostReceive: [\n\t\t\t\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\t\t\ttype: 'rootProperty',\n\t\t\t\t\t\t\t\t\t\tproperties: {\n\t\t\t\t\t\t\t\t\t\t\tproperty: 'modelSummaries',\n\t\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\t\t\ttype: 'setKeyValue',\n\t\t\t\t\t\t\t\t\t\tproperties: {\n\t\t\t\t\t\t\t\t\t\t\tname: '={{$responseItem.modelName}}',\n\t\t\t\t\t\t\t\t\t\t\tdescription: '={{$responseItem.modelArn}}',\n\t\t\t\t\t\t\t\t\t\t\tvalue: '={{$responseItem.modelId}}',\n\t\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\t\t\ttype: 'sort',\n\t\t\t\t\t\t\t\t\t\tproperties: {\n\t\t\t\t\t\t\t\t\t\t\tkey: 'name',\n\t\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t],\n\t\t\t\t\t\t\t}",
+                                                          "start_token": 229,
+                                                          "end_token": 291,
+                                                          "children": [
+                                                            {
+                                                              "type": "PropertyAssignment",
+                                                              "label": "postReceive: [\n\t\t\t\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\t\t\ttype: 'rootProperty',\n\t\t\t\t\t\t\t\t\t\tproperties: {\n\t\t\t\t\t\t\t\t\t\t\tproperty: 'modelSummaries',\n\t\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\t\t\ttype: 'setKeyValue',\n\t\t\t\t\t\t\t\t\t\tproperties: {\n\t\t\t\t\t\t\t\t\t\t\tname: '={{$responseItem.modelName}}',\n\t\t\t\t\t\t\t\t\t\t\tdescription: '={{$responseItem.modelArn}}',\n\t\t\t\t\t\t\t\t\t\t\tvalue: '={{$responseItem.modelId}}',\n\t\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\t\t\ttype: 'sort',\n\t\t\t\t\t\t\t\t\t\tproperties: {\n\t\t\t\t\t\t\t\t\t\t\tkey: 'name',\n\t\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t]",
+                                                              "start_token": 230,
+                                                              "end_token": 289,
+                                                              "children": [
+                                                                {
+                                                                  "type": "Identifier",
+                                                                  "label": "postReceive",
+                                                                  "start_token": 230,
+                                                                  "end_token": 230,
+                                                                  "children": []
+                                                                },
+                                                                {
+                                                                  "type": "ArrayLiteralExpression",
+                                                                  "label": "[\n\t\t\t\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\t\t\ttype: 'rootProperty',\n\t\t\t\t\t\t\t\t\t\tproperties: {\n\t\t\t\t\t\t\t\t\t\t\tproperty: 'modelSummaries',\n\t\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\t\t\ttype: 'setKeyValue',\n\t\t\t\t\t\t\t\t\t\tproperties: {\n\t\t\t\t\t\t\t\t\t\t\tname: '={{$responseItem.modelName}}',\n\t\t\t\t\t\t\t\t\t\t\tdescription: '={{$responseItem.modelArn}}',\n\t\t\t\t\t\t\t\t\t\t\tvalue: '={{$responseItem.modelId}}',\n\t\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\t\t\ttype: 'sort',\n\t\t\t\t\t\t\t\t\t\tproperties: {\n\t\t\t\t\t\t\t\t\t\t\tkey: 'name',\n\t\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t]",
+                                                                  "start_token": 232,
+                                                                  "end_token": 289,
+                                                                  "children": [
+                                                                    {
+                                                                      "type": "ObjectLiteralExpression",
+                                                                      "label": "{\n\t\t\t\t\t\t\t\t\t\ttype: 'rootProperty',\n\t\t\t\t\t\t\t\t\t\tproperties: {\n\t\t\t\t\t\t\t\t\t\t\tproperty: 'modelSummaries',\n\t\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t}",
+                                                                      "start_token": 233,
+                                                                      "end_token": 247,
+                                                                      "children": [
+                                                                        {
+                                                                          "type": "PropertyAssignment",
+                                                                          "label": "type: 'rootProperty'",
+                                                                          "start_token": 234,
+                                                                          "end_token": 236,
+                                                                          "children": [
+                                                                            {
+                                                                              "type": "Identifier",
+                                                                              "label": "type",
+                                                                              "start_token": 234,
+                                                                              "end_token": 234,
+                                                                              "children": []
+                                                                            },
+                                                                            {
+                                                                              "type": "StringLiteral",
+                                                                              "label": "'rootProperty'",
+                                                                              "start_token": 236,
+                                                                              "end_token": 236,
+                                                                              "children": []
+                                                                            }
+                                                                          ]
+                                                                        },
+                                                                        {
+                                                                          "type": "PropertyAssignment",
+                                                                          "label": "properties: {\n\t\t\t\t\t\t\t\t\t\t\tproperty: 'modelSummaries',\n\t\t\t\t\t\t\t\t\t\t}",
+                                                                          "start_token": 238,
+                                                                          "end_token": 245,
+                                                                          "children": [
+                                                                            {
+                                                                              "type": "Identifier",
+                                                                              "label": "properties",
+                                                                              "start_token": 238,
+                                                                              "end_token": 238,
+                                                                              "children": []
+                                                                            },
+                                                                            {
+                                                                              "type": "ObjectLiteralExpression",
+                                                                              "label": "{\n\t\t\t\t\t\t\t\t\t\t\tproperty: 'modelSummaries',\n\t\t\t\t\t\t\t\t\t\t}",
+                                                                              "start_token": 240,
+                                                                              "end_token": 245,
+                                                                              "children": [
+                                                                                {
+                                                                                  "type": "PropertyAssignment",
+                                                                                  "label": "property: 'modelSummaries'",
+                                                                                  "start_token": 241,
+                                                                                  "end_token": 243,
+                                                                                  "children": [
+                                                                                    {
+                                                                                      "type": "Identifier",
+                                                                                      "label": "property",
+                                                                                      "start_token": 241,
+                                                                                      "end_token": 241,
+                                                                                      "children": []
+                                                                                    },
+                                                                                    {
+                                                                                      "type": "StringLiteral",
+                                                                                      "label": "'modelSummaries'",
+                                                                                      "start_token": 243,
+                                                                                      "end_token": 243,
+                                                                                      "children": []
+                                                                                    }
+                                                                                  ]
+                                                                                }
+                                                                              ]
+                                                                            }
+                                                                          ]
+                                                                        }
+                                                                      ]
+                                                                    },
+                                                                    {
+                                                                      "type": "ObjectLiteralExpression",
+                                                                      "label": "{\n\t\t\t\t\t\t\t\t\t\ttype: 'setKeyValue',\n\t\t\t\t\t\t\t\t\t\tproperties: {\n\t\t\t\t\t\t\t\t\t\t\tname: '={{$responseItem.modelName}}',\n\t\t\t\t\t\t\t\t\t\t\tdescription: '={{$responseItem.modelArn}}',\n\t\t\t\t\t\t\t\t\t\t\tvalue: '={{$responseItem.modelId}}',\n\t\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t}",
+                                                                      "start_token": 249,
+                                                                      "end_token": 271,
+                                                                      "children": [
+                                                                        {
+                                                                          "type": "PropertyAssignment",
+                                                                          "label": "type: 'setKeyValue'",
+                                                                          "start_token": 250,
+                                                                          "end_token": 252,
+                                                                          "children": [
+                                                                            {
+                                                                              "type": "Identifier",
+                                                                              "label": "type",
+                                                                              "start_token": 250,
+                                                                              "end_token": 250,
+                                                                              "children": []
+                                                                            },
+                                                                            {
+                                                                              "type": "StringLiteral",
+                                                                              "label": "'setKeyValue'",
+                                                                              "start_token": 252,
+                                                                              "end_token": 252,
+                                                                              "children": []
+                                                                            }
+                                                                          ]
+                                                                        },
+                                                                        {
+                                                                          "type": "PropertyAssignment",
+                                                                          "label": "properties: {\n\t\t\t\t\t\t\t\t\t\t\tname: '={{$responseItem.modelName}}',\n\t\t\t\t\t\t\t\t\t\t\tdescription: '={{$responseItem.modelArn}}',\n\t\t\t\t\t\t\t\t\t\t\tvalue: '={{$responseItem.modelId}}',\n\t\t\t\t\t\t\t\t\t\t}",
+                                                                          "start_token": 254,
+                                                                          "end_token": 269,
+                                                                          "children": [
+                                                                            {
+                                                                              "type": "Identifier",
+                                                                              "label": "properties",
+                                                                              "start_token": 254,
+                                                                              "end_token": 254,
+                                                                              "children": []
+                                                                            },
+                                                                            {
+                                                                              "type": "ObjectLiteralExpression",
+                                                                              "label": "{\n\t\t\t\t\t\t\t\t\t\t\tname: '={{$responseItem.modelName}}',\n\t\t\t\t\t\t\t\t\t\t\tdescription: '={{$responseItem.modelArn}}',\n\t\t\t\t\t\t\t\t\t\t\tvalue: '={{$responseItem.modelId}}',\n\t\t\t\t\t\t\t\t\t\t}",
+                                                                              "start_token": 256,
+                                                                              "end_token": 269,
+                                                                              "children": [
+                                                                                {
+                                                                                  "type": "PropertyAssignment",
+                                                                                  "label": "name: '={{$responseItem.modelName}}'",
+                                                                                  "start_token": 257,
+                                                                                  "end_token": 259,
+                                                                                  "children": [
+                                                                                    {
+                                                                                      "type": "Identifier",
+                                                                                      "label": "name",
+                                                                                      "start_token": 257,
+                                                                                      "end_token": 257,
+                                                                                      "children": []
+                                                                                    },
+                                                                                    {
+                                                                                      "type": "StringLiteral",
+                                                                                      "label": "'={{$responseItem.modelName}}'",
+                                                                                      "start_token": 259,
+                                                                                      "end_token": 259,
+                                                                                      "children": []
+                                                                                    }
+                                                                                  ]
+                                                                                },
+                                                                                {
+                                                                                  "type": "PropertyAssignment",
+                                                                                  "label": "description: '={{$responseItem.modelArn}}'",
+                                                                                  "start_token": 261,
+                                                                                  "end_token": 263,
+                                                                                  "children": [
+                                                                                    {
+                                                                                      "type": "Identifier",
+                                                                                      "label": "description",
+                                                                                      "start_token": 261,
+                                                                                      "end_token": 261,
+                                                                                      "children": []
+                                                                                    },
+                                                                                    {
+                                                                                      "type": "StringLiteral",
+                                                                                      "label": "'={{$responseItem.modelArn}}'",
+                                                                                      "start_token": 263,
+                                                                                      "end_token": 263,
+                                                                                      "children": []
+                                                                                    }
+                                                                                  ]
+                                                                                },
+                                                                                {
+                                                                                  "type": "PropertyAssignment",
+                                                                                  "label": "value: '={{$responseItem.modelId}}'",
+                                                                                  "start_token": 265,
+                                                                                  "end_token": 267,
+                                                                                  "children": [
+                                                                                    {
+                                                                                      "type": "Identifier",
+                                                                                      "label": "value",
+                                                                                      "start_token": 265,
+                                                                                      "end_token": 265,
+                                                                                      "children": []
+                                                                                    },
+                                                                                    {
+                                                                                      "type": "StringLiteral",
+                                                                                      "label": "'={{$responseItem.modelId}}'",
+                                                                                      "start_token": 267,
+                                                                                      "end_token": 267,
+                                                                                      "children": []
+                                                                                    }
+                                                                                  ]
+                                                                                }
+                                                                              ]
+                                                                            }
+                                                                          ]
+                                                                        }
+                                                                      ]
+                                                                    },
+                                                                    {
+                                                                      "type": "ObjectLiteralExpression",
+                                                                      "label": "{\n\t\t\t\t\t\t\t\t\t\ttype: 'sort',\n\t\t\t\t\t\t\t\t\t\tproperties: {\n\t\t\t\t\t\t\t\t\t\t\tkey: 'name',\n\t\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\t}",
+                                                                      "start_token": 273,
+                                                                      "end_token": 287,
+                                                                      "children": [
+                                                                        {
+                                                                          "type": "PropertyAssignment",
+                                                                          "label": "type: 'sort'",
+                                                                          "start_token": 274,
+                                                                          "end_token": 276,
+                                                                          "children": [
+                                                                            {
+                                                                              "type": "Identifier",
+                                                                              "label": "type",
+                                                                              "start_token": 274,
+                                                                              "end_token": 274,
+                                                                              "children": []
+                                                                            },
+                                                                            {
+                                                                              "type": "StringLiteral",
+                                                                              "label": "'sort'",
+                                                                              "start_token": 276,
+                                                                              "end_token": 276,
+                                                                              "children": []
+                                                                            }
+                                                                          ]
+                                                                        },
+                                                                        {
+                                                                          "type": "PropertyAssignment",
+                                                                          "label": "properties: {\n\t\t\t\t\t\t\t\t\t\t\tkey: 'name',\n\t\t\t\t\t\t\t\t\t\t}",
+                                                                          "start_token": 278,
+                                                                          "end_token": 285,
+                                                                          "children": [
+                                                                            {
+                                                                              "type": "Identifier",
+                                                                              "label": "properties",
+                                                                              "start_token": 278,
+                                                                              "end_token": 278,
+                                                                              "children": []
+                                                                            },
+                                                                            {
+                                                                              "type": "ObjectLiteralExpression",
+                                                                              "label": "{\n\t\t\t\t\t\t\t\t\t\t\tkey: 'name',\n\t\t\t\t\t\t\t\t\t\t}",
+                                                                              "start_token": 280,
+                                                                              "end_token": 285,
+                                                                              "children": [
+                                                                                {
+                                                                                  "type": "PropertyAssignment",
+                                                                                  "label": "key: 'name'",
+                                                                                  "start_token": 281,
+                                                                                  "end_token": 283,
+                                                                                  "children": [
+                                                                                    {
+                                                                                      "type": "Identifier",
+                                                                                      "label": "key",
+                                                                                      "start_token": 281,
+                                                                                      "end_token": 281,
+                                                                                      "children": []
+                                                                                    },
+                                                                                    {
+                                                                                      "type": "StringLiteral",
+                                                                                      "label": "'name'",
+                                                                                      "start_token": 283,
+                                                                                      "end_token": 283,
+                                                                                      "children": []
+                                                                                    }
+                                                                                  ]
+                                                                                }
+                                                                              ]
+                                                                            }
+                                                                          ]
+                                                                        }
+                                                                      ]
+                                                                    }
+                                                                  ]
+                                                                }
+                                                              ]
+                                                            }
+                                                          ]
+                                                        }
+                                                      ]
+                                                    }
+                                                  ]
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "type": "PropertyAssignment",
+                              "label": "routing: {\n\t\t\t\t\tsend: {\n\t\t\t\t\t\ttype: 'body',\n\t\t\t\t\t\tproperty: 'model',\n\t\t\t\t\t},\n\t\t\t\t}",
+                              "start_token": 299,
+                              "end_token": 315,
+                              "children": [
+                                {
+                                  "type": "Identifier",
+                                  "label": "routing",
+                                  "start_token": 299,
+                                  "end_token": 299,
+                                  "children": []
+                                },
+                                {
+                                  "type": "ObjectLiteralExpression",
+                                  "label": "{\n\t\t\t\t\tsend: {\n\t\t\t\t\t\ttype: 'body',\n\t\t\t\t\t\tproperty: 'model',\n\t\t\t\t\t},\n\t\t\t\t}",
+                                  "start_token": 301,
+                                  "end_token": 315,
+                                  "children": [
+                                    {
+                                      "type": "PropertyAssignment",
+                                      "label": "send: {\n\t\t\t\t\t\ttype: 'body',\n\t\t\t\t\t\tproperty: 'model',\n\t\t\t\t\t}",
+                                      "start_token": 302,
+                                      "end_token": 313,
+                                      "children": [
+                                        {
+                                          "type": "Identifier",
+                                          "label": "send",
+                                          "start_token": 302,
+                                          "end_token": 302,
+                                          "children": []
+                                        },
+                                        {
+                                          "type": "ObjectLiteralExpression",
+                                          "label": "{\n\t\t\t\t\t\ttype: 'body',\n\t\t\t\t\t\tproperty: 'model',\n\t\t\t\t\t}",
+                                          "start_token": 304,
+                                          "end_token": 313,
+                                          "children": [
+                                            {
+                                              "type": "PropertyAssignment",
+                                              "label": "type: 'body'",
+                                              "start_token": 305,
+                                              "end_token": 307,
+                                              "children": [
+                                                {
+                                                  "type": "Identifier",
+                                                  "label": "type",
+                                                  "start_token": 305,
+                                                  "end_token": 305,
+                                                  "children": []
+                                                },
+                                                {
+                                                  "type": "StringLiteral",
+                                                  "label": "'body'",
+                                                  "start_token": 307,
+                                                  "end_token": 307,
+                                                  "children": []
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "type": "PropertyAssignment",
+                                              "label": "property: 'model'",
+                                              "start_token": 309,
+                                              "end_token": 311,
+                                              "children": [
+                                                {
+                                                  "type": "Identifier",
+                                                  "label": "property",
+                                                  "start_token": 309,
+                                                  "end_token": 309,
+                                                  "children": []
+                                                },
+                                                {
+                                                  "type": "StringLiteral",
+                                                  "label": "'model'",
+                                                  "start_token": 311,
+                                                  "end_token": 311,
+                                                  "children": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "type": "PropertyAssignment",
+                              "label": "default: ''",
+                              "start_token": 317,
+                              "end_token": 319,
+                              "children": [
+                                {
+                                  "type": "Identifier",
+                                  "label": "default",
+                                  "start_token": 317,
+                                  "end_token": 317,
+                                  "children": []
+                                },
+                                {
+                                  "type": "StringLiteral",
+                                  "label": "''",
+                                  "start_token": 319,
+                                  "end_token": 319,
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "MethodDeclaration",
+          "label": "async supplyData(this: ISupplyDataFunctions, itemIndex: number): Promise<SupplyData> {\n\t\tconst credentials = await this.getCredentials('aws');\n\t\tconst modelName = this.getNodeParameter('model', itemIndex) as string;\n\t\tconst embeddings = new BedrockEmbeddings({\n\t\t\tregion: credentials.region as string,\n\t\t\tmodel: modelName,\n\t\t\tmaxRetries: 3,\n\t\t\tcredentials: {\n\t\t\t\tsecretAccessKey: credentials.secretAccessKey as string,\n\t\t\t\taccessKeyId: credentials.accessKeyId as string,\n\t\t\t\tsessionToken: credentials.sessionToken as string,\n\t\t\t},\n\t\t});\n\t\treturn {\n\t\t\tresponse: logWrapper(embeddings, this),\n\t\t};\n\t}",
+          "start_token": 327,
+          "end_token": 437,
+          "children": [
+            {
+              "type": "AsyncKeyword",
+              "label": "async",
+              "start_token": 327,
+              "end_token": 327,
+              "children": []
+            },
+            {
+              "type": "Identifier",
+              "label": "supplyData",
+              "start_token": 328,
+              "end_token": 328,
+              "children": []
+            },
+            {
+              "type": "Parameter",
+              "label": "this: ISupplyDataFunctions",
+              "start_token": 330,
+              "end_token": 332,
+              "children": [
+                {
+                  "type": "Identifier",
+                  "label": "this",
+                  "start_token": 330,
+                  "end_token": 330,
+                  "children": []
+                },
+                {
+                  "type": "TypeReference",
+                  "label": "ISupplyDataFunctions",
+                  "start_token": 332,
+                  "end_token": 332,
+                  "children": [
+                    {
+                      "type": "Identifier",
+                      "label": "ISupplyDataFunctions",
+                      "start_token": 332,
+                      "end_token": 332,
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "Parameter",
+              "label": "itemIndex: number",
+              "start_token": 334,
+              "end_token": 336,
+              "children": [
+                {
+                  "type": "Identifier",
+                  "label": "itemIndex",
+                  "start_token": 334,
+                  "end_token": 334,
+                  "children": []
+                },
+                {
+                  "type": "NumberKeyword",
+                  "label": "number",
+                  "start_token": 336,
+                  "end_token": 336,
+                  "children": []
+                }
+              ]
+            },
+            {
+              "type": "TypeReference",
+              "label": "Promise<SupplyData>",
+              "start_token": 339,
+              "end_token": 342,
+              "children": [
+                {
+                  "type": "Identifier",
+                  "label": "Promise",
+                  "start_token": 339,
+                  "end_token": 339,
+                  "children": []
+                },
+                {
+                  "type": "TypeReference",
+                  "label": "SupplyData",
+                  "start_token": 341,
+                  "end_token": 341,
+                  "children": [
+                    {
+                      "type": "Identifier",
+                      "label": "SupplyData",
+                      "start_token": 341,
+                      "end_token": 341,
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "Block",
+              "label": "{\n\t\tconst credentials = await this.getCredentials('aws');\n\t\tconst modelName = this.getNodeParameter('model', itemIndex) as string;\n\t\tconst embeddings = new BedrockEmbeddings({\n\t\t\tregion: credentials.region as string,\n\t\t\tmodel: modelName,\n\t\t\tmaxRetries: 3,\n\t\t\tcredentials: {\n\t\t\t\tsecretAccessKey: credentials.secretAccessKey as string,\n\t\t\t\taccessKeyId: credentials.accessKeyId as string,\n\t\t\t\tsessionToken: credentials.sessionToken as string,\n\t\t\t},\n\t\t});\n\t\treturn {\n\t\t\tresponse: logWrapper(embeddings, this),\n\t\t};\n\t}",
+              "start_token": 343,
+              "end_token": 437,
+              "children": [
+                {
+                  "type": "FirstStatement",
+                  "label": "const credentials = await this.getCredentials('aws');",
+                  "start_token": 344,
+                  "end_token": 354,
+                  "children": [
+                    {
+                      "type": "VariableDeclarationList",
+                      "label": "const credentials = await this.getCredentials('aws')",
+                      "start_token": 344,
+                      "end_token": 353,
+                      "children": [
+                        {
+                          "type": "VariableDeclaration",
+                          "label": "credentials = await this.getCredentials('aws')",
+                          "start_token": 345,
+                          "end_token": 353,
+                          "children": [
+                            {
+                              "type": "Identifier",
+                              "label": "credentials",
+                              "start_token": 345,
+                              "end_token": 345,
+                              "children": []
+                            },
+                            {
+                              "type": "AwaitExpression",
+                              "label": "await this.getCredentials('aws')",
+                              "start_token": 347,
+                              "end_token": 353,
+                              "children": [
+                                {
+                                  "type": "CallExpression",
+                                  "label": "this.getCredentials('aws')",
+                                  "start_token": 348,
+                                  "end_token": 353,
+                                  "children": [
+                                    {
+                                      "type": "PropertyAccessExpression",
+                                      "label": "this.getCredentials",
+                                      "start_token": 348,
+                                      "end_token": 350,
+                                      "children": [
+                                        {
+                                          "type": "ThisKeyword",
+                                          "label": "this",
+                                          "start_token": 348,
+                                          "end_token": 348,
+                                          "children": []
+                                        },
+                                        {
+                                          "type": "Identifier",
+                                          "label": "getCredentials",
+                                          "start_token": 350,
+                                          "end_token": 350,
+                                          "children": []
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "type": "StringLiteral",
+                                      "label": "'aws'",
+                                      "start_token": 352,
+                                      "end_token": 352,
+                                      "children": []
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "FirstStatement",
+                  "label": "const modelName = this.getNodeParameter('model', itemIndex) as string;",
+                  "start_token": 355,
+                  "end_token": 368,
+                  "children": [
+                    {
+                      "type": "VariableDeclarationList",
+                      "label": "const modelName = this.getNodeParameter('model', itemIndex) as string",
+                      "start_token": 355,
+                      "end_token": 367,
+                      "children": [
+                        {
+                          "type": "VariableDeclaration",
+                          "label": "modelName = this.getNodeParameter('model', itemIndex) as string",
+                          "start_token": 356,
+                          "end_token": 367,
+                          "children": [
+                            {
+                              "type": "Identifier",
+                              "label": "modelName",
+                              "start_token": 356,
+                              "end_token": 356,
+                              "children": []
+                            },
+                            {
+                              "type": "AsExpression",
+                              "label": "this.getNodeParameter('model', itemIndex) as string",
+                              "start_token": 358,
+                              "end_token": 367,
+                              "children": [
+                                {
+                                  "type": "CallExpression",
+                                  "label": "this.getNodeParameter('model', itemIndex)",
+                                  "start_token": 358,
+                                  "end_token": 365,
+                                  "children": [
+                                    {
+                                      "type": "PropertyAccessExpression",
+                                      "label": "this.getNodeParameter",
+                                      "start_token": 358,
+                                      "end_token": 360,
+                                      "children": [
+                                        {
+                                          "type": "ThisKeyword",
+                                          "label": "this",
+                                          "start_token": 358,
+                                          "end_token": 358,
+                                          "children": []
+                                        },
+                                        {
+                                          "type": "Identifier",
+                                          "label": "getNodeParameter",
+                                          "start_token": 360,
+                                          "end_token": 360,
+                                          "children": []
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "type": "StringLiteral",
+                                      "label": "'model'",
+                                      "start_token": 362,
+                                      "end_token": 362,
+                                      "children": []
+                                    },
+                                    {
+                                      "type": "Identifier",
+                                      "label": "itemIndex",
+                                      "start_token": 364,
+                                      "end_token": 364,
+                                      "children": []
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "StringKeyword",
+                                  "label": "string",
+                                  "start_token": 367,
+                                  "end_token": 367,
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "FirstStatement",
+                  "label": "const embeddings = new BedrockEmbeddings({\n\t\t\tregion: credentials.region as string,\n\t\t\tmodel: modelName,\n\t\t\tmaxRetries: 3,\n\t\t\tcredentials: {\n\t\t\t\tsecretAccessKey: credentials.secretAccessKey as string,\n\t\t\t\taccessKeyId: credentials.accessKeyId as string,\n\t\t\t\tsessionToken: credentials.sessionToken as string,\n\t\t\t},\n\t\t});",
+                  "start_token": 369,
+                  "end_token": 423,
+                  "children": [
+                    {
+                      "type": "VariableDeclarationList",
+                      "label": "const embeddings = new BedrockEmbeddings({\n\t\t\tregion: credentials.region as string,\n\t\t\tmodel: modelName,\n\t\t\tmaxRetries: 3,\n\t\t\tcredentials: {\n\t\t\t\tsecretAccessKey: credentials.secretAccessKey as string,\n\t\t\t\taccessKeyId: credentials.accessKeyId as string,\n\t\t\t\tsessionToken: credentials.sessionToken as string,\n\t\t\t},\n\t\t})",
+                      "start_token": 369,
+                      "end_token": 422,
+                      "children": [
+                        {
+                          "type": "VariableDeclaration",
+                          "label": "embeddings = new BedrockEmbeddings({\n\t\t\tregion: credentials.region as string,\n\t\t\tmodel: modelName,\n\t\t\tmaxRetries: 3,\n\t\t\tcredentials: {\n\t\t\t\tsecretAccessKey: credentials.secretAccessKey as string,\n\t\t\t\taccessKeyId: credentials.accessKeyId as string,\n\t\t\t\tsessionToken: credentials.sessionToken as string,\n\t\t\t},\n\t\t})",
+                          "start_token": 370,
+                          "end_token": 422,
+                          "children": [
+                            {
+                              "type": "Identifier",
+                              "label": "embeddings",
+                              "start_token": 370,
+                              "end_token": 370,
+                              "children": []
+                            },
+                            {
+                              "type": "NewExpression",
+                              "label": "new BedrockEmbeddings({\n\t\t\tregion: credentials.region as string,\n\t\t\tmodel: modelName,\n\t\t\tmaxRetries: 3,\n\t\t\tcredentials: {\n\t\t\t\tsecretAccessKey: credentials.secretAccessKey as string,\n\t\t\t\taccessKeyId: credentials.accessKeyId as string,\n\t\t\t\tsessionToken: credentials.sessionToken as string,\n\t\t\t},\n\t\t})",
+                              "start_token": 372,
+                              "end_token": 422,
+                              "children": [
+                                {
+                                  "type": "Identifier",
+                                  "label": "BedrockEmbeddings",
+                                  "start_token": 373,
+                                  "end_token": 373,
+                                  "children": []
+                                },
+                                {
+                                  "type": "ObjectLiteralExpression",
+                                  "label": "{\n\t\t\tregion: credentials.region as string,\n\t\t\tmodel: modelName,\n\t\t\tmaxRetries: 3,\n\t\t\tcredentials: {\n\t\t\t\tsecretAccessKey: credentials.secretAccessKey as string,\n\t\t\t\taccessKeyId: credentials.accessKeyId as string,\n\t\t\t\tsessionToken: credentials.sessionToken as string,\n\t\t\t},\n\t\t}",
+                                  "start_token": 375,
+                                  "end_token": 421,
+                                  "children": [
+                                    {
+                                      "type": "PropertyAssignment",
+                                      "label": "region: credentials.region as string",
+                                      "start_token": 376,
+                                      "end_token": 382,
+                                      "children": [
+                                        {
+                                          "type": "Identifier",
+                                          "label": "region",
+                                          "start_token": 376,
+                                          "end_token": 376,
+                                          "children": []
+                                        },
+                                        {
+                                          "type": "AsExpression",
+                                          "label": "credentials.region as string",
+                                          "start_token": 378,
+                                          "end_token": 382,
+                                          "children": [
+                                            {
+                                              "type": "PropertyAccessExpression",
+                                              "label": "credentials.region",
+                                              "start_token": 378,
+                                              "end_token": 380,
+                                              "children": [
+                                                {
+                                                  "type": "Identifier",
+                                                  "label": "credentials",
+                                                  "start_token": 378,
+                                                  "end_token": 378,
+                                                  "children": []
+                                                },
+                                                {
+                                                  "type": "Identifier",
+                                                  "label": "region",
+                                                  "start_token": 380,
+                                                  "end_token": 380,
+                                                  "children": []
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "type": "StringKeyword",
+                                              "label": "string",
+                                              "start_token": 382,
+                                              "end_token": 382,
+                                              "children": []
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "type": "PropertyAssignment",
+                                      "label": "model: modelName",
+                                      "start_token": 384,
+                                      "end_token": 386,
+                                      "children": [
+                                        {
+                                          "type": "Identifier",
+                                          "label": "model",
+                                          "start_token": 384,
+                                          "end_token": 384,
+                                          "children": []
+                                        },
+                                        {
+                                          "type": "Identifier",
+                                          "label": "modelName",
+                                          "start_token": 386,
+                                          "end_token": 386,
+                                          "children": []
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "type": "PropertyAssignment",
+                                      "label": "maxRetries: 3",
+                                      "start_token": 388,
+                                      "end_token": 390,
+                                      "children": [
+                                        {
+                                          "type": "Identifier",
+                                          "label": "maxRetries",
+                                          "start_token": 388,
+                                          "end_token": 388,
+                                          "children": []
+                                        },
+                                        {
+                                          "type": "FirstLiteralToken",
+                                          "label": "3",
+                                          "start_token": 390,
+                                          "end_token": 390,
+                                          "children": []
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "type": "PropertyAssignment",
+                                      "label": "credentials: {\n\t\t\t\tsecretAccessKey: credentials.secretAccessKey as string,\n\t\t\t\taccessKeyId: credentials.accessKeyId as string,\n\t\t\t\tsessionToken: credentials.sessionToken as string,\n\t\t\t}",
+                                      "start_token": 392,
+                                      "end_token": 419,
+                                      "children": [
+                                        {
+                                          "type": "Identifier",
+                                          "label": "credentials",
+                                          "start_token": 392,
+                                          "end_token": 392,
+                                          "children": []
+                                        },
+                                        {
+                                          "type": "ObjectLiteralExpression",
+                                          "label": "{\n\t\t\t\tsecretAccessKey: credentials.secretAccessKey as string,\n\t\t\t\taccessKeyId: credentials.accessKeyId as string,\n\t\t\t\tsessionToken: credentials.sessionToken as string,\n\t\t\t}",
+                                          "start_token": 394,
+                                          "end_token": 419,
+                                          "children": [
+                                            {
+                                              "type": "PropertyAssignment",
+                                              "label": "secretAccessKey: credentials.secretAccessKey as string",
+                                              "start_token": 395,
+                                              "end_token": 401,
+                                              "children": [
+                                                {
+                                                  "type": "Identifier",
+                                                  "label": "secretAccessKey",
+                                                  "start_token": 395,
+                                                  "end_token": 395,
+                                                  "children": []
+                                                },
+                                                {
+                                                  "type": "AsExpression",
+                                                  "label": "credentials.secretAccessKey as string",
+                                                  "start_token": 397,
+                                                  "end_token": 401,
+                                                  "children": [
+                                                    {
+                                                      "type": "PropertyAccessExpression",
+                                                      "label": "credentials.secretAccessKey",
+                                                      "start_token": 397,
+                                                      "end_token": 399,
+                                                      "children": [
+                                                        {
+                                                          "type": "Identifier",
+                                                          "label": "credentials",
+                                                          "start_token": 397,
+                                                          "end_token": 397,
+                                                          "children": []
+                                                        },
+                                                        {
+                                                          "type": "Identifier",
+                                                          "label": "secretAccessKey",
+                                                          "start_token": 399,
+                                                          "end_token": 399,
+                                                          "children": []
+                                                        }
+                                                      ]
+                                                    },
+                                                    {
+                                                      "type": "StringKeyword",
+                                                      "label": "string",
+                                                      "start_token": 401,
+                                                      "end_token": 401,
+                                                      "children": []
+                                                    }
+                                                  ]
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "type": "PropertyAssignment",
+                                              "label": "accessKeyId: credentials.accessKeyId as string",
+                                              "start_token": 403,
+                                              "end_token": 409,
+                                              "children": [
+                                                {
+                                                  "type": "Identifier",
+                                                  "label": "accessKeyId",
+                                                  "start_token": 403,
+                                                  "end_token": 403,
+                                                  "children": []
+                                                },
+                                                {
+                                                  "type": "AsExpression",
+                                                  "label": "credentials.accessKeyId as string",
+                                                  "start_token": 405,
+                                                  "end_token": 409,
+                                                  "children": [
+                                                    {
+                                                      "type": "PropertyAccessExpression",
+                                                      "label": "credentials.accessKeyId",
+                                                      "start_token": 405,
+                                                      "end_token": 407,
+                                                      "children": [
+                                                        {
+                                                          "type": "Identifier",
+                                                          "label": "credentials",
+                                                          "start_token": 405,
+                                                          "end_token": 405,
+                                                          "children": []
+                                                        },
+                                                        {
+                                                          "type": "Identifier",
+                                                          "label": "accessKeyId",
+                                                          "start_token": 407,
+                                                          "end_token": 407,
+                                                          "children": []
+                                                        }
+                                                      ]
+                                                    },
+                                                    {
+                                                      "type": "StringKeyword",
+                                                      "label": "string",
+                                                      "start_token": 409,
+                                                      "end_token": 409,
+                                                      "children": []
+                                                    }
+                                                  ]
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "type": "PropertyAssignment",
+                                              "label": "sessionToken: credentials.sessionToken as string",
+                                              "start_token": 411,
+                                              "end_token": 417,
+                                              "children": [
+                                                {
+                                                  "type": "Identifier",
+                                                  "label": "sessionToken",
+                                                  "start_token": 411,
+                                                  "end_token": 411,
+                                                  "children": []
+                                                },
+                                                {
+                                                  "type": "AsExpression",
+                                                  "label": "credentials.sessionToken as string",
+                                                  "start_token": 413,
+                                                  "end_token": 417,
+                                                  "children": [
+                                                    {
+                                                      "type": "PropertyAccessExpression",
+                                                      "label": "credentials.sessionToken",
+                                                      "start_token": 413,
+                                                      "end_token": 415,
+                                                      "children": [
+                                                        {
+                                                          "type": "Identifier",
+                                                          "label": "credentials",
+                                                          "start_token": 413,
+                                                          "end_token": 413,
+                                                          "children": []
+                                                        },
+                                                        {
+                                                          "type": "Identifier",
+                                                          "label": "sessionToken",
+                                                          "start_token": 415,
+                                                          "end_token": 415,
+                                                          "children": []
+                                                        }
+                                                      ]
+                                                    },
+                                                    {
+                                                      "type": "StringKeyword",
+                                                      "label": "string",
+                                                      "start_token": 417,
+                                                      "end_token": 417,
+                                                      "children": []
+                                                    }
+                                                  ]
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "ReturnStatement",
+                  "label": "return {\n\t\t\tresponse: logWrapper(embeddings, this),\n\t\t};",
+                  "start_token": 424,
+                  "end_token": 436,
+                  "children": [
+                    {
+                      "type": "ObjectLiteralExpression",
+                      "label": "{\n\t\t\tresponse: logWrapper(embeddings, this),\n\t\t}",
+                      "start_token": 425,
+                      "end_token": 435,
+                      "children": [
+                        {
+                          "type": "PropertyAssignment",
+                          "label": "response: logWrapper(embeddings, this)",
+                          "start_token": 426,
+                          "end_token": 433,
+                          "children": [
+                            {
+                              "type": "Identifier",
+                              "label": "response",
+                              "start_token": 426,
+                              "end_token": 426,
+                              "children": []
+                            },
+                            {
+                              "type": "CallExpression",
+                              "label": "logWrapper(embeddings, this)",
+                              "start_token": 428,
+                              "end_token": 433,
+                              "children": [
+                                {
+                                  "type": "Identifier",
+                                  "label": "logWrapper",
+                                  "start_token": 428,
+                                  "end_token": 428,
+                                  "children": []
+                                },
+                                {
+                                  "type": "Identifier",
+                                  "label": "embeddings",
+                                  "start_token": 430,
+                                  "end_token": 430,
+                                  "children": []
+                                },
+                                {
+                                  "type": "ThisKeyword",
+                                  "label": "this",
+                                  "start_token": 432,
+                                  "end_token": 432,
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "EndOfFileToken",
+      "label": "",
+      "start_token": -1,
+      "end_token": -1,
+      "children": []
+    }
+  ]
+}

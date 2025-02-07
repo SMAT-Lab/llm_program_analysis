@@ -1,0 +1,527 @@
+{
+    "type": "module",
+    "start_token": 0,
+    "end_token": 14443,
+    "label": "import { RoomType } from '@rocket.chat/apps-engine/definition/rooms';\nimport { expect } from 'chai';\nimport proxyquire from 'proxyquire';\nimport sinon from 'sinon';\nimport { EVENT_ORIGIN } from '../../../../../../../server/services/federation/domain/IFederationBridge';\nconst { FederationRoomServiceReceiver } = proxyquire\n\t.noCallThru()\n\t.load('../../../../../../../server/services/federation/application/room/receiver/RoomServiceReceiver', {\n\t\tmongodb: {\n\t\t\t'ObjectId': class ObjectId {\n\t\t\t\ttoHexString(): string {\n\t\t\t\t\treturn 'hexString';\n\t\t\t\t}\n\t\t\t},\n\t\t\t'@global': true,\n\t\t},\n\t});\nconst { FederatedUser } = proxyquire.noCallThru().load('../../../../../../../server/services/federation/domain/FederatedUser', {\n\tmongodb: {\n\t\t'ObjectId': class ObjectId {\n\t\t\ttoHexString(): string {\n\t\t\t\treturn 'hexString';\n\t\t\t}\n\t\t},\n\t\t'@global': true,\n\t},\n});\nconst { DirectMessageFederatedRoom, FederatedRoom } = proxyquire\n\t.noCallThru()\n\t.load('../../../../../../../server/services/federation/domain/FederatedRoom', {\n\t\tmongodb: {\n\t\t\t'ObjectId': class ObjectId {\n\t\t\t\ttoHexString(): string {\n\t\t\t\t\treturn 'hexString';\n\t\t\t\t}\n\t\t\t},\n\t\t\t'@global': true,\n\t\t},\n\t});\ndescribe('Federation - Application - FederationRoomServiceReceiver', () => {\n\tlet service: typeof FederationRoomServiceReceiver;\n\tconst roomAdapter = {\n\t\tgetFederatedRoomByExternalId: sinon.stub(),\n\t\tcreateFederatedRoom: sinon.stub(),\n\t\tcreateFederatedRoomForDirectMessage: sinon.stub(),\n\t\tremoveDirectMessageRoom: sinon.stub(),\n\t\tremoveUserFromRoom: sinon.stub(),\n\t\taddUserToRoom: sinon.stub(),\n\t\tisUserAlreadyJoined: sinon.stub(),\n\t\tgetInternalRoomById: sinon.stub(),\n\t\tupdateFederatedRoomByInternalRoomId: sinon.stub(),\n\t\tupdateRoomType: sinon.stub(),\n\t\tupdateRoomName: sinon.stub(),\n\t\tupdateRoomTopic: sinon.stub(),\n\t\tapplyRoomRolesToUser: sinon.stub(),\n\t\tupdateDisplayRoomName: sinon.stub(),\n\t\taddUsersToRoomWhenJoinExternalPublicRoom: sinon.stub(),\n\t};\n\tconst userAdapter = {\n\t\tgetFederatedUserByExternalId: sinon.stub(),\n\t\tcreateFederatedUser: sinon.stub(),\n\t\tupdateFederationAvatar: sinon.stub(),\n\t\tsetAvatar: sinon.stub(),\n\t\tgetInternalUserByUsername: sinon.stub(),\n\t\tupdateRealName: sinon.stub(),\n\t\tgetFederatedUsersByExternalIds: sinon.stub(),\n\t};\n\tconst messageAdapter = {\n\t\tsendMessage: sinon.stub(),\n\t\tsendFileMessage: sinon.stub(),\n\t\tdeleteMessage: sinon.stub(),\n\t\tgetMessageByFederationId: sinon.stub(),\n\t\teditMessage: sinon.stub(),\n\t\tfindOneByFederationIdOnReactions: sinon.stub(),\n\t\tunreactToMessage: sinon.stub(),\n\t\tsendQuoteMessage: sinon.stub(),\n\t\tsendQuoteFileMessage: sinon.stub(),\n\t\teditQuotedMessage: sinon.stub(),\n\t\tgetMessageToEditWhenReplyAndQuote: sinon.stub(),\n\t\tsendThreadQuoteMessage: sinon.stub(),\n\t\tsendThreadMessage: sinon.stub(),\n\t\tsendThreadFileMessage: sinon.stub(),\n\t\tsendThreadQuoteFileMessage: sinon.stub(),\n\t};\n\tconst settingsAdapter = {\n\t\tgetHomeServerDomain: sinon.stub().returns('localDomain'),\n\t};\n\tconst notificationsAdapter = {\n\t\tsubscribeToUserTypingEventsOnFederatedRoomId: sinon.stub(),\n\t\tbroadcastUserTypingOnRoom: sinon.stub(),\n\t};\n\tconst fileAdapter = {\n\t\tuploadFile: sinon.stub(),\n\t};\n\tconst queueInstance = {\n\t\taddToQueue: sinon.stub(),\n\t};\n\tconst bridge = {\n\t\tgetUserProfileInformation: sinon.stub().resolves({}),\n\t\textractHomeserverOrigin: sinon.stub().returns('localDomain'),\n\t\tjoinRoom: sinon.stub(),\n\t\tconvertMatrixUrlToHttp: sinon.stub().returns('toHttpUrl'),\n\t\tgetReadStreamForFileFromUrl: sinon.stub(),\n\t\tgetRoomHistoricalJoinEvents: sinon.stub(),\n\t\tgetRoomData: sinon.stub(),\n\t};\n\tbeforeEach(() => {\n\t\tservice = new FederationRoomServiceReceiver(\n\t\t\troomAdapter as any,\n\t\t\tuserAdapter as any,\n\t\t\tmessageAdapter as any,\n\t\t\tfileAdapter as any,\n\t\t\tsettingsAdapter as any,\n\t\t\tnotificationsAdapter as any,\n\t\t\tqueueInstance as any,\n\t\t\tbridge as any,\n\t\t);\n\t});\n\tafterEach(() => {\n\t\troomAdapter.getFederatedRoomByExternalId.reset();\n\t\troomAdapter.createFederatedRoom.reset();\n\t\troomAdapter.createFederatedRoomForDirectMessage.reset();\n\t\troomAdapter.removeDirectMessageRoom.reset();\n\t\troomAdapter.updateRoomType.reset();\n\t\troomAdapter.updateRoomName.reset();\n\t\troomAdapter.updateFederatedRoomByInternalRoomId.reset();\n\t\troomAdapter.updateRoomTopic.reset();\n\t\troomAdapter.removeUserFromRoom.reset();\n\t\troomAdapter.isUserAlreadyJoined.reset();\n\t\troomAdapter.addUsersToRoomWhenJoinExternalPublicRoom.reset();\n\t\troomAdapter.getInternalRoomById.reset();\n\t\troomAdapter.addUserToRoom.reset();\n\t\troomAdapter.applyRoomRolesToUser.reset();\n\t\troomAdapter.updateDisplayRoomName.reset();\n\t\tuserAdapter.getFederatedUserByExternalId.reset();\n\t\tuserAdapter.createFederatedUser.reset();\n\t\tuserAdapter.updateFederationAvatar.reset();\n\t\tuserAdapter.setAvatar.reset();\n\t\tuserAdapter.getInternalUserByUsername.reset();\n\t\tuserAdapter.updateRealName.reset();\n\t\tuserAdapter.getFederatedUsersByExternalIds.reset();\n\t\tmessageAdapter.sendMessage.reset();\n\t\tmessageAdapter.sendFileMessage.reset();\n\t\tmessageAdapter.deleteMessage.reset();\n\t\tmessageAdapter.getMessageByFederationId.reset();\n\t\tmessageAdapter.editMessage.reset();\n\t\tmessageAdapter.unreactToMessage.reset();\n\t\tmessageAdapter.findOneByFederationIdOnReactions.reset();\n\t\tmessageAdapter.sendQuoteFileMessage.reset();\n\t\tmessageAdapter.sendQuoteMessage.reset();\n\t\tmessageAdapter.sendThreadQuoteMessage.reset();\n\t\tmessageAdapter.sendThreadMessage.reset();\n\t\tmessageAdapter.sendThreadFileMessage.reset();\n\t\tmessageAdapter.sendThreadQuoteFileMessage.reset();\n\t\tbridge.extractHomeserverOrigin.reset();\n\t\tbridge.joinRoom.reset();\n\t\tbridge.getUserProfileInformation.reset();\n\t\tbridge.getReadStreamForFileFromUrl.reset();\n\t\tbridge.getRoomData.reset();\n\t\tbridge.getRoomHistoricalJoinEvents.reset();\n\t\tfileAdapter.uploadFile.reset();\n\t\tqueueInstance.addToQueue.reset();\n\t});\n\tdescribe('#onCreateRoom()', () => {\n\t\tit('should NOT create users nor room if the room already exists', async () => {\n\t\t\troomAdapter.getFederatedRoomByExternalId.resolves({} as any);\n\t\t\tawait service.onCreateRoom({} as any);\n\t\t\texpect(roomAdapter.createFederatedRoom.called).to.be.false;\n\t\t\texpect(userAdapter.createFederatedUser.called).to.be.false;\n\t\t});\n\t\tit('should NOT create users nor room if the room was created internally and programatically even if the room does not exists', async () => {\n\t\t\troomAdapter.getFederatedRoomByExternalId.resolves(undefined);\n\t\t\tawait service.onCreateRoom({ wasInternallyProgramaticallyCreated: true } as any);\n\t\t\texpect(roomAdapter.createFederatedRoom.called).to.be.false;\n\t\t\texpect(userAdapter.createFederatedUser.called).to.be.false;\n\t\t});\n\t\tit('should NOT update the room if it was created internally and programatically but it is not a DM message and dont create the room', async () => {\n\t\t\troomAdapter.getFederatedRoomByExternalId.resolves(undefined);\n\t\t\troomAdapter.getInternalRoomById.resolves({ t: 'c' });\n\t\t\tawait service.onCreateRoom({ wasInternallyProgramaticallyCreated: true } as any);\n\t\t\texpect(roomAdapter.updateFederatedRoomByInternalRoomId.called).to.be.false;\n\t\t\texpect(roomAdapter.createFederatedRoom.called).to.be.false;\n\t\t\texpect(userAdapter.createFederatedUser.called).to.be.false;\n\t\t});\n\t\tit('should NOT update the room if it was created internally and programatically but it does not exists and dont create the room', async () => {\n\t\t\troomAdapter.getFederatedRoomByExternalId.resolves(undefined);\n\t\t\troomAdapter.getInternalRoomById.resolves(undefined);\n\t\t\tawait service.onCreateRoom({ wasInternallyProgramaticallyCreated: true } as any);\n\t\t\texpect(roomAdapter.updateFederatedRoomByInternalRoomId.called).to.be.false;\n\t\t\texpect(roomAdapter.createFederatedRoom.called).to.be.false;\n\t\t\texpect(userAdapter.createFederatedUser.called).to.be.false;\n\t\t});\n\t\tit('should update the room if it was created internally and programatically but it is a DM message but it should NOT create a new DM Room(this is necessary due to a race condition on matrix events)', async () => {\n\t\t\troomAdapter.getFederatedRoomByExternalId.resolves(undefined);\n\t\t\troomAdapter.getInternalRoomById.resolves({ t: 'd' });\n\t\t\tawait service.onCreateRoom({\n\t\t\t\twasInternallyProgramaticallyCreated: true,\n\t\t\t\tinternalRoomId: 'internalRoomId',\n\t\t\t\texternalRoomId: 'externalRoomId',\n\t\t\t} as any);\n\t\t\texpect(roomAdapter.updateFederatedRoomByInternalRoomId.calledWith('internalRoomId', 'externalRoomId')).to.be.true;\n\t\t\texpect(roomAdapter.createFederatedRoom.called).to.be.false;\n\t\t\texpect(userAdapter.createFederatedUser.called).to.be.false;\n\t\t});\n\t});\n\tdescribe('#onChangeRoomMembership()', () => {\n\t\tconst user = FederatedUser.createInstance('externalInviterId', {\n\t\t\tname: 'normalizedInviterId',\n\t\t\tusername: 'normalizedInviterId',\n\t\t\texistsOnlyOnProxyServer: false,\n\t\t});\n\t\tconst room = FederatedRoom.createInstance('externalRoomId', 'normalizedRoomId', user, RoomType.CHANNEL, 'externalRoomName');\n\t\tit('should NOT process the method if the room already exists AND event origin is equal to LOCAL', async () => {\n\t\t\troomAdapter.getFederatedRoomByExternalId.resolves(room);\n\t\t\tuserAdapter.getFederatedUserByExternalId.resolves(user);\n\t\t\tawait service.onChangeRoomMembership({ externalRoomId: 'externalRoomId', eventOrigin: EVENT_ORIGIN.LOCAL } as any);\n\t\t\texpect(userAdapter.createFederatedUser.called).to.be.false;\n\t\t});\n\t\tit('should NOT process the method if the room already exists AND event origin is equal to REMOTE', async () => {\n\t\t\troomAdapter.getFederatedRoomByExternalId.resolves(room);\n\t\t\tuserAdapter.getFederatedUserByExternalId.resolves(user);\n\t\t\tawait service.onChangeRoomMembership({ externalRoomId: 'externalRoomId', eventOrigin: EVENT_ORIGIN.REMOTE } as any);\n\t\t\texpect(userAdapter.createFederatedUser.called).to.be.false;\n\t\t});\n\t\tit('should NOT process the method logic if the event was generated on the proxy home server, it is NOT a join event (user joining himself), but the room does not exists yet', async () => {\n\t\t\troomAdapter.getFederatedRoomByExternalId.resolves(undefined);\n\t\t\tuserAdapter.getFederatedUserByExternalId.onFirstCall().resolves(undefined);\n\t\t\tawait service.onChangeRoomMembership({\n\t\t\t\texternalRoomId: 'externalRoomId',\n\t\t\t\texternalInviterId: 'externalInviterId',\n\t\t\t\texternalInviteeId: 'externalInviteeId',\n\t\t\t\teventOrigin: EVENT_ORIGIN.LOCAL,\n\t\t\t} as any);\n\t\t\texpect(userAdapter.createFederatedUser.called).to.be.false;\n\t\t});\n\t\tit('should NOT create the inviter if it already exists', async () => {\n\t\t\troomAdapter.getFederatedRoomByExternalId.resolves(room);\n\t\t\tuserAdapter.getFederatedUserByExternalId.resolves(user);\n\t\t\tawait service.onChangeRoomMembership({ externalRoomId: 'externalRoomId', eventOrigin: EVENT_ORIGIN.LOCAL } as any);\n\t\t\texpect(userAdapter.createFederatedUser.called).to.be.false;\n\t\t});\n\t\tit('should create the inviter if it does not exists', async () => {\n\t\t\tconst inviter = FederatedUser.createInstance('externalInviterId', {\n\t\t\t\tname: 'inviterUsernameOnly',\n\t\t\t\tusername: 'inviterUsernameOnly',\n\t\t\t\texistsOnlyOnProxyServer: true,\n\t\t\t});\n\t\t\troomAdapter.getFederatedRoomByExternalId.resolves(room);\n\t\t\tuserAdapter.getFederatedUserByExternalId.onFirstCall().resolves(undefined);\n\t\t\tuserAdapter.getFederatedUserByExternalId.resolves(user);\n\t\t\tbridge.extractHomeserverOrigin.returns('localDomain');\n\t\t\tawait service.onChangeRoomMembership({\n\t\t\t\texternalRoomId: 'externalRoomId',\n\t\t\t\teventOrigin: EVENT_ORIGIN.LOCAL,\n\t\t\t\texternalInviterId: 'externalInviterId',\n\t\t\t\tnormalizedInviterId: 'normalizedInviterId',\n\t\t\t\tinviterUsernameOnly: 'inviterUsernameOnly',\n\t\t\t} as any);\n\t\t\texpect(userAdapter.createFederatedUser.calledWith(inviter)).to.be.true;\n\t\t});\n\t\tit('should NOT create the invitee if it already exists', async () => {\n\t\t\troomAdapter.getFederatedRoomByExternalId.resolves(room);\n\t\t\tuserAdapter.getFederatedUserByExternalId.resolves(user);\n\t\t\tawait service.onChangeRoomMembership({ externalRoomId: 'externalRoomId', eventOrigin: EVENT_ORIGIN.LOCAL } as any);\n\t\t\texpect(userAdapter.createFederatedUser.called).to.be.false;\n\t\t});\n\t\tit('should create the invitee if it does not exists', async () => {\n\t\t\tconst invitee = FederatedUser.createInstance('externalInviteeId', {\n\t\t\t\tname: 'normalizedInviteeId',\n\t\t\t\tusername: 'normalizedInviteeId',\n\t\t\t\texistsOnlyOnProxyServer: false,\n\t\t\t});\n\t\t\troomAdapter.getFederatedRoomByExternalId.resolves(room);\n\t\t\tuserAdapter.getFederatedUserByExternalId.resolves(invitee);\n\t\t\tuserAdapter.getFederatedUserByExternalId.onSecondCall().resolves(undefined);\n\t\t\tbridge.extractHomeserverOrigin.onCall(1).returns('externalDomain');\n\t\t\tawait service.onChangeRoomMembership({\n\t\t\t\texternalRoomId: 'externalRoomId',\n\t\t\t\teventOrigin: EVENT_ORIGIN.LOCAL,\n\t\t\t\texternalInviteeId: 'externalInviteeId',\n\t\t\t\tnormalizedInviteeId: 'normalizedInviteeId',\n\t\t\t} as any);\n\t\t\texpect(userAdapter.createFederatedUser.calledWith(invitee)).to.be.true;\n\t\t});\n\t\tit('should throw an error if the invitee user does not exists at all', async () => {\n\t\t\troomAdapter.getFederatedRoomByExternalId.resolves(room);\n\t\t\tuserAdapter.getFederatedUserByExternalId.resolves(undefined);\n\t\t\tawait expect(\n\t\t\t\tservice.onChangeRoomMembership({\n\t\t\t\t\texternalRoomId: 'externalRoomId',\n\t\t\t\t\teventOrigin: EVENT_ORIGIN.LOCAL,\n\t\t\t\t\texternalInviteeId: 'externalInviteeId',\n\t\t\t\t\tnormalizedInviteeId: 'normalizedInviteeId',\n\t\t\t\t} as any),\n\t\t\t).to.be.rejectedWith('Invitee or inviter user not found');\n\t\t});\n\t\tit('should throw an error if the inviter user does not exists at all', async () => {\n\t\t\troomAdapter.getFederatedRoomByExternalId.resolves(room);\n\t\t\tuserAdapter.getFederatedUserByExternalId.resolves(undefined);\n\t\t\tawait expect(\n\t\t\t\tservice.onChangeRoomMembership({\n\t\t\t\t\texternalRoomId: 'externalRoomId',\n\t\t\t\t\teventOrigin: EVENT_ORIGIN.LOCAL,\n\t\t\t\t\texternalInviteeId: 'externalInviteeId',\n\t\t\t\t\tnormalizedInviteeId: 'normalizedInviteeId',\n\t\t\t\t} as any),\n\t\t\t).to.be.rejectedWith('Invitee or inviter user not found');\n\t\t});\n\t\tit('should NOT create the room if it does not exists yet AND the event origin is REMOTE but there is no room type on the event', async () => {\n\t\t\troomAdapter.getFederatedRoomByExternalId.onCall(0).resolves(undefined);\n\t\t\troomAdapter.getFederatedRoomByExternalId.resolves(room);\n\t\t\tuserAdapter.getFederatedUserByExternalId.resolves(user);\n\t\t\tawait service.onChangeRoomMembership({\n\t\t\t\texternalRoomId: 'externalRoomId',\n\t\t\t\tnormalizedRoomId: 'normalizedRoomId',\n\t\t\t\teventOrigin: EVENT_ORIGIN.REMOTE,\n\t\t\t\troomType: undefined,\n\t\t\t\texternalInviteeId: 'externalInviteeId',\n\t\t\t\tnormalizedInviteeId: 'normalizedInviteeId',\n\t\t\t} as any);\n\t\t\texpect(roomAdapter.createFederatedRoom.called).to.be.false;\n\t\t});\n\t\tit('should create a room for DM if the room type is equal a direct message and it is handling regular events (m.room.member)(not using the property extracted from the invite_room_state)', async () => {\n\t\t\tconst inviter = user;\n\t\t\tconst invitee = FederatedUser.createInstance('externalInviteeId', {\n\t\t\t\tname: 'normalizedInviteeId',\n\t\t\t\tusername: 'normalizedInviteeId',\n\t\t\t\texistsOnlyOnProxyServer: false,\n\t\t\t});\n\t\t\troomAdapter.getFederatedRoomByExternalId.onCall(0).resolves(undefined);\n\t\t\troomAdapter.getFederatedRoomByExternalId.resolves(room);\n\t\t\tuserAdapter.getFederatedUserByExternalId.onCall(0).resolves(inviter);\n\t\t\tuserAdapter.getFederatedUserByExternalId.resolves(invitee);\n\t\t\tbridge.extractHomeserverOrigin.returns('localDomain');\n\t\t\tawait service.onChangeRoomMembership({\n\t\t\t\texternalRoomId: 'externalRoomId',\n\t\t\t\tnormalizedRoomId: 'normalizedRoomId',\n\t\t\t\teventOrigin: EVENT_ORIGIN.REMOTE,\n\t\t\t\troomType: RoomType.DIRECT_MESSAGE,\n\t\t\t\texternalInviteeId: 'externalInviteeId',\n\t\t\t\tnormalizedInviteeId: 'normalizedInviteeId',\n\t\t\t} as any);\n\t\t\tconst createdRoom = DirectMessageFederatedRoom.createInstance('externalRoomId', inviter, [inviter, invitee]);\n\t\t\texpect(roomAdapter.createFederatedRoomForDirectMessage.calledWith(createdRoom)).to.be.true;\n\t\t\texpect(roomAdapter.createFederatedRoom.called).to.be.false;\n\t\t\texpect(bridge.joinRoom.calledOnceWith('externalRoomId', 'externalInviteeId')).to.be.true;\n\t\t});\n\t\tit('should create a room for DM if the room type is equal a direct message and it is handling regular events (m.room.member)(not using the property extracted from the invite_room_state), but not automatically join the invitee if he/she is not from the proxy homeserver', async () => {\n\t\t\tconst inviter = user;\n\t\t\tconst invitee = FederatedUser.createInstance('externalInviteeId', {\n\t\t\t\tname: 'normalizedInviteeId',\n\t\t\t\tusername: 'normalizedInviteeId',\n\t\t\t\texistsOnlyOnProxyServer: false,\n\t\t\t});\n\t\t\troomAdapter.getFederatedRoomByExternalId.onCall(0).resolves(undefined);\n\t\t\troomAdapter.getFederatedRoomByExternalId.resolves(room);\n\t\t\tuserAdapter.getFederatedUserByExternalId.onCall(0).resolves(inviter);\n\t\t\tuserAdapter.getFederatedUserByExternalId.resolves(invitee);\n\t\t\tbridge.extractHomeserverOrigin.returns('externalDomain');\n\t\t\tawait service.onChangeRoomMembership({\n\t\t\t\texternalRoomId: 'externalRoomId',\n\t\t\t\tnormalizedRoomId: 'normalizedRoomId',\n\t\t\t\teventOrigin: EVENT_ORIGIN.REMOTE,\n\t\t\t\troomType: RoomType.DIRECT_MESSAGE,\n\t\t\t\texternalInviteeId: 'externalInviteeId',\n\t\t\t\tnormalizedInviteeId: 'normalizedInviteeId',\n\t\t\t} as any);\n\t\t\tconst createdRoom = DirectMessageFederatedRoom.createInstance('externalRoomId', inviter, [inviter, invitee]);\n\t\t\texpect(roomAdapter.createFederatedRoomForDirectMessage.calledWith(createdRoom)).to.be.true;\n\t\t\texpect(roomAdapter.createFederatedRoom.called).to.be.false;\n\t\t\texpect(bridge.joinRoom.called).to.be.false;\n\t\t});\n\t\tit('should create a room for DM if the room type is equal a direct message handling the property extracted from the invite_room_state', async () => {\n\t\t\tconst inviter = user;\n\t\t\tconst invitee = FederatedUser.createInstance('externalInviteeId', {\n\t\t\t\tname: 'normalizedInviteeId',\n\t\t\t\tusername: 'normalizedInviteeId',\n\t\t\t\texistsOnlyOnProxyServer: false,\n\t\t\t});\n\t\t\troomAdapter.getFederatedRoomByExternalId.onCall(0).resolves(undefined);\n\t\t\troomAdapter.getFederatedRoomByExternalId.resolves(room);\n\t\t\tuserAdapter.getFederatedUserByExternalId.onCall(0).resolves(inviter);\n\t\t\tuserAdapter.getFederatedUserByExternalId.resolves(invitee);\n\t\t\tbridge.extractHomeserverOrigin.returns('localDomain');\n\t\t\tawait service.onChangeRoomMembership({\n\t\t\t\texternalRoomId: 'externalRoomId',\n\t\t\t\tnormalizedRoomId: 'normalizedRoomId',\n\t\t\t\teventOrigin: EVENT_ORIGIN.REMOTE,\n\t\t\t\troomType: RoomType.DIRECT_MESSAGE,\n\t\t\t\texternalInviteeId: 'externalInviteeId',\n\t\t\t\tnormalizedInviteeId: 'normalizedInviteeId',\n\t\t\t\tallInviteesExternalIdsWhenDM: [\n\t\t\t\t\t{\n\t\t\t\t\t\texternalInviteeId: 'externalInviteeId',\n\t\t\t\t\t\tnormalizedInviteeId: 'normalizedInviteeId',\n\t\t\t\t\t\tinviteeUsernameOnly: 'inviteeUsernameOnly',\n\t\t\t\t\t},\n\t\t\t\t],\n\t\t\t} as any);\n\t\t\tconst createdRoom = DirectMessageFederatedRoom.createInstance('externalRoomId', inviter, [inviter, invitee]);\n\t\t\texpect(roomAdapter.createFederatedRoomForDirectMessage.calledWith(createdRoom)).to.be.true;\n\t\t\texpect(roomAdapter.createFederatedRoom.called).to.be.false;\n\t\t\texpect(bridge.joinRoom.calledOnceWith('externalRoomId', 'externalInviteeId')).to.be.true;\n\t\t});\n\t\tit('should create a room for DM if the room type is equal a direct message handling the property extracted from the invite_room_state, but not automatically join the user if he/she is not from the proxy homeserver', async () => {\n\t\t\tconst inviter = user;\n\t\t\tconst invitee = FederatedUser.createInstance('externalInviteeId', {\n\t\t\t\tname: 'normalizedInviteeId',\n\t\t\t\tusername: 'normalizedInviteeId',\n\t\t\t\texistsOnlyOnProxyServer: false,\n\t\t\t});\n\t\t\troomAdapter.getFederatedRoomByExternalId.onCall(0).resolves(undefined);\n\t\t\troomAdapter.getFederatedRoomByExternalId.resolves(room);\n\t\t\tuserAdapter.getFederatedUserByExternalId.onCall(0).resolves(inviter);\n\t\t\tuserAdapter.getFederatedUserByExternalId.resolves(invitee);\n\t\t\tbridge.extractHomeserverOrigin.returns('externalDomain');\n\t\t\tawait service.onChangeRoomMembership({\n\t\t\t\texternalRoomId: 'externalRoomId',\n\t\t\t\tnormalizedRoomId: 'normalizedRoomId',\n\t\t\t\teventOrigin: EVENT_ORIGIN.REMOTE,\n\t\t\t\troomType: RoomType.DIRECT_MESSAGE,\n\t\t\t\texternalInviteeId: 'externalInviteeId',\n\t\t\t\tnormalizedInviteeId: 'normalizedInviteeId',\n\t\t\t\tallInviteesExternalIdsWhenDM: [\n\t\t\t\t\t{\n\t\t\t\t\t\texternalInviteeId: 'externalInviteeId',\n\t\t\t\t\t\tnormalizedInviteeId: 'normalizedInviteeId',\n\t\t\t\t\t\tinviteeUsernameOnly: 'inviteeUsernameOnly',\n\t\t\t\t\t},\n\t\t\t\t],\n\t\t\t} as any);\n\t\t\tconst createdRoom = DirectMessageFederatedRoom.createInstance('externalRoomId', inviter, [inviter, invitee]);\n\t\t\texpect(roomAdapter.createFederatedRoomForDirectMessage.calledWith(createdRoom)).to.be.true;\n\t\t\texpect(roomAdapter.createFederatedRoom.called).to.be.false;\n\t\t\texpect(bridge.joinRoom.called).to.be.false;\n\t\t});\n\t\tit('should create a room (not DM) if the room type is NOT equal a direct message AND to add the historical room events to the processing queue when they exists', async () => {\n\t\t\tconst invitee = FederatedUser.createInstance('externalInviteeId', {\n\t\t\t\tname: 'normalizedInviteeId',\n\t\t\t\tusername: 'normalizedInviteeId',\n\t\t\t\texistsOnlyOnProxyServer: false,\n\t\t\t});\n\t\t\troomAdapter.getFederatedRoomByExternalId.onCall(0).resolves(undefined);\n\t\t\troomAdapter.getFederatedRoomByExternalId.resolves(room);\n\t\t\tuserAdapter.getFederatedUserByExternalId.resolves(invitee);\n\t\t\tbridge.getRoomHistoricalJoinEvents.resolves(['event1', 'event2']);\n\t\t\tawait service.onChangeRoomMembership({\n\t\t\t\texternalRoomId: 'externalRoomId',\n\t\t\t\tnormalizedRoomId: 'normalizedRoomId',\n\t\t\t\teventOrigin: EVENT_ORIGIN.REMOTE,\n\t\t\t\troomType: RoomType.CHANNEL,\n\t\t\t\texternalInviteeId: 'externalInviteeId',\n\t\t\t\tnormalizedInviteeId: 'normalizedInviteeId',\n\t\t\t\texternalRoomName: 'externalRoomName',\n\t\t\t} as any);\n\t\t\tconst createdRoom = FederatedRoom.createInstance('externalRoomId', 'normalizedRoomId', invitee, RoomType.CHANNEL);\n\t\t\texpect(roomAdapter.createFederatedRoom.calledWith(createdRoom)).to.be.true;\n\t\t\texpect(roomAdapter.createFederatedRoomForDirectMessage.called).to.be.false;\n\t\t\texpect(bridge.joinRoom.calledWith('externalRoomId', 'externalInviteeId')).to.be.true;\n\t\t\t['event1', 'event2'].forEach((event) => expect(queueInstance.addToQueue.calledWith(event)).to.be.true);\n\t\t});\n\t\tit('should create a room (not DM) if the room type is NOT equal a direct message AND NOT to add the historical room events to the processing queue when they exists', async () => {\n\t\t\tconst invitee = FederatedUser.createInstance('externalInviteeId', {\n\t\t\t\tname: 'normalizedInviteeId',\n\t\t\t\tusername: 'normalizedInviteeId',\n\t\t\t\texistsOnlyOnProxyServer: false,\n\t\t\t});\n\t\t\troomAdapter.getFederatedRoomByExternalId.onCall(0).resolves(undefined);\n\t\t\troomAdapter.getFederatedRoomByExternalId.resolves(room);\n\t\t\tuserAdapter.getFederatedUserByExternalId.resolves(invitee);\n\t\t\tbridge.getRoomHistoricalJoinEvents.resolves([]);\n\t\t\tawait service.onChangeRoomMembership({\n\t\t\t\texternalRoomId: 'externalRoomId',\n\t\t\t\tnormalizedRoomId: 'normalizedRoomId',\n\t\t\t\teventOrigin: EVENT_ORIGIN.REMOTE,\n\t\t\t\troomType: RoomType.CHANNEL,\n\t\t\t\texternalInviteeId: 'externalInviteeId',\n\t\t\t\tnormalizedInviteeId: 'normalizedInviteeId',\n\t\t\t\texternalRoomName: 'externalRoomName',\n\t\t\t} as any);\n\t\t\tconst createdRoom = FederatedRoom.createInstance('externalRoomId', 'normalizedRoomId', invitee, RoomType.CHANNEL);\n\t\t\texpect(roomAdapter.createFederatedRoom.calledWith(createdRoom)).to.be.true;\n\t\t\texpect(roomAdapter.createFederatedRoomForDirectMessage.called).to.be.false;\n\t\t\texpect(bridge.joinRoom.calledWith('externalRoomId', 'externalInviteeId')).to.be.true;\n\t\t\texpect(queueInstance.addToQueue.called).to.be.false;\n\t\t});\n\t\tit('should call the update name function if the name is inside the received input', async () => {\n\t\t\tconst invitee = FederatedUser.createInstance('externalInviteeId', {\n\t\t\t\tname: 'normalizedInviteeId',\n\t\t\t\tusername: 'normalizedInviteeId',\n\t\t\t\texistsOnlyOnProxyServer: false,\n\t\t\t});\n\t\t\troomAdapter.getFederatedRoomByExternalId.onCall(0).resolves(undefined);\n\t\t\troomAdapter.getFederatedRoomByExternalId.resolves(room);\n\t\t\tuserAdapter.getFederatedUserByExternalId.resolves(invitee);\n\t\t\tbridge.getRoomHistoricalJoinEvents.resolves([]);\n\t\t\tconst spy = sinon.spy(service, 'onChangeRoomName');\n\t\t\tawait service.onChangeRoomMembership({\n\t\t\t\texternalRoomId: 'externalRoomId',\n\t\t\t\tnormalizedRoomId: 'normalizedRoomId',\n\t\t\t\teventOrigin: EVENT_ORIGIN.REMOTE,\n\t\t\t\troomType: RoomType.CHANNEL,\n\t\t\t\texternalInviteeId: 'externalInviteeId',\n\t\t\t\tnormalizedInviteeId: 'normalizedInviteeId',\n\t\t\t\texternalRoomName: 'externalRoomName',\n\t\t\t\texternalEventId: 'externalEventId',\n\t\t\t\texternalInviterId: 'externalInviterId',\n\t\t\t} as any);\n\t\t\texpect(\n\t\t\t\tspy.calledWith({\n\t\t\t\t\texternalRoomId: 'externalRoomId',\n\t\t\t\t\tnormalizedRoomName: 'externalRoomName',\n\t\t\t\t\texternalEventId: 'externalEventId',\n\t\t\t\t\texternalSenderId: 'externalInviterId',\n\t\t\t\t\tnormalizedRoomId: 'normalizedRoomId',\n\t\t\t\t}),\n\t\t\t).to.be.true;\n\t\t});\n\t\tit('should NOT create the room if it already exists yet AND the event origin is REMOTE', async () => {\n\t\t\troomAdapter.getFederatedRoomByExternalId.resolves(room);\n\t\t\tuserAdapter.getFederatedUserByExternalId.resolves(user);\n\t\t\tawait service.onChangeRoomMembership({\n\t\t\t\texternalRoomId: 'externalRoomId',\n\t\t\t\tnormalizedRoomId: 'normalizedRoomId',\n\t\t\t\teventOrigin: EVENT_ORIGIN.REMOTE,\n\t\t\t\troomType: RoomType.CHANNEL,\n\t\t\t\texternalInviteeId: 'externalInviteeId',\n\t\t\t\tnormalizedInviteeId: 'normalizedInviteeId',\n\t\t\t} as any);\n\t\t\texpect(roomAdapter.createFederatedRoom.called).to.be.false;\n\t\t\texpect(roomAdapter.createFederatedRoomForDirectMessage.called).to.be.false;\n\t\t\texpect(bridge.joinRoom.called).to.be.false;\n\t\t});\n\t\tit('should remove the user from room if its a LEAVE event and the user is in the room already', async () => {\n\t\t\troomAdapter.getFederatedRoomByExternalId.resolves(room);\n\t\t\troomAdapter.isUserAlreadyJoined.resolves(true);\n\t\t\tuserAdapter.getFederatedUserByExternalId.resolves(user);\n\t\t\tawait service.onChangeRoomMembership({\n\t\t\t\texternalRoomId: 'externalRoomId',\n\t\t\t\tnormalizedRoomId: 'normalizedRoomId',\n\t\t\t\teventOrigin: EVENT_ORIGIN.LOCAL,\n\t\t\t\troomType: RoomType.CHANNEL,\n\t\t\t\texternalInviteeId: 'externalInviteeId',\n\t\t\t\tleave: true,\n\t\t\t\tnormalizedInviteeId: 'normalizedInviteeId',\n\t\t\t} as any);\n\t\t\texpect(roomAdapter.removeUserFromRoom.calledWith(room, user, user)).to.be.true;\n\t\t\texpect(roomAdapter.addUserToRoom.called).to.be.false;\n\t\t});\n\t\tit('should NOT remove the user from room if its a LEAVE event and the user is NOT in the room anymore', async () => {\n\t\t\troomAdapter.getFederatedRoomByExternalId.resolves(room);\n\t\t\troomAdapter.isUserAlreadyJoined.resolves(false);\n\t\t\tuserAdapter.getFederatedUserByExternalId.resolves(user);\n\t\t\tawait service.onChangeRoomMembership({\n\t\t\t\texternalRoomId: 'externalRoomId',\n\t\t\t\tnormalizedRoomId: 'normalizedRoomId',\n\t\t\t\teventOrigin: EVENT_ORIGIN.LOCAL,\n\t\t\t\troomType: RoomType.CHANNEL,\n\t\t\t\texternalInviteeId: 'externalInviteeId',\n\t\t\t\tleave: true,\n\t\t\t\tnormalizedInviteeId: 'normalizedInviteeId',\n\t\t\t} as any);\n\t\t\texpect(roomAdapter.removeUserFromRoom.called).to.be.false;\n\t\t\texpect(roomAdapter.addUserToRoom.called).to.be.false;\n\t\t});\n\t\tit('should NOT remove and recreate the DM room if the user is already part of the room (in case of being a multiple DM, Matrix send events for each user at a time, which requires us to remove and recreate the DM room)', async () => {\n\t\t\tconst dmRoom = DirectMessageFederatedRoom.createWithInternalReference(\n\t\t\t\t'externalRoomId',\n\t\t\t\t{ usernames: [user.getUsername() as string] } as any,\n\t\t\t\t[user, user],\n\t\t\t);\n\t\t\troomAdapter.getFederatedRoomByExternalId.resolves(dmRoom);\n\t\t\tuserAdapter.getFederatedUserByExternalId.resolves(user);\n\t\t\tawait service.onChangeRoomMembership({\n\t\t\t\texternalRoomId: 'externalRoomId',\n\t\t\t\tnormalizedRoomId: 'normalizedRoomId',\n\t\t\t\teventOrigin: EVENT_ORIGIN.REMOTE,\n\t\t\t\troomType: RoomType.DIRECT_MESSAGE,\n\t\t\t\texternalInviteeId: 'externalInviteeId',\n\t\t\t\tnormalizedInviteeId: 'normalizedInviteeId',\n\t\t\t} as any);\n\t\t\texpect(roomAdapter.removeDirectMessageRoom.called).to.be.false;\n\t\t\texpect(roomAdapter.createFederatedRoomForDirectMessage.called).to.be.false;\n\t\t});\n\t\tit('should remove and recreate the DM room if the user is part of the room yet (in case of being a multiple DM, Matrix send events for each user at a time, which requires us to remove and recreate the DM room)', async () => {\n\t\t\tconst dmRoom = DirectMessageFederatedRoom.createWithInternalReference('externalRoomId', { usernames: [] } as any, [user, user]);\n\t\t\tconst invitee = FederatedUser.createInstance('externalInviteeId', {\n\t\t\t\tname: 'normalizedInviteeId',\n\t\t\t\tusername: 'normalizedInviteeId',\n\t\t\t\texistsOnlyOnProxyServer: false,\n\t\t\t});\n\t\t\troomAdapter.getFederatedRoomByExternalId.resolves(dmRoom);\n\t\t\tuserAdapter.getFederatedUserByExternalId.resolves(user);\n\t\t\tuserAdapter.getFederatedUserByExternalId.onCall(1).resolves(invitee);\n\t\t\tawait service.onChangeRoomMembership({\n\t\t\t\texternalRoomId: 'externalRoomId',\n\t\t\t\tnormalizedRoomId: 'normalizedRoomId',\n\t\t\t\teventOrigin: EVENT_ORIGIN.REMOTE,\n\t\t\t\troomType: RoomType.DIRECT_MESSAGE,\n\t\t\t\texternalInviteeId: 'externalInviteeId',\n\t\t\t\tnormalizedInviteeId: 'normalizedInviteeId',\n\t\t\t} as any);\n\t\t\tconst createdRoom = DirectMessageFederatedRoom.createInstance('externalRoomId', user, [user, user, invitee]);\n\t\t\texpect(roomAdapter.removeDirectMessageRoom.calledWith(dmRoom)).to.be.true;\n\t\t\texpect(roomAdapter.createFederatedRoomForDirectMessage.calledWith(createdRoom)).to.be.true;\n\t\t\texpect(roomAdapter.addUserToRoom.called).to.be.false;\n\t\t});\n\t\tit('should NOT add the user to the room if its NOT a LEAVE event but the user is already in the room', async () => {\n\t\t\troomAdapter.getFederatedRoomByExternalId.resolves(room);\n\t\t\troomAdapter.isUserAlreadyJoined.resolves(true);\n\t\t\tuserAdapter.getFederatedUserByExternalId.resolves(user);\n\t\t\tawait service.onChangeRoomMembership({\n\t\t\t\texternalRoomId: 'externalRoomId',\n\t\t\t\tnormalizedRoomId: 'normalizedRoomId',\n\t\t\t\teventOrigin: EVENT_ORIGIN.LOCAL,\n\t\t\t\troomType: RoomType.CHANNEL,\n\t\t\t\texternalInviteeId: 'externalInviteeId',\n\t\t\t\tleave: false,\n\t\t\t\tnormalizedInviteeId: 'normalizedInviteeId',\n\t\t\t} as any);\n\t\t\texpect(roomAdapter.removeUserFromRoom.called).to.be.false;\n\t\t\texpect(roomAdapter.removeDirectMessageRoom.called).to.be.false;\n\t\t\texpect(roomAdapter.createFederatedRoomForDirectMessage.called).to.be.false;\n\t\t\texpect(bridge.joinRoom.called).to.be.false;\n\t\t\texpect(roomAdapter.addUserToRoom.called).to.be.false;\n\t\t});\n\t\tit('should add the user into the room if its NOT a LEAVE event providing the inviter when the user is NOT joining by himself', async () => {\n\t\t\troomAdapter.getFederatedRoomByExternalId.resolves(room);\n\t\t\tuserAdapter.getFederatedUserByExternalId.resolves(user);\n\t\t\tawait service.onChangeRoomMembership({\n\t\t\t\texternalRoomId: 'externalRoomId',\n\t\t\t\tnormalizedRoomId: 'normalizedRoomId',\n\t\t\t\teventOrigin: EVENT_ORIGIN.REMOTE,\n\t\t\t\troomType: RoomType.CHANNEL,\n\t\t\t\texternalInviteeId: 'externalInviteeId',\n\t\t\t\tleave: false,\n\t\t\t\tnormalizedInviteeId: 'normalizedInviteeId',\n\t\t\t} as any);\n\t\t\texpect(roomAdapter.removeUserFromRoom.called).to.be.false;\n\t\t\texpect(roomAdapter.removeDirectMessageRoom.called).to.be.false;\n\t\t\texpect(roomAdapter.createFederatedRoomForDirectMessage.called).to.be.false;\n\t\t\texpect(bridge.joinRoom.called).to.be.false;\n\t\t\texpect(roomAdapter.addUserToRoom.calledWith(room, user, user)).to.be.true;\n\t\t});\n\t\tit('should join the room using the bridge if its NOT a leave event AND the invitee is from the proxy home server', async () => {\n\t\t\troomAdapter.getFederatedRoomByExternalId.resolves(room);\n\t\t\tuserAdapter.getFederatedUserByExternalId.resolves(user);\n\t\t\tbridge.extractHomeserverOrigin.returns('localDomain');\n\t\t\tawait service.onChangeRoomMembership({\n\t\t\t\texternalRoomId: 'externalRoomId',\n\t\t\t\tnormalizedRoomId: 'normalizedRoomId',\n\t\t\t\teventOrigin: EVENT_ORIGIN.LOCAL,\n\t\t\t\troomType: RoomType.CHANNEL,\n\t\t\t\texternalInviteeId: 'externalInviteeId',\n\t\t\t\tleave: false,\n\t\t\t\tnormalizedInviteeId: 'normalizedInviteeId',\n\t\t\t} as any);\n\t\t\texpect(roomAdapter.addUserToRoom.calledWith(room, user, user)).to.be.true;\n\t\t\texpect(bridge.joinRoom.calledWith('externalRoomId', 'externalInviteeId')).to.be.true;\n\t\t});\n\t\tit('should NOT join the room using the bridge if its NOT a leave event AND the invitee is NOT from the proxy home server', async () => {\n\t\t\troomAdapter.getFederatedRoomByExternalId.resolves(room);\n\t\t\tuserAdapter.getFederatedUserByExternalId.resolves(user);\n\t\t\tbridge.extractHomeserverOrigin.returns('externalDomain');\n\t\t\tawait service.onChangeRoomMembership({\n\t\t\t\texternalRoomId: 'externalRoomId',\n\t\t\t\tnormalizedRoomId: 'normalizedRoomId',\n\t\t\t\teventOrigin: EVENT_ORIGIN.LOCAL,\n\t\t\t\troomType: RoomType.CHANNEL,\n\t\t\t\texternalInviteeId: 'externalInviteeId',\n\t\t\t\tleave: false,\n\t\t\t\tnormalizedInviteeId: 'normalizedInviteeId',\n\t\t\t} as any);\n\t\t\texpect(roomAdapter.addUserToRoom.calledWith(room, user, user)).to.be.true;\n\t\t\texpect(bridge.joinRoom.called).to.be.false;\n\t\t});\n\t\tit('should add the user into the room if its NOT a LEAVE event NOT providing the inviter when the user is joining by himself', async () => {\n\t\t\troomAdapter.getFederatedRoomByExternalId.resolves(room);\n\t\t\tuserAdapter.getFederatedUserByExternalId.resolves(user);\n\t\t\tawait service.onChangeRoomMembership({\n\t\t\t\texternalRoomId: 'externalRoomId',\n\t\t\t\tnormalizedRoomId: 'normalizedRoomId',\n\t\t\t\teventOrigin: EVENT_ORIGIN.REMOTE,\n\t\t\t\troomType: RoomType.CHANNEL,\n\t\t\t\texternalInviteeId: 'externalInviteeId',\n\t\t\t\texternalInviterId: 'externalInviteeId',\n\t\t\t\tleave: false,\n\t\t\t\tnormalizedInviteeId: 'normalizedInviteeId',\n\t\t\t} as any);\n\t\t\texpect(roomAdapter.removeUserFromRoom.called).to.be.false;\n\t\t\texpect(roomAdapter.removeDirectMessageRoom.called).to.be.false;\n\t\t\texpect(roomAdapter.createFederatedRoomForDirectMessage.called).to.be.false;\n\t\t\texpect(bridge.joinRoom.called).to.be.false;\n\t\t\texpect(roomAdapter.addUserToRoom.calledWith(room, user)).to.be.true;\n\t\t});\n\t\tdescribe('Handling users auto-joining', () => {\n\t\t\tit('should subscribe to the typings events if the room already exists', async () => {\n\t\t\t\troomAdapter.getFederatedRoomByExternalId.resolves(room);\n\t\t\t\tuserAdapter.getFederatedUserByExternalId.resolves(user);\n\t\t\t\tawait service.onChangeRoomMembership({\n\t\t\t\t\texternalRoomId: 'externalRoomId',\n\t\t\t\t\tnormalizedRoomId: 'normalizedRoomId',\n\t\t\t\t\teventOrigin: EVENT_ORIGIN.LOCAL,\n\t\t\t\t\troomType: RoomType.CHANNEL,\n\t\t\t\t\texternalInviteeId: 'externalInviteeId',\n\t\t\t\t\texternalInviterId: 'externalInviteeId',\n\t\t\t\t\tleave: false,\n\t\t\t\t\tnormalizedInviteeId: 'normalizedInviteeId',\n\t\t\t\t} as any);\n\t\t\t\texpect(notificationsAdapter.subscribeToUserTypingEventsOnFederatedRoomId.called).to.be.true;\n\t\t\t});\n\t\t\tit('should NOT add the user to the room if the user is already a room member', async () => {\n\t\t\t\troomAdapter.getFederatedRoomByExternalId.resolves(room);\n\t\t\t\tuserAdapter.getFederatedUserByExternalId.resolves(user);\n\t\t\t\troomAdapter.isUserAlreadyJoined.resolves(true);\n\t\t\t\tawait service.onChangeRoomMembership({\n\t\t\t\t\texternalRoomId: 'externalRoomId',\n\t\t\t\t\tnormalizedRoomId: 'normalizedRoomId',\n\t\t\t\t\teventOrigin: EVENT_ORIGIN.LOCAL,\n\t\t\t\t\troomType: RoomType.CHANNEL,\n\t\t\t\t\texternalInviteeId: 'externalInviteeId',\n\t\t\t\t\texternalInviterId: 'externalInviteeId',\n\t\t\t\t\tleave: false,\n\t\t\t\t\tnormalizedInviteeId: 'normalizedInviteeId',\n\t\t\t\t} as any);\n\t\t\t\texpect(roomAdapter.addUserToRoom.called).to.be.false;\n\t\t\t});\n\t\t\tit('should add the user to the room if the user is NOT a room member yet', async () => {\n\t\t\t\troomAdapter.getFederatedRoomByExternalId.resolves(room);\n\t\t\t\tuserAdapter.getFederatedUserByExternalId.resolves(user);\n\t\t\t\troomAdapter.isUserAlreadyJoined.resolves(false);\n\t\t\t\tawait service.onChangeRoomMembership({\n\t\t\t\t\texternalRoomId: 'externalRoomId',\n\t\t\t\t\tnormalizedRoomId: 'normalizedRoomId',\n\t\t\t\t\teventOrigin: EVENT_ORIGIN.LOCAL,\n\t\t\t\t\troomType: RoomType.CHANNEL,\n\t\t\t\t\texternalInviteeId: 'externalInviteeId',\n\t\t\t\t\texternalInviterId: 'externalInviteeId',\n\t\t\t\t\tleave: false,\n\t\t\t\t\tnormalizedInviteeId: 'normalizedInviteeId',\n\t\t\t\t} as any);\n\t\t\t\texpect(roomAdapter.addUserToRoom.calledWith(room, user)).to.be.true;\n\t\t\t});\n\t\t\tit('should NOT create the room if it was not possible to retrieve the information from the room from the bridge', async () => {\n\t\t\t\troomAdapter.getFederatedRoomByExternalId.onCall(0).resolves(room);\n\t\t\t\troomAdapter.getFederatedRoomByExternalId.resolves(undefined);\n\t\t\t\tuserAdapter.getFederatedUserByExternalId.resolves(user);\n\t\t\t\troomAdapter.isUserAlreadyJoined.resolves(false);\n\t\t\t\tbridge.getRoomData.resolves(undefined);\n\t\t\t\tawait service.onChangeRoomMembership({\n\t\t\t\t\texternalRoomId: 'externalRoomId',\n\t\t\t\t\tnormalizedRoomId: 'normalizedRoomId',\n\t\t\t\t\teventOrigin: EVENT_ORIGIN.LOCAL,\n\t\t\t\t\troomType: RoomType.CHANNEL,\n\t\t\t\t\texternalInviteeId: 'externalInviteeId',\n\t\t\t\t\texternalInviterId: 'externalInviteeId',\n\t\t\t\t\tleave: false,\n\t\t\t\t\tnormalizedInviteeId: 'normalizedInviteeId',\n\t\t\t\t} as any);\n\t\t\t\texpect(roomAdapter.createFederatedRoom.called).to.be.false;\n\t\t\t});\n\t\t\tit('should NOT create the room if it there is already a room creation process already running', async () => {\n\t\t\t\troomAdapter.getFederatedRoomByExternalId.onCall(0).resolves(room);\n\t\t\t\troomAdapter.getFederatedRoomByExternalId.resolves(undefined);\n\t\t\t\tuserAdapter.getFederatedUserByExternalId.resolves(user);\n\t\t\t\troomAdapter.isUserAlreadyJoined.resolves(false);\n\t\t\t\tbridge.getRoomData.resolves({ creator: {} });\n\t\t\t\tawait service.onChangeRoomMembership({\n\t\t\t\t\texternalRoomId: 'externalRoomId',\n\t\t\t\t\tnormalizedRoomId: 'normalizedRoomId',\n\t\t\t\t\teventOrigin: EVENT_ORIGIN.LOCAL,\n\t\t\t\t\troomType: RoomType.CHANNEL,\n\t\t\t\t\texternalInviteeId: 'externalInviteeId',\n\t\t\t\t\texternalInviterId: 'externalInviteeId',\n\t\t\t\t\tleave: false,\n\t\t\t\t\tnormalizedInviteeId: 'normalizedInviteeId',\n\t\t\t\t} as any);\n\t\t\t\texpect(roomAdapter.createFederatedRoom.called).to.be.false;\n\t\t\t});\n\t\t\tit('should create the creator user only if it does not exists yet and use the provided username if its from the same homeserver', async () => {\n\t\t\t\tconst spy = sinon.spy(service, 'createFederatedUserInternallyOnly');\n\t\t\t\troomAdapter.getFederatedRoomByExternalId.onCall(0).resolves(room);\n\t\t\t\tuserAdapter.getFederatedUserByExternalId.onCall(0).resolves(user);\n\t\t\t\tuserAdapter.getFederatedUserByExternalId.onCall(1).resolves(user);\n\t\t\t\tuserAdapter.getFederatedUserByExternalId.onCall(2).resolves(undefined);\n\t\t\t\tuserAdapter.getFederatedUserByExternalId.onCall(3).resolves(undefined);\n\t\t\t\tbridge.getRoomData.resolves({ creator: { id: 'creatorId', username: 'creatorUsername' } });\n\t\t\t\tbridge.extractHomeserverOrigin.returns('localDomain');\n\t\t\t\tawait service.onChangeRoomMembership({\n\t\t\t\t\texternalRoomId: 'externalRoomId',\n\t\t\t\t\tnormalizedRoomId: 'normalizedRoomId',\n\t\t\t\t\teventOrigin: EVENT_ORIGIN.LOCAL,\n\t\t\t\t\troomType: RoomType.CHANNEL,\n\t\t\t\t\texternalInviteeId: 'externalInviteeId',\n\t\t\t\t\texternalInviterId: 'externalInviteeId',\n\t\t\t\t\tleave: false,\n\t\t\t\t\tnormalizedInviteeId: 'normalizedInviteeId',\n\t\t\t\t} as any);\n\t\t\t\tconst existsOnlyOnProxyServer = true;\n\t\t\t\texpect(spy.calledWith('creatorId', 'creatorUsername', existsOnlyOnProxyServer)).to.be.true;\n\t\t\t});\n\t\t\tit('should create the creator user if it does not exists yet and use the external id as username if its not from the same homeserver', async () => {\n\t\t\t\tconst spy = sinon.spy(service, 'createFederatedUserInternallyOnly');\n\t\t\t\troomAdapter.getFederatedRoomByExternalId.onCall(0).resolves(room);\n\t\t\t\tuserAdapter.getFederatedUserByExternalId.onCall(0).resolves(user);\n\t\t\t\tuserAdapter.getFederatedUserByExternalId.onCall(1).resolves(user);\n\t\t\t\tuserAdapter.getFederatedUserByExternalId.onCall(2).resolves(undefined);\n\t\t\t\tuserAdapter.getFederatedUserByExternalId.onCall(3).resolves(undefined);\n\t\t\t\tbridge.getRoomData.resolves({ creator: { id: '@creatorId:externalserver.com', username: 'creatorUsername' } });\n\t\t\t\tbridge.extractHomeserverOrigin.returns('externalDomain');\n\t\t\t\tawait service.onChangeRoomMembership({\n\t\t\t\t\texternalRoomId: 'externalRoomId',\n\t\t\t\t\tnormalizedRoomId: 'normalizedRoomId',\n\t\t\t\t\teventOrigin: EVENT_ORIGIN.LOCAL,\n\t\t\t\t\troomType: RoomType.CHANNEL,\n\t\t\t\t\texternalInviteeId: 'externalInviteeId',\n\t\t\t\t\texternalInviterId: 'externalInviteeId',\n\t\t\t\t\tleave: false,\n\t\t\t\t\tnormalizedInviteeId: 'normalizedInviteeId',\n\t\t\t\t} as any);\n\t\t\t\tconst existsOnlyOnProxyServer = false;\n\t\t\t\texpect(spy.calledWith('@creatorId:externalserver.com', 'creatorId:externalserver.com', existsOnlyOnProxyServer)).to.be.true;\n\t\t\t});\n\t\t\tit('should NOT create the room if the creator does not exists nor was created successfully previously', async () => {\n\t\t\t\tsinon.stub(service, 'createFederatedUserAndReturnIt').resolves();\n\t\t\t\troomAdapter.getFederatedRoomByExternalId.resolves(undefined);\n\t\t\t\tuserAdapter.getFederatedUserByExternalId.onCall(0).resolves(user);\n\t\t\t\tuserAdapter.getFederatedUserByExternalId.onCall(1).resolves(user);\n\t\t\t\tuserAdapter.getFederatedUserByExternalId.onCall(2).resolves(undefined);\n\t\t\t\tbridge.getRoomData.resolves({ creator: { id: '@creatorId:externalserver.com', username: 'creatorUsername' } });\n\t\t\t\tbridge.extractHomeserverOrigin.returns('externalDomain');\n\t\t\t\tawait service.onChangeRoomMembership({\n\t\t\t\t\texternalRoomId: 'externalRoomId',\n\t\t\t\t\tnormalizedRoomId: 'normalizedRoomId',\n\t\t\t\t\teventOrigin: EVENT_ORIGIN.LOCAL,\n\t\t\t\t\troomType: RoomType.CHANNEL,\n\t\t\t\t\texternalInviteeId: 'externalInviteeId',\n\t\t\t\t\texternalInviterId: 'externalInviteeId',\n\t\t\t\t\tleave: false,\n\t\t\t\t\tnormalizedInviteeId: 'normalizedInviteeId',\n\t\t\t\t} as any);\n\t\t\t\texpect(roomAdapter.createFederatedRoom.called).to.be.false;\n\t\t\t});\n\t\t\tit('should create the room using the external room name if its original from the same homeserver', async () => {\n\t\t\t\tsinon.stub(service, 'createFederatedUserAndReturnIt').resolves();\n\t\t\t\troomAdapter.getFederatedRoomByExternalId.resolves(undefined);\n\t\t\t\tuserAdapter.getFederatedUserByExternalId.onCall(0).resolves(user);\n\t\t\t\tuserAdapter.getFederatedUserByExternalId.onCall(1).resolves(user);\n\t\t\t\tuserAdapter.getFederatedUserByExternalId.onCall(2).resolves(undefined);\n\t\t\t\tuserAdapter.getFederatedUserByExternalId.onCall(3).resolves(user);\n\t\t\t\tbridge.getRoomData.resolves({ name: 'roomName', creator: { id: '@creatorId:externalserver.com', username: 'creatorUsername' } });\n\t\t\t\tbridge.extractHomeserverOrigin.returns('localDomain');\n\t\t\t\tawait service.onChangeRoomMembership({\n\t\t\t\t\texternalRoomId: 'externalRoomId',\n\t\t\t\t\tnormalizedRoomId: 'normalizedRoomId',\n\t\t\t\t\teventOrigin: EVENT_ORIGIN.LOCAL,\n\t\t\t\t\troomType: RoomType.CHANNEL,\n\t\t\t\t\texternalInviteeId: 'externalInviteeId',\n\t\t\t\t\texternalInviterId: 'externalInviteeId',\n\t\t\t\t\tleave: false,\n\t\t\t\t\tnormalizedInviteeId: 'normalizedInviteeId',\n\t\t\t\t} as any);\n\t\t\t\texpect(\n\t\t\t\t\troomAdapter.createFederatedRoom.calledWith(\n\t\t\t\t\t\tFederatedRoom.createInstance('externalRoomId', 'normalizedRoomId', user, RoomType.CHANNEL, 'roomName'),\n\t\t\t\t\t),\n\t\t\t\t).to.be.true;\n\t\t\t});\n\t\t\tit('should create the room using nothing if its not original from the same homeserver', async () => {\n\t\t\t\tsinon.stub(service, 'createFederatedUserAndReturnIt').resolves();\n\t\t\t\troomAdapter.getFederatedRoomByExternalId.resolves(undefined);\n\t\t\t\tuserAdapter.getFederatedUserByExternalId.onCall(0).resolves(user);\n\t\t\t\tuserAdapter.getFederatedUserByExternalId.onCall(1).resolves(user);\n\t\t\t\tuserAdapter.getFederatedUserByExternalId.onCall(2).resolves(undefined);\n\t\t\t\tuserAdapter.getFederatedUserByExternalId.onCall(3).resolves(user);\n\t\t\t\tbridge.getRoomData.resolves({ name: 'roomName', creator: { id: '@creatorId:externalserver.com', username: 'creatorUsername' } });\n\t\t\t\tbridge.extractHomeserverOrigin.returns('externalDomain');\n\t\t\t\tawait service.onChangeRoomMembership({\n\t\t\t\t\texternalRoomId: 'externalRoomId',\n\t\t\t\t\tnormalizedRoomId: 'normalizedRoomId',\n\t\t\t\t\teventOrigin: EVENT_ORIGIN.LOCAL,\n\t\t\t\t\troomType: RoomType.CHANNEL,\n\t\t\t\t\texternalInviteeId: 'externalInviteeId',\n\t\t\t\t\texternalInviterId: 'externalInviteeId',\n\t\t\t\t\tleave: false,\n\t\t\t\t\tnormalizedInviteeId: 'normalizedInviteeId',\n\t\t\t\t} as any);\n\t\t\t\texpect(\n\t\t\t\t\troomAdapter.createFederatedRoom.calledWith(\n\t\t\t\t\t\tFederatedRoom.createInstance('externalRoomId', 'normalizedRoomId', user, RoomType.CHANNEL, undefined),\n\t\t\t\t\t),\n\t\t\t\t).to.be.true;\n\t\t\t});\n\t\t\tit('should dispatch a room name event if its not from the same homeserver and it was possible to retrieve the name from the bridge query', async () => {\n\t\t\t\tconst spy = sinon.spy(service, 'onChangeRoomName');\n\t\t\t\tsinon.stub(service, 'createFederatedUserAndReturnIt').resolves();\n\t\t\t\troomAdapter.getFederatedRoomByExternalId.resolves(undefined);\n\t\t\t\tuserAdapter.getFederatedUserByExternalId.onCall(0).resolves(user);\n\t\t\t\tuserAdapter.getFederatedUserByExternalId.onCall(1).resolves(user);\n\t\t\t\tuserAdapter.getFederatedUserByExternalId.onCall(2).resolves(undefined);\n\t\t\t\tuserAdapter.getFederatedUserByExternalId.onCall(3).resolves(user);\n\t\t\t\troomAdapter.createFederatedRoom.resolves();\n\t\t\t\tbridge.getRoomData.resolves({ name: 'roomName', creator: { id: '@creatorId:externalserver.com', username: 'creatorUsername' } });\n\t\t\t\tbridge.extractHomeserverOrigin.returns('externalDomain');\n\t\t\t\tawait service.onChangeRoomMembership({\n\t\t\t\t\texternalRoomId: 'externalRoomId',\n\t\t\t\t\tnormalizedRoomId: 'normalizedRoomId',\n\t\t\t\t\teventOrigin: EVENT_ORIGIN.LOCAL,\n\t\t\t\t\troomType: RoomType.CHANNEL,\n\t\t\t\t\texternalInviteeId: 'externalInviteeId',\n\t\t\t\t\texternalInviterId: 'externalInviteeId',\n\t\t\t\t\tleave: false,\n\t\t\t\t\tnormalizedInviteeId: 'normalizedInviteeId',\n\t\t\t\t} as any);\n\t\t\t\texpect(\n\t\t\t\t\tspy.calledWith({\n\t\t\t\t\t\texternalRoomId: 'externalRoomId',\n\t\t\t\t\t\tnormalizedRoomName: 'roomName',\n\t\t\t\t\t\texternalEventId: '',\n\t\t\t\t\t\texternalSenderId: user.getExternalId(),\n\t\t\t\t\t\tnormalizedRoomId: 'normalizedRoomId',\n\t\t\t\t\t}),\n\t\t\t\t).to.be.true;\n\t\t\t});\n\t\t\tit('should create federated users for each member of the room excluding the one joining and the creator, and add them to the room ', async () => {\n\t\t\t\tconst stub = sinon.stub(service, 'createFederatedUserAndReturnIt');\n\t\t\t\troomAdapter.getFederatedRoomByExternalId.onCall(0).resolves(undefined);\n\t\t\t\troomAdapter.getFederatedRoomByExternalId.onCall(1).resolves(undefined);\n\t\t\t\troomAdapter.getFederatedRoomByExternalId.onCall(2).resolves(room);\n\t\t\t\tuserAdapter.getFederatedUserByExternalId.onCall(0).resolves(user);\n\t\t\t\tuserAdapter.getFederatedUserByExternalId.onCall(1).resolves(user);\n\t\t\t\tuserAdapter.getFederatedUserByExternalId.onCall(2).resolves(undefined);\n\t\t\t\tuserAdapter.getFederatedUserByExternalId.onCall(3).resolves(user);\n\t\t\t\tstub.resolves(user);\n\t\t\t\troomAdapter.createFederatedRoom.resolves({});\n\t\t\t\tbridge.getRoomData.resolves({\n\t\t\t\t\tjoinedMembers: ['user1', '@creatorId:externalserver.com', user.getExternalId(), 'user2'],\n\t\t\t\t\tcreator: { id: '@creatorId:externalserver.com', username: 'creatorUsername' },\n\t\t\t\t});\n\t\t\t\tbridge.extractHomeserverOrigin.returns('localDomain');\n\t\t\t\tawait service.onChangeRoomMembership({\n\t\t\t\t\texternalRoomId: 'externalRoomId',\n\t\t\t\t\tnormalizedRoomId: 'normalizedRoomId',\n\t\t\t\t\teventOrigin: EVENT_ORIGIN.LOCAL,\n\t\t\t\t\troomType: RoomType.CHANNEL,\n\t\t\t\t\texternalInviteeId: 'externalInviteeId',\n\t\t\t\t\texternalInviterId: 'externalInviteeId',\n\t\t\t\t\tleave: false,\n\t\t\t\t\tnormalizedInviteeId: 'normalizedInviteeId',\n\t\t\t\t} as any);\n\t\t\t\texpect(stub.callCount).to.be.equal(3);\n\t\t\t\texpect(stub.getCall(1).calledWith('user1')).to.be.true;\n\t\t\t\texpect(stub.getCall(2).calledWith('user2')).to.be.true;\n\t\t\t\texpect(roomAdapter.addUsersToRoomWhenJoinExternalPublicRoom.calledWith([user, user])).to.be.true;\n\t\t\t});\n\t\t\tit('should add the user to the room and subscribe to typings events if everything was done correctly', async () => {\n\t\t\t\tsinon.stub(service, 'createFederatedUserAndReturnIt').resolves(user);\n\t\t\t\troomAdapter.getFederatedRoomByExternalId.onCall(0).resolves(undefined);\n\t\t\t\troomAdapter.getFederatedRoomByExternalId.onCall(1).resolves(undefined);\n\t\t\t\troomAdapter.getFederatedRoomByExternalId.onCall(2).resolves(room);\n\t\t\t\tuserAdapter.getFederatedUserByExternalId.onCall(0).resolves(user);\n\t\t\t\tuserAdapter.getFederatedUserByExternalId.onCall(1).resolves(user);\n\t\t\t\tuserAdapter.getFederatedUserByExternalId.onCall(2).resolves(undefined);\n\t\t\t\tuserAdapter.getFederatedUserByExternalId.onCall(3).resolves(user);\n\t\t\t\troomAdapter.createFederatedRoom.resolves({});\n\t\t\t\tbridge.getRoomData.resolves({\n\t\t\t\t\tjoinedMembers: ['user1', '@creatorId:externalserver.com', user.getExternalId(), 'user2'],\n\t\t\t\t\tcreator: { id: '@creatorId:externalserver.com', username: 'creatorUsername' },\n\t\t\t\t});\n\t\t\t\tbridge.extractHomeserverOrigin.returns('localDomain');\n\t\t\t\tawait service.onChangeRoomMembership({\n\t\t\t\t\texternalRoomId: 'externalRoomId',\n\t\t\t\t\tnormalizedRoomId: 'normalizedRoomId',\n\t\t\t\t\teventOrigin: EVENT_ORIGIN.LOCAL,\n\t\t\t\t\troomType: RoomType.CHANNEL,\n\t\t\t\t\texternalInviteeId: 'externalInviteeId',\n\t\t\t\t\texternalInviterId: 'externalInviteeId',\n\t\t\t\t\tleave: false,\n\t\t\t\t\tnormalizedInviteeId: 'normalizedInviteeId',\n\t\t\t\t} as any);\n\t\t\t\texpect(notificationsAdapter.subscribeToUserTypingEventsOnFederatedRoomId.called).to.be.true;\n\t\t\t\texpect(roomAdapter.addUserToRoom.calledWith(room, user)).to.be.true;\n\t\t\t});\n\t\t});\n\t\tdescribe('User profile changed event', () => {\n\t\t\tit('should NOT call the function to update the user avatar if the event does not include an avatarUrl property', async () => {\n\t\t\t\tconst spy = sinon.spy(service, 'updateUserAvatarInternally');\n\t\t\t\tawait service.onChangeRoomMembership({\n\t\t\t\t\texternalRoomId: 'externalRoomId',\n\t\t\t\t\tnormalizedRoomId: 'normalizedRoomId',\n\t\t\t\t\teventOrigin: EVENT_ORIGIN.LOCAL,\n\t\t\t\t\troomType: RoomType.CHANNEL,\n\t\t\t\t\texternalInviteeId: 'externalInviteeId',\n\t\t\t\t\tleave: false,\n\t\t\t\t\tnormalizedInviteeId: 'normalizedInviteeId',\n\t\t\t\t} as any);\n\t\t\t\texpect(spy.called).to.be.false;\n\t\t\t});\n\t\t\tconst eventForUserProfileChanges = {\n\t\t\t\texternalRoomId: 'externalRoomId',\n\t\t\t\tnormalizedRoomId: 'normalizedRoomId',\n\t\t\t\teventOrigin: EVENT_ORIGIN.LOCAL,\n\t\t\t\troomType: RoomType.CHANNEL,\n\t\t\t\texternalInviteeId: 'externalInviteeId',\n\t\t\t\tleave: false,\n\t\t\t\tnormalizedInviteeId: 'normalizedInviteeId',\n\t\t\t\tuserProfile: {\n\t\t\t\t\tavatarUrl: 'avatarUrl',\n\t\t\t\t\tdisplayName: 'displayName',\n\t\t\t\t},\n\t\t\t} as any;\n\t\t\tit('should NOT call the function to update the avatar internally if the user does not exists', async () => {\n\t\t\t\tconst spy = sinon.spy(service, 'updateUserAvatarInternally');\n\t\t\t\tuserAdapter.getFederatedUserByExternalId.resolves(undefined);\n\t\t\t\tawait service.onChangeRoomMembership(eventForUserProfileChanges);\n\t\t\t\texpect(spy.called).to.be.false;\n\t\t\t});\n\t\t\tit('should NOT update the avatar nor the display name if both does not exists', async () => {\n\t\t\t\tuserAdapter.getFederatedUserByExternalId.resolves(user);\n\t\t\t\tawait service.onChangeRoomMembership({ ...eventForUserProfileChanges, userProfile: {} });\n\t\t\t\texpect(userAdapter.setAvatar.called).to.be.false;\n\t\t\t\texpect(userAdapter.updateFederationAvatar.called).to.be.false;\n\t\t\t\texpect(userAdapter.updateRealName.called).to.be.false;\n\t\t\t});\n\t\t\tit('should NOT update the avatar url nor the display name if the user is from the local home server', async () => {\n\t\t\t\tuserAdapter.getFederatedUserByExternalId.resolves(\n\t\t\t\t\tFederatedUser.createInstance('externalInviterId', {\n\t\t\t\t\t\tname: 'normalizedInviterId',\n\t\t\t\t\t\tusername: 'normalizedInviterId',\n\t\t\t\t\t\texistsOnlyOnProxyServer: true,\n\t\t\t\t\t}),\n\t\t\t\t);\n\t\t\t\tawait service.onChangeRoomMembership(eventForUserProfileChanges);\n\t\t\t\texpect(userAdapter.setAvatar.called).to.be.false;\n\t\t\t\texpect(userAdapter.updateFederationAvatar.called).to.be.false;\n\t\t\t\texpect(userAdapter.updateRealName.called).to.be.false;\n\t\t\t});\n\t\t\tit('should NOT update the avatar url if the url received in the event is equal to the one already used', async () => {\n\t\t\t\tconst existsOnlyOnProxyServer = false;\n\t\t\t\tuserAdapter.getFederatedUserByExternalId.resolves(\n\t\t\t\t\tFederatedUser.createWithInternalReference('externalInviterId', existsOnlyOnProxyServer, {\n\t\t\t\t\t\tfederation: {\n\t\t\t\t\t\t\tavatarUrl: 'avatarUrl',\n\t\t\t\t\t\t},\n\t\t\t\t\t}),\n\t\t\t\t);\n\t\t\t\tawait service.onChangeRoomMembership({ ...eventForUserProfileChanges, userProfile: { avatarUrl: 'avatarUrl' } });\n\t\t\t\texpect(userAdapter.setAvatar.called).to.be.false;\n\t\t\t\texpect(userAdapter.updateFederationAvatar.called).to.be.false;\n\t\t\t});\n\t\t\tit('should call the functions to update the avatar internally correctly', async () => {\n\t\t\t\tconst existsOnlyOnProxyServer = false;\n\t\t\t\tconst userAvatar = FederatedUser.createWithInternalReference('externalInviterId', existsOnlyOnProxyServer, {\n\t\t\t\t\tfederation: {\n\t\t\t\t\t\tavatarUrl: 'currentAvatarUrl',\n\t\t\t\t\t},\n\t\t\t\t\t_id: 'userId',\n\t\t\t\t});\n\t\t\t\tuserAdapter.getFederatedUserByExternalId.resolves(userAvatar);\n\t\t\t\tawait service.onChangeRoomMembership(eventForUserProfileChanges);\n\t\t\t\texpect(userAdapter.setAvatar.calledWith(userAvatar, 'toHttpUrl')).to.be.true;\n\t\t\t\texpect(userAdapter.updateFederationAvatar.calledWith(userAvatar.getInternalId(), 'avatarUrl')).to.be.true;\n\t\t\t});\n\t\t\tit('should NOT update the display name if the name received in the event is equal to the one already used', async () => {\n\t\t\t\tconst existsOnlyOnProxyServer = false;\n\t\t\t\tuserAdapter.getFederatedUserByExternalId.resolves(\n\t\t\t\t\tFederatedUser.createWithInternalReference('externalInviterId', existsOnlyOnProxyServer, {\n\t\t\t\t\t\tname: 'displayName',\n\t\t\t\t\t}),\n\t\t\t\t);\n\t\t\t\tawait service.onChangeRoomMembership({ ...eventForUserProfileChanges, userProfile: { displayName: 'displayName' } });\n\t\t\t\texpect(userAdapter.setAvatar.called).to.be.false;\n\t\t\t\texpect(userAdapter.updateFederationAvatar.called).to.be.false;\n\t\t\t\texpect(userAdapter.updateRealName.called).to.be.false;\n\t\t\t});\n\t\t\tit('should call the functions to update the display name internally correctly', async () => {\n\t\t\t\tconst existsOnlyOnProxyServer = false;\n\t\t\t\tconst user = FederatedUser.createWithInternalReference('externalInviterId', existsOnlyOnProxyServer, {\n\t\t\t\t\t_id: 'userId',\n\t\t\t\t\tname: 'currentName',\n\t\t\t\t});\n\t\t\t\tuserAdapter.getFederatedUserByExternalId.resolves(user);\n\t\t\t\tawait service.onChangeRoomMembership({ ...eventForUserProfileChanges, userProfile: { displayName: 'displayName' } });\n\t\t\t\texpect(userAdapter.setAvatar.called).to.be.false;\n\t\t\t\texpect(userAdapter.updateFederationAvatar.called).to.be.false;\n\t\t\t\texpect(userAdapter.updateRealName.calledWith(user.getInternalReference(), 'displayName')).to.be.true;\n\t\t\t});\n\t\t});\n\t});\n\tdescribe('#onExternalFileMessageReceived()', () => {\n\t\tconst user = FederatedUser.createInstance('externalInviterId', {\n\t\t\tname: 'normalizedInviterId',\n\t\t\tusername: 'normalizedInviterId',\n\t\t\texistsOnlyOnProxyServer: false,\n\t\t});\n\t\tconst room = FederatedRoom.createInstance('externalRoomId', 'normalizedRoomId', user, RoomType.CHANNEL, 'externalRoomName');\n\t\tit('should NOT send a message if the room does not exists', async () => {\n\t\t\troomAdapter.getFederatedRoomByExternalId.resolves(undefined);\n\t\t\tawait service.onExternalFileMessageReceived({\n\t\t\t\tmessageText: 'text',\n\t\t\t} as any);\n\t\t\texpect(messageAdapter.sendFileMessage.called).to.be.false;\n\t\t});\n\t\tit('should NOT send a message if the sender does not exists', async () => {\n\t\t\troomAdapter.getFederatedRoomByExternalId.resolves({} as any);\n\t\t\tuserAdapter.getFederatedUserByExternalId.resolves(undefined);\n\t\t\tawait service.onExternalFileMessageReceived({\n\t\t\t\tmessageText: 'text',\n\t\t\t} as any);\n\t\t\texpect(messageAdapter.sendFileMessage.called).to.be.false;\n\t\t});\n\t\tit('should send a message if the room and the sender already exists', async () => {\n\t\t\troomAdapter.getFederatedRoomByExternalId.resolves(room);\n\t\t\tuserAdapter.getFederatedUserByExternalId.resolves(user);\n\t\t\tbridge.getReadStreamForFileFromUrl.resolves();\n\t\t\tconst files = [{ id: 'fileId', name: 'filename' }];\n\t\t\tconst attachments = ['attachment', 'attachment2'];\n\t\t\tfileAdapter.uploadFile.resolves({ files, attachments } as any);\n\t\t\tawait service.onExternalFileMessageReceived({\n\t\t\t\tmessageBody: {\n\t\t\t\t\tfilename: 'filename',\n\t\t\t\t\tsize: 12,\n\t\t\t\t\tmimetype: 'mimetype',\n\t\t\t\t\turl: 'url',\n\t\t\t\t},\n\t\t\t} as any);\n\t\t\texpect(messageAdapter.sendFileMessage.calledWith(user, room, files, attachments)).to.be.true;\n\t\t});\n\t\tdescribe('Quoting messages', () => {\n\t\t\tit('should NOT send a quote message if its necessary to quote but the message to quote does not exists', async () => {\n\t\t\t\troomAdapter.getFederatedRoomByExternalId.resolves(room);\n\t\t\t\tuserAdapter.getFederatedUserByExternalId.resolves(user);\n\t\t\t\tmessageAdapter.getMessageByFederationId.resolves(undefined);\n\t\t\t\tfileAdapter.uploadFile.resolves({} as any);\n\t\t\t\tawait service.onExternalFileMessageReceived({\n\t\t\t\t\tmessageBody: {\n\t\t\t\t\t\tfilename: 'filename',\n\t\t\t\t\t\tsize: 12,\n\t\t\t\t\t\tmimetype: 'mimetype',\n\t\t\t\t\t\turl: 'url',\n\t\t\t\t\t},\n\t\t\t\t\treplyToEventId: 'replyToEventId',\n\t\t\t\t} as any);\n\t\t\t\texpect(messageAdapter.sendQuoteFileMessage.called).to.be.false;\n\t\t\t\texpect(messageAdapter.sendFileMessage.called).to.be.false;\n\t\t\t});\n\t\t\tit('should send a quote message if its necessary to quote and the message to quote exists', async () => {\n\t\t\t\tconst messageToReplyTo = { federation: { eventId: 'eventId' } } as any;\n\t\t\t\troomAdapter.getFederatedRoomByExternalId.resolves(room);\n\t\t\t\tuserAdapter.getFederatedUserByExternalId.resolves(user);\n\t\t\t\tmessageAdapter.getMessageByFederationId.onFirstCall().resolves(undefined);\n\t\t\t\tmessageAdapter.getMessageByFederationId.onSecondCall().resolves(messageToReplyTo);\n\t\t\t\tconst files = [{ id: 'fileId', name: 'filename' }];\n\t\t\t\tconst attachments = ['attachment', 'attachment2'];\n\t\t\t\tfileAdapter.uploadFile.resolves({ files, attachments } as any);\n\t\t\t\tawait service.onExternalFileMessageReceived({\n\t\t\t\t\tmessageBody: {\n\t\t\t\t\t\tfilename: 'filename',\n\t\t\t\t\t\tsize: 12,\n\t\t\t\t\t\tmimetype: 'mimetype',\n\t\t\t\t\t\turl: 'url',\n\t\t\t\t\t},\n\t\t\t\t\treplyToEventId: 'replyToEventId',\n\t\t\t\t\texternalEventId: 'externalEventId',\n\t\t\t\t} as any);\n\t\t\t\texpect(\n\t\t\t\t\tmessageAdapter.sendQuoteFileMessage.calledWith(\n\t\t\t\t\t\tuser,\n\t\t\t\t\t\troom,\n\t\t\t\t\t\tfiles,\n\t\t\t\t\t\tattachments,\n\t\t\t\t\t\t'externalEventId',\n\t\t\t\t\t\tmessageToReplyTo,\n\t\t\t\t\t\t'localDomain',\n\t\t\t\t\t),\n\t\t\t\t).to.be.true;\n\t\t\t\texpect(messageAdapter.sendFileMessage.called).to.be.false;\n\t\t\t});\n\t\t});\n\t});\n\tdescribe('#onExternalMessageReceived()', () => {\n\t\tit('should NOT send a message if the room does not exists', async () => {\n\t\t\troomAdapter.getFederatedRoomByExternalId.resolves(undefined);\n\t\t\tawait service.onExternalMessageReceived({\n\t\t\t\tmessageText: 'text',\n\t\t\t} as any);\n\t\t\texpect(messageAdapter.sendMessage.called).to",
+    "children": [
+        {
+            "type": "importDeclaration",
+            "start_token": 0,
+            "end_token": 6,
+            "label": "import { RoomType } from '@rocket.chat/apps-engine/definition/rooms';",
+            "children": [
+                {
+                    "type": "importKeyword",
+                    "start_token": 0,
+                    "end_token": 0,
+                    "label": "import",
+                    "children": []
+                },
+                {
+                    "type": "importClause",
+                    "start_token": 1,
+                    "end_token": 3,
+                    "label": "{ RoomType }",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 2,
+                            "end_token": 2,
+                            "label": "RoomType",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "fromKeyword",
+                    "start_token": 4,
+                    "end_token": 4,
+                    "label": "from",
+                    "children": []
+                },
+                {
+                    "type": "stringLiteral",
+                    "start_token": 5,
+                    "end_token": 5,
+                    "label": "'@rocket.chat/apps-engine/definition/rooms'",
+                    "children": []
+                },
+                {
+                    "type": "semicolon",
+                    "start_token": 6,
+                    "end_token": 6,
+                    "label": ";",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "importDeclaration",
+            "start_token": 7,
+            "end_token": 13,
+            "label": "\nimport { expect } from 'chai'",
+            "children": [
+                {
+                    "type": "importKeyword",
+                    "start_token": 7,
+                    "end_token": 7,
+                    "label": "\n",
+                    "children": []
+                },
+                {
+                    "type": "importClause",
+                    "start_token": 8,
+                    "end_token": 10,
+                    "label": "import { expect",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 9,
+                            "end_token": 9,
+                            "label": "{",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "fromKeyword",
+                    "start_token": 11,
+                    "end_token": 11,
+                    "label": "}",
+                    "children": []
+                },
+                {
+                    "type": "stringLiteral",
+                    "start_token": 12,
+                    "end_token": 12,
+                    "label": "from",
+                    "children": []
+                },
+                {
+                    "type": "semicolon",
+                    "start_token": 13,
+                    "end_token": 13,
+                    "label": "'chai'",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "importDeclaration",
+            "start_token": 14,
+            "end_token": 18,
+            "label": ";\nimport proxyquire from",
+            "children": [
+                {
+                    "type": "importKeyword",
+                    "start_token": 14,
+                    "end_token": 14,
+                    "label": ";",
+                    "children": []
+                },
+                {
+                    "type": "identifier",
+                    "start_token": 15,
+                    "end_token": 15,
+                    "label": "\n",
+                    "children": []
+                },
+                {
+                    "type": "fromKeyword",
+                    "start_token": 16,
+                    "end_token": 16,
+                    "label": "import",
+                    "children": []
+                },
+                {
+                    "type": "stringLiteral",
+                    "start_token": 17,
+                    "end_token": 17,
+                    "label": "proxyquire",
+                    "children": []
+                },
+                {
+                    "type": "semicolon",
+                    "start_token": 18,
+                    "end_token": 18,
+                    "label": "from",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "importDeclaration",
+            "start_token": 19,
+            "end_token": 23,
+            "label": "'proxyquire';\nimport sinon",
+            "children": [
+                {
+                    "type": "importKeyword",
+                    "start_token": 19,
+                    "end_token": 19,
+                    "label": "'proxyquire'",
+                    "children": []
+                },
+                {
+                    "type": "identifier",
+                    "start_token": 20,
+                    "end_token": 20,
+                    "label": ";",
+                    "children": []
+                },
+                {
+                    "type": "fromKeyword",
+                    "start_token": 21,
+                    "end_token": 21,
+                    "label": "\n",
+                    "children": []
+                },
+                {
+                    "type": "stringLiteral",
+                    "start_token": 22,
+                    "end_token": 22,
+                    "label": "import",
+                    "children": []
+                },
+                {
+                    "type": "semicolon",
+                    "start_token": 23,
+                    "end_token": 23,
+                    "label": "sinon",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "importDeclaration",
+            "start_token": 24,
+            "end_token": 30,
+            "label": "from 'sinon';\nimport { EVENT_ORIGIN",
+            "children": [
+                {
+                    "type": "importKeyword",
+                    "start_token": 24,
+                    "end_token": 24,
+                    "label": "from",
+                    "children": []
+                },
+                {
+                    "type": "importClause",
+                    "start_token": 25,
+                    "end_token": 27,
+                    "label": "'sinon';\n",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 26,
+                            "end_token": 26,
+                            "label": ";",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "fromKeyword",
+                    "start_token": 28,
+                    "end_token": 28,
+                    "label": "import",
+                    "children": []
+                },
+                {
+                    "type": "stringLiteral",
+                    "start_token": 29,
+                    "end_token": 29,
+                    "label": "{",
+                    "children": []
+                },
+                {
+                    "type": "semicolon",
+                    "start_token": 30,
+                    "end_token": 30,
+                    "label": "EVENT_ORIGIN",
+                    "children": []
+                }
+            ]
+        },
+        {
+            "type": "variableDeclaration",
+            "start_token": 31,
+            "end_token": 75,
+            "label": "} from '../../../../../../../server/services/federation/domain/IFederationBridge';\nconst { FederationRoomServiceReceiver } = proxyquire\n\t.noCallThru()\n\t.load('../../../../../../../server/services/federation/application/room/receiver/RoomServiceReceiver', {\n\t\tmongodb: {\n\t\t\t'ObjectId': class ObjectId {\n\t\t\t\t",
+            "children": [
+                {
+                    "type": "constKeyword",
+                    "start_token": 31,
+                    "end_token": 31,
+                    "label": "}",
+                    "children": []
+                },
+                {
+                    "type": "identifier",
+                    "start_token": 32,
+                    "end_token": 34,
+                    "label": "from '../../../../../../../server/services/federation/domain/IFederationBridge';",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 33,
+                            "end_token": 33,
+                            "label": "'../../../../../../../server/services/federation/domain/IFederationBridge'",
+                            "children": []
+                        }
+                    ]
+                },
+                {
+                    "type": "equalsToken",
+                    "start_token": 35,
+                    "end_token": 35,
+                    "label": "\n",
+                    "children": []
+                },
+                {
+                    "type": "callExpression",
+                    "start_token": 36,
+                    "end_token": 74,
+                    "label": "const { FederationRoomServiceReceiver } = proxyquire\n\t.noCallThru()\n\t.load('../../../../../../../server/services/federation/application/room/receiver/RoomServiceReceiver', {\n\t\tmongodb: {\n\t\t\t'ObjectId': class ObjectId {\n\t\t\t",
+                    "children": [
+                        {
+                            "type": "identifier",
+                            "start_token": 36,
+                            "end_token": 36,
+                            "label": "const",
+                            "children": []
+                        },
+                        {
+                            "type": "callExpression",
+                            "start_token": 37,
+                            "end_token": 74,
+                            "label": "{ FederationRoomServiceReceiver } = proxyquire\n\t.noCallThru()\n\t.load('../../../../../../../server/services/federation/application/room/receiver/RoomServiceReceiver', {\n\t\tmongodb: {\n\t\t\t'ObjectId': class ObjectId {\n\t\t\t",
+                            "children": [
+                                {
+                                    "type": "propertyAccessExpression",
+                                    "start_token": 37,
+                                    "end_token": 41,
+                                    "label": "{ FederationRoomServiceReceiver } = proxyquire",
+                                    "children": [
+                                        {
+                                            "type": "identifier",
+                                            "start_token": 37,
+                                            "end_token": 37,
+                                            "label": "{",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "identifier",
+                                            "start_token": 39,
+                                            "end_token": 39,
+                                            "label": "}",
+                                            "children": []
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "callExpression",
+                                    "start_token": 42,
+                                    "end_token": 74,
+                                    "label": "\n\t.noCallThru()\n\t.load('../../../../../../../server/services/federation/application/room/receiver/RoomServiceReceiver', {\n\t\tmongodb: {\n\t\t\t'ObjectId': class ObjectId {\n\t\t\t",
+                                    "children": [
+                                        {
+                                            "type": "identifier",
+                                            "start_token": 43,
+                                            "end_token": 43,
+                                            "label": "\t",
+                                            "children": []
+                                        },
+                                        {
+                                            "type": "arrayLiteralExpression",
+                                            "start_token": 44,
+                                            "end_token": 73,
+                                            "label": ".noCallThru()\n\t.load('../../../../../../../server/services/federation/application/room/receiver/RoomServiceReceiver', {\n\t\tmongodb: {\n\t\t\t'ObjectId': class ObjectId {\n\t\t",
+                                            "children": [
+                                                {
+                                                    "type": "stringLiteral",
+                                                    "start_token": 44,
+                                                    "end_token": 44,
+                                                    "label": ".",
+                                                    "children": []
+                                                },
+                                                {
+                                                    "type": "commaToken",
+                                                    "start_token": 45,
+                                                    "end_token": 45,
+                                                    "label": "noCallThru",
+                                                    "children": []
+                                                },
+                                                {
+                                                    "type": "objectLiteralExpression",
+                                                    "start_token": 46,
+                                                    "end_token": 73,
+                                                    "label": "()\n\t.load('../../../../../../../server/services/federation/application/room/receiver/RoomServiceReceiver', {\n\t\tmongodb: {\n\t\t\t'ObjectId': class ObjectId {\n\t\t",
+                                                    "children": [
+                                                        {
+                                                            "type": "identifier",
+                                                            "start_token": 47,
+                                                            "end_token": 47,
+                                                            "label": ")",
+                                                            "children": []
+                                                        },
+                                                        {
+                                                            "type": "colonToken",
+                                                            "start_token": 48,
+                                                            "end_token": 48,
+                                                            "label": "\n",
+                                                            "children": []
+                                                        },
+                                                        {
+                                                            "type": "objectLiteralExpression",
+                                                            "start_token": 49,
+                                                            "end_token": 71,
+                                                            "label": "\t.load('../../../../../../../server/services/federation/application/room/receiver/RoomServiceReceiver', {\n\t\tmongodb: {\n\t\t\t'ObjectId': class ObjectId {\n",
+                                                            "children": [
+                                                                {
+                                                                    "type": "identifier",
+                                                                    "start_token": 50,
+                                                                    "end_token": 50,
+                                                                    "label": ".",
+                                                                    "children": []
+                                                                },
+                                                                {
+                                                                    "type": "colonToken",
+                                                                    "start_token": 51,
+                                                                    "end_token": 51,
+                                                                    "label": "load",
+                                                                    "children": []
+                                                                },
+                                                                {
+                                                                    "type": "classDeclaration",
+                                                                    "start_token": 52,
+                                                                    "end_token": 65,
+                                                                    "label": "('../../../../../../../server/services/federation/application/room/receiver/RoomServiceReceiver', {\n\t\tmongodb: {\n\t\t\t",
+                                                                    "children": [
+                                                                        {
+                                                                            "type": "identifier",
+                                                                            "start_token": 52,
+                                                                            "end_token": 52,
+                                                                            "label": "(",
+                                                                            "children": []
+                                                                        },
+                                                                        {
+                                                                            "type": "block",
+                                                                            "start_token": 53,
+                                                                            "end_token": 65,
+                                                                            "label": "'../../../../../../../server/services/federation/application/room/receiver/RoomServiceReceiver', {\n\t\tmongodb: {\n\t\t\t",
+                                                                            "children": [
+                                                                                {
+                                                                                    "type": "methodDeclaration",
+                                                                                    "start_token": 54,
+                                                                                    "end_token": 61,
+                                                                                    "label": ", {\n\t\tmongodb: {",
+                                                                                    "children": [
+                                                                                        {
+                                                                                            "type": "identifier",
+                                                                                            "start_token": 54,
+                                                                                            "end_token": 54,
+                                                                                            "label": ",",
+                                                                                            "children": []
+                                                                                        },
+                                                                                        {
+                                                                                            "type": "callExpression",
+                                                                                            "start_token": 55,
+                                                                                            "end_token": 60,
+                                                                                            "label": "{\n\t\tmongodb:",
+                                                                                            "children": [
+                                                                                                {
+                                                                                                    "type": "identifier",
+                                                                                                    "start_token": 55,
+                                                                                                    "end_token": 55,
+                                                                                                    "label": "{",
+                                                                                                    "children": []
+                                                                                                },
+                                                                                                {
+                                                                                                    "type": "returnStatement",
+                                                                                                    "start_token": 61,
+                                                                                                    "end_token": 61,
+                                                                                                    "label": "{",
+                                                                                                    "children": []
+                                                                                                },
+                                                                                                {
+                                                                                                    "type": "semicolon",
+                                                                                                    "start_token": 63,
+                                                                                                    "end_token": 63,
+                                                                                                    "label": "\t",
+                                                                                                    "children": []
+                                                                                                }
+                                                                                            ]
+                                                                                        }
+                                                                                    ]
+                                                                                },
+                                                                                {
+                                                                                    "type": "commaToken",
+                                                                                    "start_token": 66,
+                                                                                    "end_token": 66,
+                                                                                    "label": "'ObjectId'",
+                                                                                    "children": []
+                                                                                },
+                                                                                {
+                                                                                    "type": "propertyAssignment",
+                                                                                    "start_token": 67,
+                                                                                    "end_token": 69,
+                                                                                    "label": ": class ObjectId",
+                                                                                    "children": [
+                                                                                        {
+                                                                                            "type": "identifier",
+                                                                                            "start_token": 67,
+                                                                                            "end_token": 67,
+                                                                                            "label": ":",
+                                                                                            "children": []
+                                                                                        },
+                                                                                        {
+                                                                                            "type": "colonToken",
+                                                                                            "start_token": 68,
+                                                                                            "end_token": 68,
+                                                                                            "label": "class",
+                                                                                            "children": []
+                                                                                        },
+                                                                                        {
+                                                                                            "type": "trueKeyword",
+                                                                                            "start_token": 69,
+                                                                                            "end_token": 69,
+                                                                                            "label": "ObjectId",
+                                                                                            "children": []
+                                                                                        }
+                                                                                    ]
+                                                                                },
+                                                                                {
+                                                                                    "type": "commaToken",
+                                                                                    "start_token": 71,
+                                                                                    "end_token": 71,
+                                                                                    "label": "\n",
+                                                                                    "children": []
+                                                                                },
+                                                                                {
+                                                                                    "type": "semicolon",
+                                                                                    "start_token": 72,
+                                                                                    "end_token": 72,
+                                                                                    "label": "\t",
+                                                                                    "children": []
+                                                                                }
+                                                                            ]
+                                                                        }
+                                                                    ]
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

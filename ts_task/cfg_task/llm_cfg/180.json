@@ -1,0 +1,1576 @@
+{
+  "name": "example_script",
+  "type": "CFG",
+  "start_line": 1,
+  "end_line": 499,
+  "functions": [],
+  "classes": [
+    {
+      "name": "DataStruct",
+      "type": "class",
+      "start_line": 68,
+      "end_line": 499,
+      "functions": [
+        {
+          "name": "constructor",
+          "type": "function",
+          "start_line": 72,
+          "end_line": 94,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "  constructor(\n    readonly databaseName: string,\n    readonly schema: Schema\n  ) {\n    for (const [key, type] of Object.entries(schema)) {\n      const typeInfo = typeof type === 'string' ? { type } : type;\n      if (typeInfo.index === false) {\n        // If index is false, we don't need to create an inverted index for this field.\n        continue;\n      }\n      if (typeInfo.type === 'String') {\n        this.invertedIndex.set(key, new StringInvertedIndex(key));\n      } else if (typeInfo.type === 'Integer') {\n        this.invertedIndex.set(key, new IntegerInvertedIndex(key));\n      } else if (typeInfo.type === 'FullText') {\n        this.invertedIndex.set(key, new FullTextInvertedIndex(key));\n      } else if (type === 'Boolean') {\n        this.invertedIndex.set(key, new BooleanInvertedIndex(key));\n      } else {\n        throw new Error(`Field type '${type}' not supported`);\n      }\n    }\n  }",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "constructor(\n    readonly databaseName: string,\n    readonly schema: Schema\n  ) {",
+              "successors": [
+                {
+                  "id": 2,
+                  "label": "for (const [key, type] of Object.entries(schema)) {",
+                  "successors": [
+                    {
+                      "id": 3,
+                      "label": "const typeInfo = typeof type === 'string' ? { type } : type;",
+                      "successors": [
+                        {
+                          "id": 4,
+                          "label": "if (typeInfo.index === false) {",
+                          "successors": [
+                            {
+                              "id": 5,
+                              "label": "// If index is false, we don't need to create an inverted index for this field.\ncontinue;",
+                              "successors": [
+                                {
+                                  "id": 2,
+                                  "label": "for (const [key, type] of Object.entries(schema)) {",
+                                  "successors": []
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "id": 6,
+                          "label": "if (typeInfo.type === 'String') {",
+                          "successors": [
+                            {
+                              "id": 7,
+                              "label": "this.invertedIndex.set(key, new StringInvertedIndex(key));",
+                              "successors": [
+                                {
+                                  "id": 2,
+                                  "label": "for (const [key, type] of Object.entries(schema)) {",
+                                  "successors": []
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "id": 8,
+                          "label": "else if (typeInfo.type === 'Integer') {",
+                          "successors": [
+                            {
+                              "id": 9,
+                              "label": "this.invertedIndex.set(key, new IntegerInvertedIndex(key));",
+                              "successors": [
+                                {
+                                  "id": 2,
+                                  "label": "for (const [key, type] of Object.entries(schema)) {",
+                                  "successors": []
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "id": 10,
+                          "label": "else if (typeInfo.type === 'FullText') {",
+                          "successors": [
+                            {
+                              "id": 11,
+                              "label": "this.invertedIndex.set(key, new FullTextInvertedIndex(key));",
+                              "successors": [
+                                {
+                                  "id": 2,
+                                  "label": "for (const [key, type] of Object.entries(schema)) {",
+                                  "successors": []
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "id": 12,
+                          "label": "else if (type === 'Boolean') {",
+                          "successors": [
+                            {
+                              "id": 13,
+                              "label": "this.invertedIndex.set(key, new BooleanInvertedIndex(key));",
+                              "successors": [
+                                {
+                                  "id": 2,
+                                  "label": "for (const [key, type] of Object.entries(schema)) {",
+                                  "successors": []
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "id": 14,
+                          "label": "else {",
+                          "successors": [
+                            {
+                              "id": 15,
+                              "label": "throw new Error(`Field type '${type}' not supported`);",
+                              "successors": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "insert",
+          "type": "function",
+          "start_line": 95,
+          "end_line": 126,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "  private async insert(trx: DataStructRWTransaction, document: Document) {\n    const exists = await trx\n      .objectStore('records')\n      .index('id')\n      .get(document.id);\n    if (exists) {\n      throw new Error('Document already exists');\n    }\n    const dataMap = new Map();\n    for (const [key, values] of document.fields) {\n      const type = this.schema[key as string];\n      if (!type) {\n        continue;\n      }\n      const typeInfo = typeof type === 'string' ? { type } : type;\n      if (typeInfo.store !== false) {\n        // If store is false, the field will not be stored\n        dataMap.set(key, values);\n      }\n    }\n    const nid = await trx.objectStore('records').add({\n      id: document.id,\n      data: dataMap,\n    });\n    for (const [key, values] of document.fields) {\n      const iidx = this.invertedIndex.get(key as string);\n      if (!iidx) {\n        continue;\n      }\n      await iidx.insert(trx, nid, values);\n    }\n  }",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "const exists = await trx\n  .objectStore('records')\n  .index('id')\n  .get(document.id);",
+              "successors": [
+                {
+                  "id": 2,
+                  "label": "if (exists) {",
+                  "successors": [
+                    {
+                      "id": 3,
+                      "label": "  throw new Error('Document already exists');",
+                      "successors": []
+                    },
+                    {
+                      "id": 4,
+                      "label": "}",
+                      "successors": [
+                        {
+                          "id": 5,
+                          "label": "const dataMap = new Map();\nfor (const [key, values] of document.fields) {",
+                          "successors": [
+                            {
+                              "id": 6,
+                              "label": "  const type = this.schema[key as string];\n  if (!type) {",
+                              "successors": [
+                                {
+                                  "id": 7,
+                                  "label": "    continue;",
+                                  "successors": [
+                                    {
+                                      "id": 11,
+                                      "label": "}",
+                                      "successors": [
+                                        {
+                                          "id": 12,
+                                          "label": "  const typeInfo = typeof type === 'string' ? { type } : type;\n  if (typeInfo.store !== false) {\n    // If store is false, the field will not be stored\n    dataMap.set(key, values);\n  }",
+                                          "successors": [
+                                            {
+                                              "id": 15,
+                                              "label": "}",
+                                              "successors": [
+                                                {
+                                                  "id": 16,
+                                                  "label": "}",
+                                                  "successors": [
+                                                    {
+                                                      "id": 17,
+                                                      "label": "const nid = await trx.objectStore('records').add({\n  id: document.id,\n  data: dataMap,\n});",
+                                                      "successors": [
+                                                        {
+                                                          "id": 18,
+                                                          "label": "for (const [key, values] of document.fields) {",
+                                                          "successors": [
+                                                            {
+                                                              "id": 19,
+                                                              "label": "  const iidx = this.invertedIndex.get(key as string);\n  if (!iidx) {",
+                                                              "successors": [
+                                                                {
+                                                                  "id": 20,
+                                                                  "label": "    continue;",
+                                                                  "successors": [
+                                                                    {
+                                                                      "id": 22,
+                                                                      "label": "}",
+                                                                      "successors": [
+                                                                        {
+                                                                          "id": 23,
+                                                                          "label": "  await iidx.insert(trx, nid, values);",
+                                                                          "successors": [
+                                                                            {
+                                                                              "id": 24,
+                                                                              "label": "}",
+                                                                              "successors": []
+                                                                            }
+                                                                          ]
+                                                                        }
+                                                                      ]
+                                                                    }
+                                                                  ]
+                                                                }
+                                                              ]
+                                                            }
+                                                          ]
+                                                        }
+                                                      ]
+                                                    }
+                                                  ]
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "delete",
+          "type": "function",
+          "start_line": 127,
+          "end_line": 139,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "  private async delete(trx: DataStructRWTransaction, id: string) {\n    const nid = await trx.objectStore('records').index('id').getKey(id);\n    if (nid) {\n      await trx.objectStore('records').delete(nid);\n    }\n    const indexIds = await trx\n      .objectStore('invertedIndex')\n      .index('nid')\n      .getAllKeys(nid);\n    for (const indexId of indexIds) {\n      await trx.objectStore('invertedIndex').delete(indexId);\n    }\n  }",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "private async delete(trx: DataStructRWTransaction, id: string) {",
+              "successors": [
+                {
+                  "id": 2,
+                  "label": "const nid = await trx.objectStore('records').index('id').getKey(id);",
+                  "successors": [
+                    {
+                      "id": 3,
+                      "label": "if (nid) {",
+                      "successors": [
+                        {
+                          "id": 4,
+                          "label": "await trx.objectStore('records').delete(nid);",
+                          "successors": [
+                            {
+                              "id": 6,
+                              "label": "}",
+                              "successors": [
+                                {
+                                  "id": 7,
+                                  "label": "const indexIds = await trx\n  .objectStore('invertedIndex')\n  .index('nid')\n  .getAllKeys(nid);",
+                                  "successors": [
+                                    {
+                                      "id": 8,
+                                      "label": "for (const indexId of indexIds) {",
+                                      "successors": [
+                                        {
+                                          "id": 9,
+                                          "label": "await trx.objectStore('invertedIndex').delete(indexId);",
+                                          "successors": [
+                                            {
+                                              "id": 10,
+                                              "label": "}",
+                                              "successors": [
+                                                {
+                                                  "id": 11,
+                                                  "label": "}",
+                                                  "successors": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "id": 5,
+                          "label": "}",
+                          "successors": [
+                            {
+                              "id": 7,
+                              "label": "const indexIds = await trx\n  .objectStore('invertedIndex')\n  .index('nid')\n  .getAllKeys(nid);",
+                              "successors": [
+                                {
+                                  "id": 8,
+                                  "label": "for (const indexId of indexIds) {",
+                                  "successors": [
+                                    {
+                                      "id": 9,
+                                      "label": "await trx.objectStore('invertedIndex').delete(indexId);",
+                                      "successors": [
+                                        {
+                                          "id": 10,
+                                          "label": "}",
+                                          "successors": [
+                                            {
+                                              "id": 11,
+                                              "label": "}",
+                                              "successors": []
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "batchWrite",
+          "type": "function",
+          "start_line": 140,
+          "end_line": 170,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "  async batchWrite(\n    trx: DataStructRWTransaction,\n    deletes: string[],\n    inserts: Document[]\n  ) {\n    const startTime = performance.now();\n    try {\n      for (const del of deletes) {\n        await this.delete(trx, del);\n      }\n      for (const inst of inserts) {\n        await this.insert(trx, inst);\n      }\n    } finally {\n      const endTime = performance.now();\n      if (BUILD_CONFIG.debug) {\n        performance.measure(\n          `[IndexedDB Indexer] Batch Write (${this.databaseName})`,\n          {\n            start: startTime,\n            end: endTime,\n          }\n        );\n      }\n      logger.debug(\n        `[indexer ${this.databaseName}] batchWrite`,\n        endTime - startTime,\n        'ms'\n      );\n    }\n  }",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "async batchWrite(\n    trx: DataStructRWTransaction,\n    deletes: string[],\n    inserts: Document[]\n  )",
+              "successors": [
+                {
+                  "id": 2,
+                  "label": "const startTime = performance.now();",
+                  "successors": [
+                    {
+                      "id": 3,
+                      "label": "try {",
+                      "successors": [
+                        {
+                          "id": 4,
+                          "label": "for (const del of deletes) {\n        await this.delete(trx, del);\n      }",
+                          "successors": [
+                            {
+                              "id": 5,
+                              "label": "for (const inst of inserts) {\n        await this.insert(trx, inst);\n      }",
+                              "successors": [
+                                {
+                                  "id": 6,
+                                  "label": "} finally {",
+                                  "successors": [
+                                    {
+                                      "id": 7,
+                                      "label": "const endTime = performance.now();",
+                                      "successors": [
+                                        {
+                                          "id": 8,
+                                          "label": "if (BUILD_CONFIG.debug) {",
+                                          "successors": [
+                                            {
+                                              "id": 9,
+                                              "label": "performance.measure(\n          `[IndexedDB Indexer] Batch Write (${this.databaseName})`,\n          {\n            start: startTime,\n            end: endTime,\n          }\n        );",
+                                              "successors": [
+                                                {
+                                                  "id": 10,
+                                                  "label": "}",
+                                                  "successors": [
+                                                    {
+                                                      "id": 11,
+                                                      "label": "logger.debug(\n        `[indexer ${this.databaseName}] batchWrite`,\n        endTime - startTime,\n        'ms'\n      );",
+                                                      "successors": []
+                                                    }
+                                                  ]
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "matchAll",
+          "type": "function",
+          "start_line": 171,
+          "end_line": 178,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "  async matchAll(trx: DataStructROTransaction): Promise<Match> {\n    const allNids = await trx.objectStore('records').getAllKeys();\n    const match = new Match();\n    for (const nid of allNids) {\n      match.addScore(nid, 1);\n    }\n    return match;\n  }",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "async matchAll(trx: DataStructROTransaction): Promise<Match> {",
+              "successors": [
+                {
+                  "id": 2,
+                  "label": "const allNids = await trx.objectStore('records').getAllKeys();",
+                  "successors": [
+                    {
+                      "id": 3,
+                      "label": "const match = new Match();",
+                      "successors": [
+                        {
+                          "id": 4,
+                          "label": "for (const nid of allNids) {",
+                          "successors": [
+                            {
+                              "id": 5,
+                              "label": "match.addScore(nid, 1);",
+                              "successors": [
+                                {
+                                  "id": 4,
+                                  "label": "for (const nid of allNids) {",
+                                  "successors": [
+                                    {
+                                      "id": 6,
+                                      "label": "return match;",
+                                      "successors": []
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "queryRaw",
+          "type": "function",
+          "start_line": 179,
+          "end_line": 213,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "  private async queryRaw(\n    trx: DataStructROTransaction,\n    query: Query<any>\n  ): Promise<Match> {\n    if (query.type === 'match') {\n      const iidx = this.invertedIndex.get(query.field as string);\n      if (!iidx) {\n        return new Match();\n      }\n      return await iidx.match(trx, query.match);\n    } else if (query.type === 'boolean') {\n      const weights = [];\n      for (const q of query.queries) {\n        weights.push(await this.queryRaw(trx, q));\n      }\n      if (query.occur === 'must') {\n        return weights.reduce((acc, w) => acc.and(w));\n      } else if (query.occur === 'must_not') {\n        const total = weights.reduce((acc, w) => acc.and(w));\n        return (await this.matchAll(trx)).exclude(total);\n      } else if (query.occur === 'should') {\n        return weights.reduce((acc, w) => acc.or(w));\n      }\n    } else if (query.type === 'all') {\n      return await this.matchAll(trx);\n    } else if (query.type === 'boost') {\n      return (await this.queryRaw(trx, query.query)).boost(query.boost);\n    } else if (query.type === 'exists') {\n      const iidx = this.invertedIndex.get(query.field as string);\n      if (!iidx) {\n        return new Match();\n      }\n      return await iidx.all(trx);\n    }\n    throw new Error(`Query type '${query.type}' not supported`);",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "private async queryRaw(\n    trx: DataStructROTransaction,\n    query: Query<any>\n  ): Promise<Match> {",
+              "successors": [
+                {
+                  "id": 2,
+                  "label": "if (query.type === 'match') {",
+                  "successors": [
+                    {
+                      "id": 3,
+                      "label": "const iidx = this.invertedIndex.get(query.field as string);",
+                      "successors": [
+                        {
+                          "id": 4,
+                          "label": "if (!iidx) {",
+                          "successors": [
+                            {
+                              "id": 5,
+                              "label": "return new Match();",
+                              "successors": []
+                            }
+                          ]
+                        },
+                        {
+                          "id": 6,
+                          "label": "return await iidx.match(trx, query.match);",
+                          "successors": []
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "id": 7,
+                  "label": "else if (query.type === 'boolean') {",
+                  "successors": [
+                    {
+                      "id": 8,
+                      "label": "const weights = [];",
+                      "successors": [
+                        {
+                          "id": 9,
+                          "label": "for (const q of query.queries) {",
+                          "successors": [
+                            {
+                              "id": 10,
+                              "label": "weights.push(await this.queryRaw(trx, q));",
+                              "successors": []
+                            }
+                          ]
+                        },
+                        {
+                          "id": 11,
+                          "label": "if (query.occur === 'must') {",
+                          "successors": [
+                            {
+                              "id": 12,
+                              "label": "return weights.reduce((acc, w) => acc.and(w));",
+                              "successors": []
+                            }
+                          ]
+                        },
+                        {
+                          "id": 13,
+                          "label": "else if (query.occur === 'must_not') {",
+                          "successors": [
+                            {
+                              "id": 14,
+                              "label": "const total = weights.reduce((acc, w) => acc.and(w));",
+                              "successors": [
+                                {
+                                  "id": 15,
+                                  "label": "return (await this.matchAll(trx)).exclude(total);",
+                                  "successors": []
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "id": 16,
+                          "label": "else if (query.occur === 'should') {",
+                          "successors": [
+                            {
+                              "id": 17,
+                              "label": "return weights.reduce((acc, w) => acc.or(w));",
+                              "successors": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "id": 18,
+                  "label": "else if (query.type === 'all') {",
+                  "successors": [
+                    {
+                      "id": 19,
+                      "label": "return await this.matchAll(trx);",
+                      "successors": []
+                    }
+                  ]
+                },
+                {
+                  "id": 20,
+                  "label": "else if (query.type === 'boost') {",
+                  "successors": [
+                    {
+                      "id": 21,
+                      "label": "return (await this.queryRaw(trx, query.query)).boost(query.boost);",
+                      "successors": []
+                    }
+                  ]
+                },
+                {
+                  "id": 22,
+                  "label": "else if (query.type === 'exists') {",
+                  "successors": [
+                    {
+                      "id": 23,
+                      "label": "const iidx = this.invertedIndex.get(query.field as string);",
+                      "successors": [
+                        {
+                          "id": 24,
+                          "label": "if (!iidx) {",
+                          "successors": [
+                            {
+                              "id": 25,
+                              "label": "return new Match();",
+                              "successors": []
+                            }
+                          ]
+                        },
+                        {
+                          "id": 26,
+                          "label": "return await iidx.all(trx);",
+                          "successors": []
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "id": 27,
+                  "label": "throw new Error(`Query type '${query.type}' not supported`);",
+                  "successors": []
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "clear",
+          "type": "function",
+          "start_line": 215,
+          "end_line": 219,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "  async clear(trx: DataStructRWTransaction) {\n    await trx.objectStore('records').clear();\n    await trx.objectStore('invertedIndex').clear();\n    await trx.objectStore('kvMetadata').clear();\n  }",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "async clear(trx: DataStructRWTransaction) {",
+              "successors": [
+                {
+                  "id": 2,
+                  "label": "    await trx.objectStore('records').clear();",
+                  "successors": [
+                    {
+                      "id": 3,
+                      "label": "    await trx.objectStore('invertedIndex').clear();",
+                      "successors": [
+                        {
+                          "id": 4,
+                          "label": "    await trx.objectStore('kvMetadata').clear();",
+                          "successors": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "search",
+          "type": "function",
+          "start_line": 220,
+          "end_line": 271,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "  async search(\n    trx: DataStructROTransaction,\n    query: Query<any>,\n    options: SearchOptions<any>\n  ): Promise<SearchResult<any, any>> {\n    const startTime = performance.now();\n    try {\n      const pagination = {\n        skip: options.pagination?.skip ?? 0,\n        limit: options.pagination?.limit ?? 100,\n      };\n      const match = await this.queryRaw(trx, query);\n      const nids = match\n        .toArray()\n        .slice(pagination.skip, pagination.skip + pagination.limit);\n      const nodes = [];\n      for (const nid of nids) {\n        const record = await trx.objectStore('records').get(nid);\n        if (!record) {\n          continue;\n        }\n        nodes.push(this.resultNode(record, options, match, nid));\n      }\n      return {\n        pagination: {\n          count: match.size(),\n          hasMore: match.size() > pagination.limit + pagination.skip,\n          limit: pagination.limit,\n          skip: pagination.skip,\n        },\n        nodes: nodes,\n      };\n    } finally {\n      const endTime = performance.now();\n      if (BUILD_CONFIG.debug) {\n        performance.measure(\n          `[IndexedDB Indexer] Search (${this.databaseName})`,\n          {\n            detail: { query, options },\n            start: startTime,\n            end: endTime,\n          }\n        );\n      }\n      logger.debug(\n        `[indexer ${this.databaseName}] search`,\n        endTime - startTime,\n        'ms',\n        query\n      );\n    }\n  }",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "async search(trx: DataStructROTransaction, query: Query<any>, options: SearchOptions<any>): Promise<SearchResult<any, any>> { const startTime = performance.now();",
+              "successors": [
+                {
+                  "id": 2,
+                  "label": "try { const pagination = { skip: options.pagination?.skip ?? 0, limit: options.pagination?.limit ?? 100, }; const match = await this.queryRaw(trx, query); const nids = match .toArray() .slice(pagination.skip, pagination.skip + pagination.limit); const nodes = [];",
+                  "successors": [
+                    {
+                      "id": 3,
+                      "label": "for (const nid of nids) { const record = await trx.objectStore('records').get(nid); if (!record) { continue; } nodes.push(this.resultNode(record, options, match, nid)); }",
+                      "successors": [
+                        {
+                          "id": 4,
+                          "label": "return { pagination: { count: match.size(), hasMore: match.size() > pagination.limit + pagination.skip, limit: pagination.limit, skip: pagination.skip, }, nodes: nodes, };",
+                          "successors": [
+                            {
+                              "id": 5,
+                              "label": "finally { const endTime = performance.now(); if (BUILD_CONFIG.debug) { performance.measure( `[IndexedDB Indexer] Search (${this.databaseName})`, { detail: { query, options }, start: startTime, end: endTime, } ); } logger.debug( `[indexer ${this.databaseName}] search`, endTime - startTime, 'ms', query ); }",
+                              "successors": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "aggregate",
+          "type": "function",
+          "start_line": 272,
+          "end_line": 381,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "  async aggregate(\n    trx: DataStructROTransaction,\n    query: Query<any>,\n    field: string,\n    options: AggregateOptions<any>\n  ): Promise<AggregateResult<any, any>> {\n    const startTime = performance.now();\n    try {\n      const pagination = {\n        skip: options.pagination?.skip ?? 0,\n        limit: options.pagination?.limit ?? 100,\n      };\n      const hitPagination = options.hits\n        ? {\n            skip: options.hits.pagination?.skip ?? 0,\n            limit: options.hits.pagination?.limit ?? 3,\n          }\n        : {\n            skip: 0,\n            limit: 0,\n          };\n      const match = await this.queryRaw(trx, query);\n      const nids = match.toArray();\n      const buckets: {\n        key: string;\n        nids: number[];\n        hits: SearchResult<any, any>['nodes'];\n      }[] = [];\n      for (const nid of nids) {\n        const record = await trx.objectStore('records').get(nid);\n        if (!record) {\n          continue;\n        }\n        const values = record.data.get(field);\n        for (const value of values ?? []) {\n          let bucket;\n          let bucketIndex = buckets.findIndex(b => b.key === value);\n          if (bucketIndex === -1) {\n            bucket = { key: value, nids: [], hits: [] };\n            buckets.push(bucket);\n            bucketIndex = buckets.length - 1;\n          } else {\n            bucket = buckets[bucketIndex];\n          }\n          if (\n            bucketIndex >= pagination.skip &&\n            bucketIndex < pagination.skip + pagination.limit\n          ) {\n            bucket.nids.push(nid);\n            if (\n              bucket.nids.length - 1 >= hitPagination.skip &&\n              bucket.nids.length - 1 < hitPagination.skip + hitPagination.limit\n            ) {\n              bucket.hits.push(\n                this.resultNode(record, options.hits ?? {}, match, nid)\n              );\n            }\n          }\n        }\n      }\n      return {\n        buckets: buckets\n          .slice(pagination.skip, pagination.skip + pagination.limit)\n          .map(bucket => {\n            const result = {\n              key: bucket.key,\n              score: match.getScore(bucket.nids[0]),\n              count: bucket.nids.length,\n            } as AggregateResult<any, any>['buckets'][number];\n            if (options.hits) {\n              (result as any).hits = {\n                pagination: {\n                  count: bucket.nids.length,\n                  hasMore:\n                    bucket.nids.length >\n                    hitPagination.limit + hitPagination.skip,\n                  limit: hitPagination.limit,\n                  skip: hitPagination.skip,\n                },\n                nodes: bucket.hits,\n              } as SearchResult<any, any>;\n            }\n            return result;\n          }),\n        pagination: {\n          count: buckets.length,\n          hasMore: buckets.length > pagination.limit + pagination.skip,\n          limit: pagination.limit,\n          skip: pagination.skip,\n        },\n      };\n    } finally {\n      const endTime = performance.now();\n      if (BUILD_CONFIG.debug) {\n        performance.measure(\n          `[IndexedDB Indexer] Aggregate (${this.databaseName})`,\n          {\n            detail: { query, field, options },\n            start: startTime,\n            end: endTime,\n          }\n        );\n      }\n      logger.debug(\n        `[indexer ${this.databaseName}] aggregate`,\n        endTime - startTime,\n        'ms'\n      );\n    }\n  }",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "async aggregate(...) { const startTime = performance.now();",
+              "successors": [
+                {
+                  "id": 2,
+                  "label": "try { const pagination = { skip: options.pagination?.skip ?? 0, limit: options.pagination?.limit ?? 100, };",
+                  "successors": [
+                    {
+                      "id": 3,
+                      "label": "const hitPagination = options.hits ? { skip: options.hits.pagination?.skip ?? 0, limit: options.hits.pagination?.limit ?? 3, } : { skip: 0, limit: 0, }; const match = await this.queryRaw(trx, query); const nids = match.toArray(); const buckets = [];",
+                      "successors": [
+                        {
+                          "id": 4,
+                          "label": "for (const nid of nids) { const record = await trx.objectStore('records').get(nid); if (!record) { continue; } const values = record.data.get(field);",
+                          "successors": [
+                            {
+                              "id": 5,
+                              "label": "for (const value of values ?? []) { let bucket; let bucketIndex = buckets.findIndex(b => b.key === value); if (bucketIndex === -1) { bucket = { key: value, nids: [], hits: [] }; buckets.push(bucket); bucketIndex = buckets.length - 1; } else { bucket = buckets[bucketIndex]; }",
+                              "successors": [
+                                {
+                                  "id": 6,
+                                  "label": "if (bucketIndex >= pagination.skip && bucketIndex < pagination.skip + pagination.limit) { bucket.nids.push(nid);",
+                                  "successors": [
+                                    {
+                                      "id": 7,
+                                      "label": "if (bucket.nids.length - 1 >= hitPagination.skip && bucket.nids.length - 1 < hitPagination.skip + hitPagination.limit) { bucket.hits.push(this.resultNode(record, options.hits ?? {}, match, nid)); }",
+                                      "successors": [
+                                        {
+                                          "id": 8,
+                                          "label": "}",
+                                          "successors": [
+                                            {
+                                              "id": 9,
+                                              "label": "}",
+                                              "successors": [
+                                                {
+                                                  "id": 10,
+                                                  "label": "}",
+                                                  "successors": [
+                                                    {
+                                                      "id": 11,
+                                                      "label": "}",
+                                                      "successors": [
+                                                        {
+                                                          "id": 12,
+                                                          "label": "return { buckets: buckets.slice(pagination.skip, pagination.skip + pagination.limit).map(bucket => { const result = { key: bucket.key, score: match.getScore(bucket.nids[0]), count: bucket.nids.length, } as AggregateResult<any, any>['buckets'][number]; if (options.hits) { (result as any).hits = { pagination: { count: bucket.nids.length, hasMore: bucket.nids.length > hitPagination.limit + hitPagination.skip, limit: hitPagination.limit, skip: hitPagination.skip, }, nodes: bucket.hits, } as SearchResult<any, any>; } return result; }), pagination: { count: buckets.length, hasMore: buckets.length > pagination.limit + pagination.skip, limit: pagination.limit, skip: pagination.skip, }, };",
+                                                          "successors": [
+                                                            {
+                                                              "id": 13,
+                                                              "label": "} finally { const endTime = performance.now();",
+                                                              "successors": [
+                                                                {
+                                                                  "id": 14,
+                                                                  "label": "if (BUILD_CONFIG.debug) { performance.measure(`[IndexedDB Indexer] Aggregate (${this.databaseName})`, { detail: { query, field, options }, start: startTime, end: endTime,); }",
+                                                                  "successors": [
+                                                                    {
+                                                                      "id": 15,
+                                                                      "label": "logger.debug(`[indexer ${this.databaseName}] aggregate`, endTime - startTime, 'ms'); } }",
+                                                                      "successors": []
+                                                                    }
+                                                                  ]
+                                                                }
+                                                              ]
+                                                            }
+                                                          ]
+                                                        }
+                                                      ]
+                                                    }
+                                                  ]
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "getAll",
+          "type": "function",
+          "start_line": 382,
+          "end_line": 400,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "  async getAll(\n    trx: DataStructROTransaction,\n    ids?: string[]\n  ): Promise<Document[]> {\n    const docs = [];\n    if (ids) {\n      for (const id of ids) {\n        const record = await trx.objectStore('records').index('id').get(id);\n        if (record) {\n          docs.push(Document.from(record.id, record.data));\n        }\n      }\n    } else {\n      const records = await trx.objectStore('records').getAll();\n      for (const record of records) {\n        docs.push(Document.from(record.id, record.data));\n      }\n    }\n    return docs;",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "async getAll(\n  trx: DataStructROTransaction,\n  ids?: string[]\n): Promise<Document[]> {\n  const docs = [];",
+              "successors": [
+                {
+                  "id": 2,
+                  "label": "if (ids) {",
+                  "successors": [
+                    {
+                      "id": 3,
+                      "label": "for (const id of ids) {",
+                      "successors": [
+                        {
+                          "id": 4,
+                          "label": "const record = await trx.objectStore('records').index('id').get(id);",
+                          "successors": [
+                            {
+                              "id": 5,
+                              "label": "if (record) {",
+                              "successors": [
+                                {
+                                  "id": 6,
+                                  "label": "docs.push(Document.from(record.id, record.data));",
+                                  "successors": [
+                                    {
+                                      "id": 7,
+                                      "label": "}",
+                                      "successors": [
+                                        {
+                                          "id": 8,
+                                          "label": "}",
+                                          "successors": [
+                                            {
+                                              "id": 14,
+                                              "label": "}",
+                                              "successors": [
+                                                {
+                                                  "id": 15,
+                                                  "label": "else {",
+                                                  "successors": [
+                                                    {
+                                                      "id": 9,
+                                                      "label": "const records = await trx.objectStore('records').getAll();",
+                                                      "successors": [
+                                                        {
+                                                          "id": 10,
+                                                          "label": "for (const record of records) {",
+                                                          "successors": [
+                                                            {
+                                                              "id": 11,
+                                                              "label": "docs.push(Document.from(record.id, record.data));",
+                                                              "successors": [
+                                                                {
+                                                                  "id": 12,
+                                                                  "label": "}",
+                                                                  "successors": [
+                                                                    {
+                                                                      "id": 13,
+                                                                      "label": "}",
+                                                                      "successors": [
+                                                                        {
+                                                                          "id": 16,
+                                                                          "label": "return docs;",
+                                                                          "successors": []
+                                                                        }
+                                                                      ]
+                                                                    }
+                                                                  ]
+                                                                }
+                                                              ]
+                                                            },
+                                                            {
+                                                              "id": 16,
+                                                              "label": "return docs;",
+                                                              "successors": []
+                                                            }
+                                                          ]
+                                                        }
+                                                      ]
+                                                    }
+                                                  ]
+                                                },
+                                                {
+                                                  "id": 16,
+                                                  "label": "return docs;",
+                                                  "successors": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "id": 7,
+                              "label": "}",
+                              "successors": [
+                                {
+                                  "id": 8,
+                                  "label": "}",
+                                  "successors": [
+                                    {
+                                      "id": 14,
+                                      "label": "}",
+                                      "successors": []
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "id": 8,
+                          "label": "}",
+                          "successors": [
+                            {
+                              "id": 14,
+                              "label": "}",
+                              "successors": [
+                                {
+                                  "id": 15,
+                                  "label": "else {",
+                                  "successors": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "id": 14,
+                      "label": "else {",
+                      "successors": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "has",
+          "type": "function",
+          "start_line": 402,
+          "end_line": 404,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "  async has(trx: DataStructROTransaction, id: string): Promise<boolean> {\n    const nid = await trx.objectStore('records').index('id').getKey(id);\n    return nid !== undefined;",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "async has(trx: DataStructROTransaction, id: string): Promise<boolean> {",
+              "successors": [
+                {
+                  "id": 2,
+                  "label": "const nid = await trx.objectStore('records').index('id').getKey(id);",
+                  "successors": [
+                    {
+                      "id": 3,
+                      "label": "return nid !== undefined;",
+                      "successors": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "readonly",
+          "type": "function",
+          "start_line": 406,
+          "end_line": 414,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "  async readonly() {\n    await this.ensureInitialized();\n    return this.database.transaction(\n      ['records', 'invertedIndex', 'kvMetadata'],\n      'readonly',\n      {\n        durability: 'relaxed',\n      }\n    );",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "async readonly() {",
+              "successors": [
+                {
+                  "id": 2,
+                  "label": "    await this.ensureInitialized();",
+                  "successors": [
+                    {
+                      "id": 3,
+                      "label": "    return this.database.transaction(",
+                      "successors": []
+                    }
+                  ]
+                },
+                {
+                  "id": 4,
+                  "label": "        ['records', 'invertedIndex', 'kvMetadata'],",
+                  "successors": [
+                    {
+                      "id": 5,
+                      "label": "        'readonly',",
+                      "successors": [
+                        {
+                          "id": 6,
+                          "label": "        {",
+                          "successors": [
+                            {
+                              "id": 7,
+                              "label": "            durability: 'relaxed',",
+                              "successors": [
+                                {
+                                  "id": 8,
+                                  "label": "        }",
+                                  "successors": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "id": 9,
+                  "label": "    );",
+                  "successors": []
+                },
+                {
+                  "id": 10,
+                  "label": "}",
+                  "successors": []
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "readwrite",
+          "type": "function",
+          "start_line": 416,
+          "end_line": 424,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "  async readwrite() {\n    await this.ensureInitialized();\n    return this.database.transaction(\n      ['records', 'invertedIndex', 'kvMetadata'],\n      'readwrite',\n      {\n        durability: 'relaxed',\n      }\n    );",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "async readwrite() {",
+              "successors": [
+                {
+                  "id": 2,
+                  "label": "await this.ensureInitialized();",
+                  "successors": [
+                    {
+                      "id": 3,
+                      "label": "return this.database.transaction(",
+                      "successors": [
+                        {
+                          "id": 4,
+                          "label": "['records', 'invertedIndex', 'kvMetadata'],",
+                          "successors": [
+                            {
+                              "id": 5,
+                              "label": "'readwrite',",
+                              "successors": [
+                                {
+                                  "id": 6,
+                                  "label": "{",
+                                  "successors": [
+                                    {
+                                      "id": 7,
+                                      "label": "durability: 'relaxed',",
+                                      "successors": [
+                                        {
+                                          "id": 8,
+                                          "label": "}",
+                                          "successors": [
+                                            {
+                                              "id": 9,
+                                              "label": ");",
+                                              "successors": [
+                                                {
+                                                  "id": 10,
+                                                  "label": "}",
+                                                  "successors": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "ensureInitialized",
+          "type": "function",
+          "start_line": 426,
+          "end_line": 432,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "  private async ensureInitialized() {\n    if (this.database) {\n      return;\n    }\n    this.initializePromise ??= this.initialize();\n    await this.initializePromise;\n  }",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "private async ensureInitialized() {",
+              "successors": [
+                {
+                  "id": 2,
+                  "label": "if (this.database) {",
+                  "successors": [
+                    {
+                      "id": 3,
+                      "label": "return;",
+                      "successors": []
+                    }
+                  ]
+                },
+                {
+                  "id": 4,
+                  "label": "this.initializePromise ??= this.initialize();",
+                  "successors": [
+                    {
+                      "id": 5,
+                      "label": "await this.initializePromise;",
+                      "successors": [
+                        {
+                          "id": 6,
+                          "label": "}",
+                          "successors": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "initialize",
+          "type": "function",
+          "start_line": 433,
+          "end_line": 452,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "  private async initialize() {\n    this.database = await openDB<IndexDB>(this.databaseName, 1, {\n      upgrade(database) {\n        database.createObjectStore('kvMetadata', {\n          keyPath: 'key',\n        });\n        const recordsStore = database.createObjectStore('records', {\n          autoIncrement: true,\n        });\n        recordsStore.createIndex('id', 'id', {\n          unique: true,\n        });\n        const invertedIndexStore = database.createObjectStore('invertedIndex', {\n          autoIncrement: true,\n        });\n        invertedIndexStore.createIndex('key', 'key', { unique: false });\n        invertedIndexStore.createIndex('nid', 'nid', { unique: false });\n      },\n    });\n  }",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "private async initialize() {",
+              "successors": [
+                {
+                  "id": 2,
+                  "label": "this.database = await openDB<IndexDB>(this.databaseName, 1, {",
+                  "successors": [
+                    {
+                      "id": 3,
+                      "label": "upgrade(database) {",
+                      "successors": [
+                        {
+                          "id": 4,
+                          "label": "database.createObjectStore('kvMetadata', { keyPath: 'key' });",
+                          "successors": [
+                            {
+                              "id": 5,
+                              "label": "const recordsStore = database.createObjectStore('records', { autoIncrement: true });",
+                              "successors": [
+                                {
+                                  "id": 6,
+                                  "label": "recordsStore.createIndex('id', 'id', { unique: true });",
+                                  "successors": [
+                                    {
+                                      "id": 7,
+                                      "label": "const invertedIndexStore = database.createObjectStore('invertedIndex', { autoIncrement: true });",
+                                      "successors": [
+                                        {
+                                          "id": 8,
+                                          "label": "invertedIndexStore.createIndex('key', 'key', { unique: false });",
+                                          "successors": [
+                                            {
+                                              "id": 9,
+                                              "label": "invertedIndexStore.createIndex('nid', 'nid', { unique: false });",
+                                              "successors": [
+                                                {
+                                                  "id": 10,
+                                                  "label": "});",
+                                                  "successors": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "id": 11,
+                      "label": "});",
+                      "successors": [
+                        {
+                          "id": 12,
+                          "label": "}",
+                          "successors": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "resultNode",
+          "type": "function",
+          "start_line": 453,
+          "end_line": 498,
+          "functions": [],
+          "classes": [],
+          "simplified_code": "  private resultNode(\n    record: { id: string; data: Map<string, string[]> },\n    options: SearchOptions<any>,\n    match?: Match,\n    nid?: number\n  ): SearchResult<any, any>['nodes'][number] {\n    const node = {\n      id: record.id,\n      score: match && nid ? match.getScore(nid) : 1,\n    } as any;\n    if (options.fields) {\n      const fields = {} as Record<string, string | string[]>;\n      for (const field of options.fields as string[]) {\n        fields[field] = record.data.get(field) ?? [''];\n        if (fields[field].length === 1) {\n          fields[field] = fields[field][0];\n        }\n      }\n      node.fields = fields;\n    }\n    if (match && nid && options.highlights) {\n      const highlights = {} as Record<string, string[]>;\n      for (const { field, before, end } of options.highlights) {\n        const highlightValues = match.getHighlighters(nid, field);\n        if (highlightValues) {\n          const rawValues = record.data.get(field) ?? [];\n          highlights[field] = Array.from(highlightValues)\n            .map(([index, ranges]) => {\n              const raw = rawValues[index];\n              if (raw) {\n                return (\n                  highlighter(raw, before, end, ranges, {\n                    maxPrefix: 20,\n                    maxLength: 50,\n                  }) ?? ''\n                );\n              }\n              return '';\n            })\n            .filter(Boolean);\n        }\n      }\n      node.highlights = highlights;\n    }\n    return node;\n  }",
+          "blocks": [
+            {
+              "id": 1,
+              "label": "private resultNode(\n  record: { id: string; data: Map<string, string[]> },\n  options: SearchOptions<any>,\n  match?: Match,\n  nid?: number\n): SearchResult<any, any>['nodes'][number] {\n  const node = {\n    id: record.id,\n    score: match && nid ? match.getScore(nid) : 1,\n  } as any;",
+              "successors": [
+                {
+                  "id": 2,
+                  "label": "if (options.fields) {",
+                  "successors": [
+                    {
+                      "id": 3,
+                      "label": "const fields = {} as Record<string, string | string[]>;",
+                      "successors": [
+                        {
+                          "id": 4,
+                          "label": "for (const field of options.fields as string[]) {",
+                          "successors": [
+                            {
+                              "id": 5,
+                              "label": "fields[field] = record.data.get(field) ?? [''];",
+                              "successors": [
+                                {
+                                  "id": 6,
+                                  "label": "if (fields[field].length === 1) {",
+                                  "successors": [
+                                    {
+                                      "id": 7,
+                                      "label": "fields[field] = fields[field][0];",
+                                      "successors": []
+                                    }
+                                  ]
+                                },
+                                {
+                                  "id": 8,
+                                  "label": "// End of for loop body",
+                                  "successors": []
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "id": 9,
+                          "label": "// End of if (options.fields) body\nnode.fields = fields;",
+                          "successors": []
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "id": 10,
+                  "label": "if (match && nid && options.highlights) {",
+                  "successors": [
+                    {
+                      "id": 11,
+                      "label": "const highlights = {} as Record<string, string[]>;",
+                      "successors": [
+                        {
+                          "id": 12,
+                          "label": "for (const { field, before, end } of options.highlights) {",
+                          "successors": [
+                            {
+                              "id": 13,
+                              "label": "const highlightValues = match.getHighlighters(nid, field);",
+                              "successors": [
+                                {
+                                  "id": 14,
+                                  "label": "if (highlightValues) {",
+                                  "successors": [
+                                    {
+                                      "id": 15,
+                                      "label": "const rawValues = record.data.get(field) ?? [];",
+                                      "successors": [
+                                        {
+                                          "id": 16,
+                                          "label": "highlights[field] = Array.from(highlightValues)\n.map(([index, ranges]) => {",
+                                          "successors": [
+                                            {
+                                              "id": 17,
+                                              "label": "const raw = rawValues[index];",
+                                              "successors": [
+                                                {
+                                                  "id": 18,
+                                                  "label": "if (raw) {",
+                                                  "successors": [
+                                                    {
+                                                      "id": 19,
+                                                      "label": "return (\n  highlighter(raw, before, end, ranges, {\n    maxPrefix: 20,\n    maxLength: 50,\n  }) ?? ''\n);",
+                                                      "successors": []
+                                                    }
+                                                  ]
+                                                },
+                                                {
+                                                  "id": 20,
+                                                  "label": "return '';",
+                                                  "successors": []
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "id": 21,
+                                              "label": "})\n.filter(Boolean);",
+                                              "successors": []
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "id": 22,
+                          "label": "// End of if (match && nid && options.highlights) body\nnode.highlights = highlights;",
+                          "successors": []
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "id": 23,
+                  "label": "return node;\n}",
+                  "successors": []
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "classes": [],
+      "simplified_code": "export class DataStruct {\n  private initializePromise: Promise<void> | null = null;\n  database: IDBPDatabase<IndexDB> = null as any;\n  invertedIndex = new Map<string, InvertedIndex>();\n  }\n  }\n  }\n  }\n  }\n    throw new Error(`Query type '${query.type}' not supported`);\n  }\n  }\n  }\n  }\n    return docs;\n  }\n    return nid !== undefined;\n  }\n    );\n  }\n    );\n  }\n  }\n  }\n  }\n}",
+      "blocks": [
+        {
+          "id": 1,
+          "label": "export class DataStruct {",
+          "successors": [
+            {
+              "id": 2,
+              "label": "  private initializePromise: Promise<void> | null = null;",
+              "successors": [
+                {
+                  "id": 3,
+                  "label": "  database: IDBPDatabase<IndexDB> = null as any;",
+                  "successors": [
+                    {
+                      "id": 4,
+                      "label": "  invertedIndex = new Map<string, InvertedIndex>();",
+                      "successors": [
+                        {
+                          "id": 5,
+                          "label": "    throw new Error(`Query type '${query.type}' not supported`);",
+                          "successors": [
+                            {
+                              "id": 6,
+                              "label": "    return docs;",
+                              "successors": [
+                                {
+                                  "id": 7,
+                                  "label": "    return nid !== undefined;",
+                                  "successors": [
+                                    {
+                                      "id": 8,
+                                      "label": "    );",
+                                      "successors": [
+                                        {
+                                          "id": 9,
+                                          "label": "    );",
+                                          "successors": [
+                                            {
+                                              "id": 10,
+                                              "label": "    }",
+                                              "successors": [
+                                                {
+                                                  "id": 11,
+                                                  "label": "    }",
+                                                  "successors": [
+                                                    {
+                                                      "id": 12,
+                                                      "label": "    }",
+                                                      "successors": [
+                                                        {
+                                                          "id": 13,
+                                                          "label": "    }",
+                                                          "successors": [
+                                                            {
+                                                              "id": 14,
+                                                              "label": "    }",
+                                                              "successors": [
+                                                                {
+                                                                  "id": 15,
+                                                                  "label": "  }",
+                                                                  "successors": [
+                                                                    {
+                                                                      "id": 16,
+                                                                      "label": "}",
+                                                                      "successors": []
+                                                                    }
+                                                                  ]
+                                                                }
+                                                              ]
+                                                            }
+                                                          ]
+                                                        }
+                                                      ]
+                                                    }
+                                                  ]
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "simplified_code": "import { DebugLogger } from '@affine/debug';\nimport {\n  type DBSchema,\n  type IDBPDatabase,\n  type IDBPTransaction,\n  openDB,\n  type StoreNames,\n} from 'idb';\nimport {\n  type AggregateOptions,\n  type AggregateResult,\n  Document,\n  type Query,\n  type Schema,\n  type SearchOptions,\n  type SearchResult,\n} from '../../';\nimport { highlighter } from './highlighter';\nimport {\n  BooleanInvertedIndex,\n  FullTextInvertedIndex,\n  IntegerInvertedIndex,\n  type InvertedIndex,\n  StringInvertedIndex,\n} from './inverted-index';\nimport { Match } from './match';\nconst logger = new DebugLogger('indexeddb');\nexport interface IndexDB extends DBSchema {\n  kvMetadata: {\n    key: string;\n    value: {\n      key: string;\n      value: any;\n    };\n  };\n  records: {\n    key: number;\n    value: {\n      id: string;\n      data: Map<string, string[]>;\n    };\n    indexes: { id: string };\n  };\n  invertedIndex: {\n    key: number;\n    value: {\n      nid: number;\n      pos?: {\n        i: number ;\n        l: number ;\n        rs: [number, number][] ;\n      };\n      key: ArrayBuffer;\n    };\n    indexes: { key: ArrayBuffer; nid: number };\n  };\n}\nexport type DataStructRWTransaction = IDBPTransaction<\n  IndexDB,\n  ArrayLike<StoreNames<IndexDB>>,\n  'readwrite'\n>;\nexport type DataStructROTransaction = IDBPTransaction<\n  IndexDB,\n  ArrayLike<StoreNames<IndexDB>>,\n  'readonly' | 'readwrite'\n>;\n}",
+  "blocks": [
+    {
+      "id": 1,
+      "label": "import { DebugLogger } from '@affine/debug';",
+      "successors": [
+        {
+          "id": 2,
+          "label": "import { type DBSchema, type IDBPDatabase, type IDBPTransaction, openDB, type StoreNames, } from 'idb';",
+          "successors": [
+            {
+              "id": 3,
+              "label": "import { type AggregateOptions, type AggregateResult, Document, type Query, type Schema, type SearchOptions, type SearchResult, } from '../../';",
+              "successors": [
+                {
+                  "id": 4,
+                  "label": "import { highlighter } from './highlighter';",
+                  "successors": [
+                    {
+                      "id": 5,
+                      "label": "import { BooleanInvertedIndex, FullTextInvertedIndex, IntegerInvertedIndex, type InvertedIndex, StringInvertedIndex, } from './inverted-index';",
+                      "successors": [
+                        {
+                          "id": 6,
+                          "label": "import { Match } from './match';",
+                          "successors": [
+                            {
+                              "id": 7,
+                              "label": "const logger = new DebugLogger('indexeddb');",
+                              "successors": [
+                                {
+                                  "id": 8,
+                                  "label": "export interface IndexDB extends DBSchema { kvMetadata: { key: string; value: { key: string; value: any; }; }; records: { key: number; value: { id: string; data: Map<string, string[]>; }; indexes: { id: string }; }; invertedIndex: { key: number; value: { nid: number; pos?: { i: number ; l: number ; rs: [number, number][] ; }; key: ArrayBuffer; }; indexes: { key: ArrayBuffer; nid: number }; }; }",
+                                  "successors": [
+                                    {
+                                      "id": 9,
+                                      "label": "export type DataStructRWTransaction = IDBPTransaction< IndexDB, ArrayLike<StoreNames<IndexDB>>, 'readwrite' >;",
+                                      "successors": [
+                                        {
+                                          "id": 10,
+                                          "label": "export type DataStructROTransaction = IDBPTransaction< IndexDB, ArrayLike<StoreNames<IndexDB>>, 'readonly' | 'readwrite' >;",
+                                          "successors": []
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,353 @@
+{
+  "name": "example_script",
+  "type": "CFG",
+  "start_line": 1,
+  "end_line": 129,
+  "functions": [
+    {
+      "name": "deployContract",
+      "type": "function",
+      "start_line": 22,
+      "end_line": 93,
+      "functions": [],
+      "classes": [],
+      "simplified_code": "export async function deployContract(\n  wallet: WalletUnlocked,\n  binaryPath: string,\n  abiPath: string,\n  storageSlotsPath: string,\n  deployConfig: DeployContractOptions,\n  contractPath: string,\n  tomlContents: ForcToml\n) {\n  debug(`Deploying contract for ABI: ${abiPath}`);\n  if (existsSync(storageSlotsPath)) {\n    const storageSlots = JSON.parse(readFileSync(storageSlotsPath, 'utf-8'));\n    // eslint-disable-next-line no-param-reassign\n    deployConfig.storageSlots = storageSlots;\n  }\n  const targetBytecode = readFileSync(binaryPath);\n  const targetAbi = JSON.parse(readFileSync(abiPath, 'utf-8'));\n  const targetStorageSlots = deployConfig.storageSlots ?? [];\n  const proxyBytecode = Src14OwnedProxyFactory.bytecode;\n  const proxyAbi = Src14OwnedProxy.abi;\n  const proxyStorageSlots = Src14OwnedProxy.storageSlots ?? [];\n  const isProxyEnabled = tomlContents?.proxy?.enabled;\n  const proxyAddress = tomlContents?.proxy?.address;\n  if (!isProxyEnabled) {\n    // a. Deploy the target contract\n    const contractFactory = new ContractFactory(targetBytecode, targetAbi, wallet);\n    const { waitForResult } = await contractFactory.deploy(deployConfig);\n    const { contract } = await waitForResult();\n    return contract.id.toB256();\n  }\n  if (proxyAddress) {\n    // a. Deploy the target contract\n    const targetContractFactory = new ContractFactory(targetBytecode, targetAbi, wallet);\n    const { waitForResult: waitForTarget } = await targetContractFactory.deploy(deployConfig);\n    const { contract: targetContract } = await waitForTarget();\n    // b. Update proxy contract with the new target contract ID\n    const proxyContract = new Contract(proxyAddress, proxyAbi, wallet);\n    const { waitForResult: waitForProxyUpdate } = await proxyContract.functions\n      .set_proxy_target({ bits: targetContract.id.toB256() })\n      .call();\n    await waitForProxyUpdate();\n    return proxyAddress;\n  }\n  // a. Deploy the target contract\n  const targetContractFactory = new ContractFactory(targetBytecode, targetAbi, wallet);\n  const { waitForResult: waitForTarget } = await targetContractFactory.deploy(deployConfig);\n  const { contract: targetContract } = await waitForTarget();\n  // b. Deploy the SR-C14 Compliant / Proxy Contract\n  // eslint-disable-next-line @typescript-eslint/no-unused-vars\n  const { storageSlots, stateRoot, ...commonDeployConfig } = deployConfig;\n  const mergedStorageSlots = targetStorageSlots.concat(proxyStorageSlots);\n  const proxyDeployConfig: DeployContractOptions = {\n    ...commonDeployConfig,\n    storageSlots: mergedStorageSlots,\n    configurableConstants: {\n      INITIAL_TARGET: { bits: targetContract.id.toB256() },\n      INITIAL_OWNER: { Initialized: { Address: { bits: wallet.address.toB256() } } },\n    },\n  };\n  const proxyFactory = new ContractFactory(proxyBytecode, proxyAbi, wallet);\n  const { waitForResult: waitForProxy } = await proxyFactory.deploy(proxyDeployConfig);\n  const { contract: proxyContract } = await waitForProxy();\n  // c. Initialize the proxy contract\n  const { waitForResult: waitForProxyInit } = await proxyContract.functions\n    .initialize_proxy()\n    .call();\n  await waitForProxyInit();\n  const proxyContractId = proxyContract.id.toB256();\n  // d. Write the address of the proxy contract to user's Forc.Toml file\n  setForcTomlProxyAddress(contractPath, proxyContractId);\n  return proxyContractId;\n}",
+      "blocks": [
+        {
+          "id": 1,
+          "label": "export async function deployContract(...",
+          "successors": [
+            {
+              "id": 2,
+              "label": "debug(`Deploying contract for ABI: ${abiPath}`);",
+              "successors": [
+                {
+                  "id": 3,
+                  "label": "if (existsSync(storageSlotsPath)) {",
+                  "successors": [
+                    {
+                      "id": 4,
+                      "label": "const storageSlots = JSON.parse(readFileSync(storageSlotsPath, 'utf-8'));",
+                      "successors": [
+                        {
+                          "id": 5,
+                          "label": "deployConfig.storageSlots = storageSlots;",
+                          "successors": [
+                            {
+                              "id": 6,
+                              "label": "}",
+                              "successors": [
+                                {
+                                  "id": 7,
+                                  "label": "const targetBytecode = readFileSync(binaryPath);",
+                                  "successors": [
+                                    {
+                                      "id": 8,
+                                      "label": "const targetAbi = JSON.parse(readFileSync(abiPath, 'utf-8'));",
+                                      "successors": [
+                                        {
+                                          "id": 9,
+                                          "label": "const targetStorageSlots = deployConfig.storageSlots ?? [];",
+                                          "successors": [
+                                            {
+                                              "id": 10,
+                                              "label": "const proxyBytecode = Src14OwnedProxyFactory.bytecode;",
+                                              "successors": [
+                                                {
+                                                  "id": 11,
+                                                  "label": "const proxyAbi = Src14OwnedProxy.abi;",
+                                                  "successors": [
+                                                    {
+                                                      "id": 12,
+                                                      "label": "const proxyStorageSlots = Src14OwnedProxy.storageSlots ?? [];",
+                                                      "successors": [
+                                                        {
+                                                          "id": 13,
+                                                          "label": "const isProxyEnabled = tomlContents?.proxy?.enabled;",
+                                                          "successors": [
+                                                            {
+                                                              "id": 14,
+                                                              "label": "const proxyAddress = tomlContents?.proxy?.address;",
+                                                              "successors": [
+                                                                {
+                                                                  "id": 15,
+                                                                  "label": "if (!isProxyEnabled) {",
+                                                                  "successors": [
+                                                                    {
+                                                                      "id": 16,
+                                                                      "label": "const contractFactory = new ContractFactory(targetBytecode, targetAbi, wallet);",
+                                                                      "successors": [
+                                                                        {
+                                                                          "id": 17,
+                                                                          "label": "const { waitForResult } = await contractFactory.deploy(deployConfig);",
+                                                                          "successors": [
+                                                                            {
+                                                                              "id": 18,
+                                                                              "label": "const { contract } = await waitForResult();",
+                                                                              "successors": [
+                                                                                {
+                                                                                  "id": 19,
+                                                                                  "label": "return contract.id.toB256();",
+                                                                                  "successors": []
+                                                                                }
+                                                                              ]
+                                                                            }
+                                                                          ]
+                                                                        }
+                                                                      ]
+                                                                    },
+                                                                    {
+                                                                      "id": 20,
+                                                                      "label": "} else if (proxyAddress) {",
+                                                                      "successors": [
+                                                                        {
+                                                                          "id": 21,
+                                                                          "label": "const targetContractFactory = new ContractFactory(targetBytecode, targetAbi, wallet);",
+                                                                          "successors": [
+                                                                            {
+                                                                              "id": 22,
+                                                                              "label": "const { waitForResult: waitForTarget } = await targetContractFactory.deploy(deployConfig);",
+                                                                              "successors": [
+                                                                                {
+                                                                                  "id": 23,
+                                                                                  "label": "const { contract: targetContract } = await waitForTarget();",
+                                                                                  "successors": [
+                                                                                    {
+                                                                                      "id": 24,
+                                                                                      "label": "const proxyContract = new Contract(proxyAddress, proxyAbi, wallet);",
+                                                                                      "successors": [
+                                                                                        {
+                                                                                          "id": 25,
+                                                                                          "label": "const { waitForResult: waitForProxyUpdate } = await proxyContract.functions.set_proxy_target({ bits: targetContract.id.toB256() }).call();",
+                                                                                          "successors": [
+                                                                                            {
+                                                                                              "id": 26,
+                                                                                              "label": "await waitForProxyUpdate();",
+                                                                                              "successors": [
+                                                                                                {
+                                                                                                  "id": 27,
+                                                                                                  "label": "return proxyAddress;",
+                                                                                                  "successors": []
+                                                                                                }
+                                                                                              ]
+                                                                                            }
+                                                                                          ]
+                                                                                        }
+                                                                                      ]
+                                                                                    }
+                                                                                  ]
+                                                                                }
+                                                                              ]
+                                                                            }
+                                                                          ]
+                                                                        },
+                                                                        {
+                                                                          "id": 28,
+                                                                          "label": "} else {",
+                                                                          "successors": [
+                                                                            {
+                                                                              "id": 29,
+                                                                              "label": "const targetContractFactory = new ContractFactory(targetBytecode, targetAbi, wallet);",
+                                                                              "successors": [
+                                                                                {
+                                                                                  "id": 30,
+                                                                                  "label": "const { waitForResult: waitForTarget } = await targetContractFactory.deploy(deployConfig);",
+                                                                                  "successors": [
+                                                                                    {
+                                                                                      "id": 31,
+                                                                                      "label": "const { contract: targetContract } = await waitForTarget();",
+                                                                                      "successors": [
+                                                                                        {
+                                                                                          "id": 32,
+                                                                                          "label": "const { storageSlots, stateRoot, ...commonDeployConfig } = deployConfig;",
+                                                                                          "successors": [
+                                                                                            {
+                                                                                              "id": 33,
+                                                                                              "label": "const mergedStorageSlots = targetStorageSlots.concat(proxyStorageSlots);",
+                                                                                              "successors": [
+                                                                                                {
+                                                                                                  "id": 34,
+                                                                                                  "label": "const proxyDeployConfig: DeployContractOptions = { ...commonDeployConfig, storageSlots: mergedStorageSlots, configurableConstants: { INITIAL_TARGET: { bits: targetContract.id.toB256() }, INITIAL_OWNER: { Initialized: { Address: { bits: wallet.address.toB256() } } }, }, };",
+                                                                                                  "successors": [
+                                                                                                    {
+                                                                                                      "id": 35,
+                                                                                                      "label": "const proxyFactory = new ContractFactory(proxyBytecode, proxyAbi, wallet);",
+                                                                                                      "successors": [
+                                                                                                        {
+                                                                                                          "id": 36,
+                                                                                                          "label": "const { waitForResult: waitForProxy } = await proxyFactory.deploy(proxyDeployConfig);",
+                                                                                                          "successors": [
+                                                                                                            {
+                                                                                                              "id": 37,
+                                                                                                              "label": "const { contract: proxyContract } = await waitForProxy();",
+                                                                                                              "successors": [
+                                                                                                                {
+                                                                                                                  "id": 38,
+                                                                                                                  "label": "const { waitForResult: waitForProxyInit } = await proxyContract.functions.initialize_proxy().call();",
+                                                                                                                  "successors": [
+                                                                                                                    {
+                                                                                                                      "id": 39,
+                                                                                                                      "label": "await waitForProxyInit();",
+                                                                                                                      "successors": [
+                                                                                                                        {
+                                                                                                                          "id": 40,
+                                                                                                                          "label": "const proxyContractId = proxyContract.id.toB256();",
+                                                                                                                          "successors": [
+                                                                                                                            {
+                                                                                                                              "id": 41,
+                                                                                                                              "label": "setForcTomlProxyAddress(contractPath, proxyContractId);",
+                                                                                                                              "successors": [
+                                                                                                                                {
+                                                                                                                                  "id": 42,
+                                                                                                                                  "label": "return proxyContractId;",
+                                                                                                                                  "successors": []
+                                                                                                                                }
+                                                                                                                              ]
+                                                                                                                            }
+                                                                                                                          ]
+                                                                                                                        }
+                                                                                                                      ]
+                                                                                                                    }
+                                                                                                                  ]
+                                                                                                                }
+                                                                                                              ]
+                                                                                                            }
+                                                                                                          ]
+                                                                                                        }
+                                                                                                      ]
+                                                                                                    }
+                                                                                                  ]
+                                                                                                }
+                                                                                              ]
+                                                                                            }
+                                                                                          ]
+                                                                                        }
+                                                                                      ]
+                                                                                    }
+                                                                                  ]
+                                                                                }
+                                                                              ]
+                                                                            }
+                                                                          ]
+                                                                        }
+                                                                      ]
+                                                                    }
+                                                                  ]
+                                                                }
+                                                              ]
+                                                            }
+                                                          ]
+                                                        }
+                                                      ]
+                                                    }
+                                                  ]
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "deployContracts",
+      "type": "function",
+      "start_line": 94,
+      "end_line": 129,
+      "functions": [],
+      "classes": [],
+      "simplified_code": "export async function deployContracts(config: FuelsConfig) {\n  const contracts: DeployedContract[] = [];\n  const wallet = await createWallet(config.providerUrl, config.privateKey);\n  log(`Deploying contracts to: ${wallet.provider.url}`);\n  const contractsLen = config.contracts.length;\n  for (let i = 0; i < contractsLen; i++) {\n    const contractPath = config.contracts[i];\n    const forcTomlPath = getClosestForcTomlDir(contractPath);\n    const binaryPath = getBinaryPath(contractPath, config);\n    const abiPath = getABIPath(contractPath, config);\n    const storageSlotsPath = getStorageSlotsPath(contractPath, config);\n    const projectName = getContractName(contractPath);\n    const contractName = getContractCamelCase(contractPath);\n    const tomlContents = readForcToml(forcTomlPath);\n    const deployConfig = await getDeployConfig(config.deployConfig, {\n      contracts: Array.from(contracts),\n      contractName,\n      contractPath,\n    });\n    const contractId = await deployContract(\n      wallet,\n      binaryPath,\n      abiPath,\n      storageSlotsPath,\n      deployConfig,\n      contractPath,\n      tomlContents\n    );\n    debug(`Contract deployed: ${projectName} - ${contractId}`);\n    contracts.push({\n      name: contractName,\n      contractId,\n    });\n  }\n  return contracts;\n}",
+      "blocks": [
+        {
+          "id": 1,
+          "label": "export async function deployContracts(config: FuelsConfig) {",
+          "successors": [
+            {
+              "id": 2,
+              "label": "const contracts: DeployedContract[] = [];",
+              "successors": [
+                {
+                  "id": 3,
+                  "label": "const wallet = await createWallet(config.providerUrl, config.privateKey);",
+                  "successors": [
+                    {
+                      "id": 4,
+                      "label": "log(`Deploying contracts to: ${wallet.provider.url}`);",
+                      "successors": [
+                        {
+                          "id": 5,
+                          "label": "const contractsLen = config.contracts.length;",
+                          "successors": [
+                            {
+                              "id": 6,
+                              "label": "for (let i = 0; i < contractsLen; i++) {",
+                              "successors": [
+                                {
+                                  "id": 7,
+                                  "label": "const contractPath = config.contracts[i];\nconst forcTomlPath = getClosestForcTomlDir(contractPath);\nconst binaryPath = getBinaryPath(contractPath, config);\nconst abiPath = getABIPath(contractPath, config);\nconst storageSlotsPath = getStorageSlotsPath(contractPath, config);\nconst projectName = getContractName(contractPath);\nconst contractName = getContractCamelCase(contractPath);\nconst tomlContents = readForcToml(forcTomlPath);\nconst deployConfig = await getDeployConfig(config.deployConfig, {\ncontracts: Array.from(contracts),\ncontractName,\ncontractPath,\n});\nconst contractId = await deployContract(wallet, binaryPath, abiPath, storageSlotsPath, deployConfig, contractPath, tomlContents);",
+                                  "successors": [
+                                    {
+                                      "id": 8,
+                                      "label": "debug(`Contract deployed: ${projectName} - ${contractId}`);\ncontracts.push({\nname: contractName,\ncontractId,\n});",
+                                      "successors": [
+                                        {
+                                          "id": 9,
+                                          "label": "}",
+                                          "successors": [
+                                            {
+                                              "id": 10,
+                                              "label": "}",
+                                              "successors": [
+                                                {
+                                                  "id": 11,
+                                                  "label": "return contracts;",
+                                                  "successors": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "classes": [],
+  "simplified_code": "import type { WalletUnlocked } from '@fuel-ts/account';\nimport { ContractFactory } from '@fuel-ts/contract';\nimport type { DeployContractOptions } from '@fuel-ts/contract';\nimport { Contract } from '@fuel-ts/program';\nimport { Src14OwnedProxy, Src14OwnedProxyFactory } from '@fuel-ts/recipes';\nimport { existsSync, readFileSync } from 'fs';\nimport {\n  getABIPath,\n  getBinaryPath,\n  getClosestForcTomlDir,\n  getContractCamelCase,\n  getContractName,\n  getStorageSlotsPath,\n  readForcToml,\n  setForcTomlProxyAddress,\n  type ForcToml,\n} from '../../config/forcUtils';\nimport type { FuelsConfig, DeployedContract } from '../../types';\nimport { debug, log } from '../../utils/logger';\nimport { createWallet } from './createWallet';\nimport { getDeployConfig } from './getDeployConfig';\n}\n}",
+  "blocks": [
+    {
+      "id": 1,
+      "label": "import type { WalletUnlocked } from '@fuel-ts/account';\nimport { ContractFactory } from '@fuel-ts/contract';\nimport type { DeployContractOptions } from '@fuel-ts/contract';\nimport { Contract } from '@fuel-ts/program';\nimport { Src14OwnedProxy, Src14OwnedProxyFactory } from '@fuel-ts/recipes';\nimport { existsSync, readFileSync } from 'fs';\nimport {\n  getABIPath,\n  getBinaryPath,\n  getClosestForcTomlDir,\n  getContractCamelCase,\n  getContractName,\n  getStorageSlotsPath,\n  readForcToml,\n  setForcTomlProxyAddress,\n  type ForcToml,\n} from '../../config/forcUtils';\nimport type { FuelsConfig, DeployedContract } from '../../types';\nimport { debug, log } from '../../utils/logger';\nimport { createWallet } from './createWallet';\nimport { getDeployConfig } from './getDeployConfig';",
+      "successors": []
+    }
+  ]
+}
